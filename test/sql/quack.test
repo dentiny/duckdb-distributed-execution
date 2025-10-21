@@ -1,23 +1,23 @@
 # name: test/sql/quack.test
-# description: test quack extension
+# description: test motherduck extension
 # group: [sql]
 
 # Before we load the extension, this will fail
 statement error
-SELECT quack('Sam');
+SELECT motherduck('Sam');
 ----
-Catalog Error: Scalar Function with name quack does not exist!
+Catalog Error: Scalar Function with name motherduck does not exist!
 
 # Require statement will ensure this test is run with this extension loaded
-require quack
+require motherduck
 
 # Confirm the extension works
 query I
-SELECT quack('Sam');
+SELECT motherduck('Sam');
 ----
-Quack Sam 🐥
+Motherduck Sam 🐥
 
 query I
-SELECT quack_openssl_version('Michael') ILIKE 'Quack Michael, my linked OpenSSL version is OpenSSL%';
+SELECT motherduck_openssl_version('Michael') ILIKE 'Motherduck Michael, my linked OpenSSL version is OpenSSL%';
 ----
 true

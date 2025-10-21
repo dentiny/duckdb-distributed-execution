@@ -172,14 +172,14 @@ if __name__ == "__main__":
     files_to_search.extend(Path("./src").rglob("./**/*.txt"))
     files_to_search.extend(Path("./src").rglob("./*.md"))
 
-    replace_everywhere("quack", name_extension)
-    replace_everywhere("Quack", name_extension.capitalize())
+    replace_everywhere("motherduck", name_extension)
+    replace_everywhere("Motherduck", name_extension.capitalize())
     replace_everywhere("<extension_name>", name_extension)
 
     remove_placeholder()
 
     string_to_replace = name_extension
-    string_to_find = "quack"
+    string_to_find = "motherduck"
 
     # rename files
     os.rename(f"test/sql/{string_to_find}.test", f"test/sql/{string_to_replace}.test")

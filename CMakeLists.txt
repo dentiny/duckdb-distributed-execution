@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 # Set extension name here
-set(TARGET_NAME quack)
+set(TARGET_NAME motherduck)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -18,13 +18,13 @@ include_directories(src/include)
 
 set(EXTENSION_SOURCES 
   src/motherduck_catalog.cpp
+  src/motherduck_extension.cpp
   src/motherduck_schema.cpp
   src/motherduck_storage.cpp
   src/motherduck_table.cpp
   src/motherduck_table_metadata.cpp
   src/motherduck_transaction.cpp
   src/motherduck_transaction_manager.cpp
-  src/quack_extension.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

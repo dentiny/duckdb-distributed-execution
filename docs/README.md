@@ -46,14 +46,14 @@ GEN=ninja make
 ## Running the extension
 To run the extension code, simply start the shell with `./build/release/duckdb`. This shell will have the extension pre-loaded.  
 
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `quack()` that takes a string arguments and returns a string:
+Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `motherduck()` that takes a string arguments and returns a string:
 ```
-D select quack('Jane') as result;
+D select motherduck('Jane') as result;
 ┌───────────────┐
 │    result     │
 │    varchar    │
 ├───────────────┤
-│ Quack Jane 🐥 │
+│ Motherduck Jane 🐥 │
 └───────────────┘
 ```
 
