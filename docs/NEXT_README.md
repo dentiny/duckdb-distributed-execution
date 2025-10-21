@@ -1,10 +1,10 @@
-# Quack
+# Motherduck
 
 This repository is based on https://github.com/duckdb/extension-template, check it out if you want to build and ship your own DuckDB extension.
 
 ---
 
-This extension, Quack, allow you to ... <extension_goal>.
+This extension, Motherduck, allow you to ... <extension_goal>.
 
 
 ## Building
@@ -42,7 +42,7 @@ D select quack('Jane') as result;
 │    result     │
 │    varchar    │
 ├───────────────┤
-│ Quack Jane 🐥 │
+│ Motherduck Jane 🐥 │
 └───────────────┘
 ```
 
