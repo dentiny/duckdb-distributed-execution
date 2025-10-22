@@ -23,7 +23,7 @@ void MotherduckCatalog::Initialize(bool load_builtin) {
 }
 
 optional_ptr<CatalogEntry> MotherduckCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
-	throw NotImplementedException("CreateSchema not implemented");
+	return duckdb_catalog->CreateSchema(std::move(transaction), info);
 }
 
 optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransaction transaction,
@@ -94,9 +94,8 @@ string MotherduckCatalog::GetEncryptionCipher() const {
 	return duckdb_catalog->GetEncryptionCipher();
 }
 
-// Delegates to duckdb catalog leads to runtime error.
 optional_idx MotherduckCatalog::GetCatalogVersion(ClientContext &context) {
-	return optional_idx {};
+	return duckdb_catalog->GetCatalogVersion(context);
 }
 
 optional_ptr<DependencyManager> MotherduckCatalog::GetDependencyManager() {
