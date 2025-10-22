@@ -7,6 +7,7 @@ namespace duckdb {
 class MotherduckStorageExtension : public StorageExtension {
 public:
 	MotherduckStorageExtension();
+	~MotherduckStorageExtension() = default;
 };
 
 } // namespace duckdb

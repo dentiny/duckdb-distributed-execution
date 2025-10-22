@@ -4,18 +4,19 @@
 
 namespace duckdb {
 
+// Forward declaration.
+class Transaction;
+class DuckTransactionManager;
+
 class MotherduckTransaction : public Transaction {
 public:
-	MotherduckTransaction(Catalog &catalog, TransactionManager &manager, ClientContext &context);
+	MotherduckTransaction(DuckTransactionManager &manager, ClientContext &context, transaction_t start_time,
+	                      transaction_t transaction_id, idx_t catalog_version);
 
-	~MotherduckTransaction();
-
-	SchemaCatalogEntry &GetOrCreateSchema(const string &name);
+	~MotherduckTransaction() override;
 
 private:
-	Catalog &catalog;
-	mutex lock;
-	case_insensitive_map_t<unique_ptr<SchemaCatalogEntry>> schemas;
+	unique_ptr<DuckTransaction> duckdb_transaction;
 };
 
 } // namespace duckdb
