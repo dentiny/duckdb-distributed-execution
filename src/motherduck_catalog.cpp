@@ -2,16 +2,18 @@
 
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/helper.hpp"
-#include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
-
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
+#include "motherduck_schema.hpp"
 #include "motherduck_transaction.hpp"
 
 namespace duckdb {
 
-MotherduckCatalog::MotherduckCatalog(AttachedDatabase &db) : Catalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)) {
+MotherduckCatalog::MotherduckCatalog(AttachedDatabase &db)
+    : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)) {
 }
 
 MotherduckCatalog::~MotherduckCatalog() = default;
@@ -21,7 +23,7 @@ void MotherduckCatalog::Initialize(bool load_builtin) {
 }
 
 optional_ptr<CatalogEntry> MotherduckCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
-	return duckdb_catalog->CreateSchema(std::move(transaction), info);
+	throw NotImplementedException("CreateSchema not implemented");
 }
 
 optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransaction transaction,
@@ -92,8 +94,9 @@ string MotherduckCatalog::GetEncryptionCipher() const {
 	return duckdb_catalog->GetEncryptionCipher();
 }
 
+// Delegates to duckdb catalog leads to runtime error.
 optional_idx MotherduckCatalog::GetCatalogVersion(ClientContext &context) {
-	return duckdb_catalog->GetCatalogVersion(context);
+	return optional_idx {};
 }
 
 optional_ptr<DependencyManager> MotherduckCatalog::GetDependencyManager() {

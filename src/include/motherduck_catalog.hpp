@@ -1,14 +1,17 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 
 // Forward declaration.
 class DuckCatalog;
 
-class MotherduckCatalog : public Catalog {
+class MotherduckCatalog : public DuckCatalog {
 public:
 	explicit MotherduckCatalog(AttachedDatabase &db);
 
@@ -60,6 +63,12 @@ public:
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
 private:
+	struct SchemaEntryWrapper {
+		unique_ptr<CreateSchemaInfo> create_schema_info;
+		unique_ptr<SchemaCatalogEntry> motherduck_schema_catalog_entry;
+	};
+
+	unordered_map<string, SchemaEntryWrapper> schema_catalog_entries;
 	unique_ptr<DuckCatalog> duckdb_catalog;
 };
 

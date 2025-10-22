@@ -2,14 +2,12 @@
 
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
 
 namespace duckdb {
 
-// Forward declaration.
-class DuckTransactionManager;
-
-class MotherduckTransactionManager : public TransactionManager {
+class MotherduckTransactionManager : public DuckTransactionManager {
 public:
 	MotherduckTransactionManager(AttachedDatabase &db);
 

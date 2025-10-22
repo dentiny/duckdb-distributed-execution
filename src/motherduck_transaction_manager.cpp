@@ -6,7 +6,7 @@
 namespace duckdb {
 
 MotherduckTransactionManager::MotherduckTransactionManager(AttachedDatabase &db)
-    : TransactionManager(db), duckdb_transaction_manager(make_uniq<DuckTransactionManager>(db)) {
+    : DuckTransactionManager(db), duckdb_transaction_manager(make_uniq<DuckTransactionManager>(db)) {
 }
 
 MotherduckTransactionManager::~MotherduckTransactionManager() = default;
