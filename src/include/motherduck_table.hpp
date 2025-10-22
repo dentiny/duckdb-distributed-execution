@@ -1,6 +1,8 @@
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 
 namespace duckdb {
 
@@ -9,7 +11,8 @@ class MotherduckTableMetadata;
 
 class MotherduckTable : public TableCatalogEntry {
 public:
-	MotherduckTable(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info);
+	MotherduckTable(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
+	                shared_ptr<DataTable> inherited_storage = nullptr);
 
 	~MotherduckTable();
 
@@ -19,11 +22,8 @@ public:
 
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
 
-	MotherduckTableMetadata &GetTableMetadata();
-
 private:
-	mutex lock;
-	unique_ptr<MotherduckTableMetadata> metadata;
+	unique_ptr<DuckTableEntry> duck_table_entry;
 };
 
 } // namespace duckdb

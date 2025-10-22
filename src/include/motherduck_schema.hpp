@@ -1,17 +1,18 @@
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 
 namespace duckdb {
 
 // Forward declaration.
-class MotherduckTable;
+class DuckSchemaEntry;
 
-class MotherduckSchema : public SchemaCatalogEntry {
+class MotherduckSchemaEntry : public SchemaCatalogEntry {
 public:
-	MotherduckSchema(Catalog &catalog, CreateSchemaInfo &info);
+	MotherduckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
 
-	~MotherduckSchema();
+	~MotherduckSchemaEntry();
 
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 
@@ -47,10 +48,17 @@ public:
 
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 
+	CatalogSet::EntryLookup LookupEntryDetailed(CatalogTransaction transaction,
+	                                            const EntryLookupInfo &lookup_info) override;
+
+	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
+
+	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+
+	void Verify(Catalog &catalog) override;
+
 private:
-	uint64_t lsn;
-	mutex lock;
-	case_insensitive_map_t<unique_ptr<MotherduckTable>> tables;
+	unique_ptr<DuckSchemaEntry> duckdb_schema_entry;
 };
 
 } // namespace duckdb

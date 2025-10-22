@@ -1,35 +1,30 @@
-#include "motherduck_transaction.hpp"
 #include "motherduck_transaction_manager.hpp"
+
+#include "motherduck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 
 namespace duckdb {
 
-MotherduckTransactionManager::MotherduckTransactionManager(AttachedDatabase &db, Catalog &catalog)
-    : TransactionManager(db), catalog(catalog) {
+MotherduckTransactionManager::MotherduckTransactionManager(AttachedDatabase &db)
+    : DuckTransactionManager(db), duckdb_transaction_manager(make_uniq<DuckTransactionManager>(db)) {
 }
 
 MotherduckTransactionManager::~MotherduckTransactionManager() = default;
 
 Transaction &MotherduckTransactionManager::StartTransaction(ClientContext &context) {
-	auto transaction = make_uniq<MotherduckTransaction>(catalog, *this, context);
-	auto &result = *transaction;
-	lock_guard<mutex> guard(lock);
-	transactions[result] = std::move(transaction);
-	return result;
+	return duckdb_transaction_manager->StartTransaction(context);
 }
 
 ErrorData MotherduckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction) {
-	lock_guard<mutex> guard(lock);
-	transactions.erase(transaction);
-	return ErrorData();
+	return duckdb_transaction_manager->CommitTransaction(context, transaction);
 }
 
 void MotherduckTransactionManager::RollbackTransaction(Transaction &transaction) {
-	lock_guard<mutex> guard(lock);
-	transactions.erase(transaction);
+	duckdb_transaction_manager->RollbackTransaction(transaction);
 }
 
 void MotherduckTransactionManager::Checkpoint(ClientContext &context, bool force) {
-	throw NotImplementedException("Checkpoint not implemented");
+	duckdb_transaction_manager->Checkpoint(context, force);
 }
 
 } // namespace duckdb

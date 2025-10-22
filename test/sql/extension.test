@@ -1,0 +1,26 @@
+# name: test/sql/extension.test
+# description: test motherduck extension
+# group: [sql]
+
+require motherduck
+
+statement ok
+ATTACH DATABASE 'md' (TYPE motherduck);
+
+statement ok
+CREATE TABLE md.my_table (id INTEGER, name TEXT, age INTEGER);
+
+statement ok
+INSERT INTO md.my_table VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 40);
+
+query III
+SELECT * FROM md.my_table;
+----
+1	Alice	30
+2	Bob	25
+3	Charlie	40
+
+query II
+SELECT database_name, table_name FROM duckdb_tables();
+----
+md	my_table
