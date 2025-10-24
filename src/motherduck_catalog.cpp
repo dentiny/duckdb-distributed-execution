@@ -32,14 +32,22 @@ optional_ptr<CatalogEntry> MotherduckCatalog::CreateSchema(CatalogTransaction tr
 optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransaction transaction,
                                                                  const EntryLookupInfo &schema_lookup,
                                                                  OnEntryNotFound if_not_found) {
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("MotherduckCatalog::LookupSchema %s", schema_lookup.GetEntryName()));
-	auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
-	if (catalog_entry) {
-		DUCKDB_LOG_DEBUG(db_instance,
-		                 StringUtil::Format("Get schema catalog entry %s", catalog_entry->GetInfo()->ToString()));
+	auto entry_lookup_str = schema_lookup.GetEntryName();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("MotherduckCatalog::LookupSchema %s", entry_lookup_str));
+
+	std::lock_guard<std::mutex> lck(mu);
+	auto iter = schema_catalog_entries.find(entry_lookup_str);
+	if (iter == schema_catalog_entries.end()) {
+		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
+		if (!catalog_entry) {
+			return catalog_entry;
+		}
+
+		auto motherduck_schema_entry = make_uniq<MotherduckSchemaEntry>(db_instance, catalog_entry.get());
+		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
 	}
-	return catalog_entry;
+
+	return iter->second.get();
 }
 
 void MotherduckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
@@ -123,6 +131,7 @@ optional_ptr<DependencyManager> MotherduckCatalog::GetDependencyManager() {
 }
 
 void MotherduckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
+	// TODO(hjiang): Implement drop feature.
 	throw NotImplementedException("DropSchema not implemented");
 }
 

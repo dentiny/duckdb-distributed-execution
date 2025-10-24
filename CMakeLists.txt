@@ -18,6 +18,7 @@ include_directories(src/include)
 
 set(EXTENSION_SOURCES 
   src/motherduck_catalog.cpp
+  src/motherduck_catalog_entry.cpp
   src/motherduck_extension.cpp
   src/motherduck_schema.cpp
   src/motherduck_storage.cpp

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mutex>
+
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/string.hpp"
@@ -64,14 +66,10 @@ public:
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
 private:
-	struct SchemaEntryWrapper {
-		unique_ptr<CreateSchemaInfo> create_schema_info;
-		unique_ptr<SchemaCatalogEntry> motherduck_schema_catalog_entry;
-	};
+	std::mutex mu;
+	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
 
-	unordered_map<string, SchemaEntryWrapper> schema_catalog_entries;
 	unique_ptr<DuckCatalog> duckdb_catalog;
-
 	DatabaseInstance &db_instance;
 };
 

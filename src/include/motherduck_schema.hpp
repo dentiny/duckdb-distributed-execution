@@ -1,7 +1,12 @@
 #pragma once
 
+#include <mutex>
+
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/common/string.hpp"
+#include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 
@@ -11,9 +16,9 @@ class DatabaseInstance;
 
 class MotherduckSchemaEntry : public SchemaCatalogEntry {
 public:
-	MotherduckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
+	MotherduckSchemaEntry(DatabaseInstance &db_instance_p, SchemaCatalogEntry *schema_catalog_entry_p);
 
-	~MotherduckSchemaEntry();
+	~MotherduckSchemaEntry() override = default;
 
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 
@@ -59,8 +64,12 @@ public:
 	void Verify(Catalog &catalog) override;
 
 private:
-	unique_ptr<DuckSchemaEntry> duckdb_schema_entry;
-	// DatabaseInstance& db_instance;
+	DatabaseInstance &db_instance;
+	SchemaCatalogEntry *schema_catalog_entry;
+
+	std::mutex mu;
+	// TODO(hjiang): Use a better key.
+	unordered_map<string, unique_ptr<CatalogEntry>> catalog_entries;
 };
 
 } // namespace duckdb
