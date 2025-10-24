@@ -10,6 +10,7 @@ namespace duckdb {
 
 // Forward declaration.
 class DuckCatalog;
+class DatabaseInstance;
 
 class MotherduckCatalog : public DuckCatalog {
 public:
@@ -70,6 +71,8 @@ private:
 
 	unordered_map<string, SchemaEntryWrapper> schema_catalog_entries;
 	unique_ptr<DuckCatalog> duckdb_catalog;
+
+	DatabaseInstance &db_instance;
 };
 
 } // namespace duckdb

@@ -1,5 +1,7 @@
 #include "motherduck_storage.hpp"
 
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "motherduck_catalog.hpp"
 #include "motherduck_transaction_manager.hpp"
 
@@ -8,11 +10,13 @@ namespace duckdb {
 unique_ptr<Catalog> MotherduckAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
                                      AttachedDatabase &db, const string &name, AttachInfo &info,
                                      AttachOptions &options) {
+	DUCKDB_LOG_DEBUG(db.GetDatabase(), "MotherduckAttach");
 	return make_uniq<MotherduckCatalog>(db);
 }
 
 unique_ptr<TransactionManager> MotherduckCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info,
                                                                   AttachedDatabase &db, Catalog &catalog) {
+	DUCKDB_LOG_DEBUG(db.GetDatabase(), "MotherduckCreateTransactionManager");
 	return make_uniq<MotherduckTransactionManager>(db);
 }
 
