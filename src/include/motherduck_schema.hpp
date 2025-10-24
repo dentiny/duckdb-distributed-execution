@@ -7,6 +7,7 @@ namespace duckdb {
 
 // Forward declaration.
 class DuckSchemaEntry;
+class DatabaseInstance;
 
 class MotherduckSchemaEntry : public SchemaCatalogEntry {
 public:
@@ -59,6 +60,7 @@ public:
 
 private:
 	unique_ptr<DuckSchemaEntry> duckdb_schema_entry;
+	// DatabaseInstance& db_instance;
 };
 
 } // namespace duckdb

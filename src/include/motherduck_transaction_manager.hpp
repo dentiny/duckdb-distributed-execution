@@ -9,7 +9,7 @@ namespace duckdb {
 
 class MotherduckTransactionManager : public DuckTransactionManager {
 public:
-	MotherduckTransactionManager(AttachedDatabase &db);
+	explicit MotherduckTransactionManager(AttachedDatabase &db);
 
 	~MotherduckTransactionManager();
 
