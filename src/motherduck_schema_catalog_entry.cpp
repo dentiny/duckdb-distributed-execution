@@ -155,7 +155,9 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateType(CatalogTrans
 
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
                                                                      const EntryLookupInfo &lookup_info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntry");
+	DUCKDB_LOG_DEBUG(db_instance,
+	                 StringUtil::Format("MotherduckSchemaCatalogEntry::LookupEntry lookup entry %s with type %s",
+	                                    lookup_info.GetEntryName(), CatalogTypeToString(lookup_info.GetCatalogType())));
 	return schema_catalog_entry->LookupEntry(std::move(transaction), lookup_info);
 }
 
