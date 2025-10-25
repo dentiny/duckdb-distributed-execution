@@ -17,6 +17,7 @@ public:
 	                            unique_ptr<CreateTableInfo> create_table_info_p);
 	~MotherduckTableCatalogEntry() override = default;
 
+	// CatalogEntry-specific functions.
 	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
 	unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info) override;
 	void UndoAlter(ClientContext &context, AlterInfo &info) override;
@@ -35,7 +36,7 @@ public:
 	void Verify(Catalog &catalog) override;
 	bool IsDuckTable() const override;
 
-	// MotherduckTableCatalogEntry-special function.
+	// TableCatalogEntry-special functions.
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
