@@ -45,20 +45,16 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 			return catalog_entry;
 		}
 
-		DUCKDB_LOG_DEBUG(db_instance, "1");
 		auto create_schema_info = make_uniq<CreateSchemaInfo>();
 		create_schema_info->schema = catalog_entry->name;
 		create_schema_info->comment = catalog_entry->comment;
 		create_schema_info->tags = catalog_entry->tags;
-		DUCKDB_LOG_DEBUG(db_instance, "2");
 
 		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
 		D_ASSERT(schema_catalog_entry != nullptr);
 		auto motherduck_schema_entry =
 		    make_uniq<MotherduckSchemaCatalogEntry>(db_instance, schema_catalog_entry, std::move(create_schema_info));
-		DUCKDB_LOG_DEBUG(db_instance, "3");
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
-		DUCKDB_LOG_DEBUG(db_instance, "4");
 	}
 
 	return iter->second.get();
