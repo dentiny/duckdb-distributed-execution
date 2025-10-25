@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -43,8 +44,17 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 			return catalog_entry;
 		}
 
-		auto motherduck_schema_entry = make_uniq<MotherduckSchemaEntry>(db_instance, catalog_entry.get());
+		DUCKDB_LOG_DEBUG(db_instance, "1");
+		auto create_schema_info = make_uniq<CreateSchemaInfo>();
+		create_schema_info->schema = catalog_entry->name;
+		create_schema_info->comment = catalog_entry->comment;
+		create_schema_info->tags = catalog_entry->tags;
+		DUCKDB_LOG_DEBUG(db_instance, "2");
+		auto motherduck_schema_entry =
+		    make_uniq<MotherduckSchemaEntry>(db_instance, std::move(create_schema_info), catalog_entry.get());
+		DUCKDB_LOG_DEBUG(db_instance, "3");
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
+		DUCKDB_LOG_DEBUG(db_instance, "4");
 	}
 
 	return iter->second.get();
