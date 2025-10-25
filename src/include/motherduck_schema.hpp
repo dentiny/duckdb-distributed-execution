@@ -11,12 +11,14 @@
 namespace duckdb {
 
 // Forward declaration.
+class CreateSchemaInfo;
 class DuckSchemaEntry;
 class DatabaseInstance;
 
 class MotherduckSchemaEntry : public SchemaCatalogEntry {
 public:
-	MotherduckSchemaEntry(DatabaseInstance &db_instance_p, SchemaCatalogEntry *schema_catalog_entry_p);
+	MotherduckSchemaEntry(DatabaseInstance &db_instance_p, unique_ptr<CreateSchemaInfo> create_schema_info,
+	                      SchemaCatalogEntry *schema_catalog_entry_p);
 
 	~MotherduckSchemaEntry() override = default;
 
@@ -64,7 +66,11 @@ public:
 	void Verify(Catalog &catalog) override;
 
 private:
+	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(string key, CatalogEntry *catalog_entry);
+	CatalogEntry *WrapAndCacheSchemaCatalogEntryWithLock(string key, CatalogEntry *catalog_entry);
+
 	DatabaseInstance &db_instance;
+	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
 
 	std::mutex mu;
