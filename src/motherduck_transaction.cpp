@@ -1,7 +1,6 @@
 #include "motherduck_transaction.hpp"
 
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
-#include "motherduck_schema.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 
