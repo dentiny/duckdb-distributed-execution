@@ -16,7 +16,8 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 project(${TARGET_NAME})
 include_directories(src/include)
 
-set(EXTENSION_SOURCES 
+set(EXTENSION_SOURCES
+  src/entry_lookup_info_hash_utils.cpp
   src/motherduck_catalog.cpp
   src/motherduck_extension.cpp
   src/motherduck_storage.cpp

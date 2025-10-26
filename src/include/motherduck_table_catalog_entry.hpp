@@ -1,20 +1,21 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
 
 // Forward declaration.
-class CreateTableInfo;
+class BoundCreateTableInfo;
 class DatabaseInstance;
 class TableFunction;
 class TableStorageInfo;
 
-class MotherduckTableCatalogEntry : public TableCatalogEntry {
+class MotherduckTableCatalogEntry : public DuckTableEntry {
 public:
-	MotherduckTableCatalogEntry(DatabaseInstance &db_instance_p, TableCatalogEntry *table_catalog_entry_p,
-	                            unique_ptr<CreateTableInfo> create_table_info_p);
+	MotherduckTableCatalogEntry(DatabaseInstance &db_instance_p, DuckTableEntry *duck_table_entry_p,
+	                            unique_ptr<BoundCreateTableInfo> create_table_info_p);
 	~MotherduckTableCatalogEntry() override = default;
 
 	// CatalogEntry-specific functions.
@@ -51,8 +52,8 @@ public:
 
 private:
 	DatabaseInstance &db_instance;
-	unique_ptr<CreateTableInfo> create_table_info;
-	TableCatalogEntry *table_catalog_entry;
+	unique_ptr<BoundCreateTableInfo> bound_create_table_info;
+	DuckTableEntry *duck_table_entry;
 };
 
 } // namespace duckdb
