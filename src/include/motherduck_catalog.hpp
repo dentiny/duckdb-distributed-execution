@@ -7,6 +7,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/parser/parsed_data/create_schema_info.hpp"
 
 namespace duckdb {
 

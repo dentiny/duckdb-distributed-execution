@@ -1,7 +1,9 @@
 #include "motherduck_catalog.hpp"
 
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/assert.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -9,7 +11,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
-#include "motherduck_schema.hpp"
+#include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
 
 namespace duckdb {
@@ -43,7 +45,15 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 			return catalog_entry;
 		}
 
-		auto motherduck_schema_entry = make_uniq<MotherduckSchemaEntry>(db_instance, catalog_entry.get());
+		auto create_schema_info = make_uniq<CreateSchemaInfo>();
+		create_schema_info->schema = catalog_entry->name;
+		create_schema_info->comment = catalog_entry->comment;
+		create_schema_info->tags = catalog_entry->tags;
+
+		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
+		D_ASSERT(schema_catalog_entry != nullptr);
+		auto motherduck_schema_entry =
+		    make_uniq<MotherduckSchemaCatalogEntry>(db_instance, schema_catalog_entry, std::move(create_schema_info));
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
 	}
 
