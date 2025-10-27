@@ -17,9 +17,12 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
+  src/distributed_server.cpp
+  src/distributed_table_scan_function.cpp
   src/entry_lookup_info_hash_utils.cpp
   src/motherduck_catalog.cpp
   src/motherduck_extension.cpp
+  src/motherduck_pragmas.cpp
   src/motherduck_storage.cpp
   src/motherduck_schema_catalog_entry.cpp
   src/motherduck_table_catalog_entry.cpp
@@ -33,6 +36,10 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 # Link OpenSSL in both the static library as the loadable extension
 target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
+
+# Add distributed server executable
+add_executable(distributed_server src/distributed_server_main.cpp)
+target_link_libraries(distributed_server ${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 
 install(
   TARGETS ${EXTENSION_NAME}

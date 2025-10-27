@@ -23,7 +23,8 @@ class DatabaseInstance;
 
 class MotherduckSchemaCatalogEntry : public DuckSchemaEntry {
 public:
-	MotherduckSchemaCatalogEntry(DatabaseInstance &db_instance_p, SchemaCatalogEntry *table_catalog_entry_p,
+	MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
+	                             SchemaCatalogEntry *table_catalog_entry_p,
 	                             unique_ptr<CreateSchemaInfo> create_schema_info_p);
 	~MotherduckSchemaCatalogEntry() override = default;
 

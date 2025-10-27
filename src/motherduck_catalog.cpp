@@ -52,8 +52,8 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 
 		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
 		D_ASSERT(schema_catalog_entry != nullptr);
-		auto motherduck_schema_entry =
-		    make_uniq<MotherduckSchemaCatalogEntry>(db_instance, schema_catalog_entry, std::move(create_schema_info));
+		auto motherduck_schema_entry = make_uniq<MotherduckSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
+		                                                                       std::move(create_schema_info));
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
 	}
 
@@ -143,6 +143,37 @@ optional_ptr<DependencyManager> MotherduckCatalog::GetDependencyManager() {
 void MotherduckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	// TODO(hjiang): Implement drop feature.
 	throw NotImplementedException("DropSchema not implemented");
+}
+
+void MotherduckCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
+                                            const string &remote_table_name) {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	remote_tables[table_name] = RemoteTableConfig(server_url, remote_table_name);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote table %s -> %s:%s", table_name, server_url,
+	                                                 remote_table_name));
+}
+
+void MotherduckCatalog::UnregisterRemoteTable(const string &table_name) {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	remote_tables.erase(table_name);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote table %s", table_name));
+}
+
+bool MotherduckCatalog::IsRemoteTable(const string &table_name) const {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	auto it = remote_tables.find(table_name);
+	bool found = it != remote_tables.end() && it->second.is_distributed;
+	return found;
+}
+
+RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_name) const {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	auto it = remote_tables.find(table_name);
+	if (it != remote_tables.end()) {
+		return it->second;
+	}
+	// Fallbacks to default, which is not distributed table.
+	return RemoteTableConfig();
 }
 
 } // namespace duckdb
