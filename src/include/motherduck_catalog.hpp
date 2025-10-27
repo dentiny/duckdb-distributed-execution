@@ -8,12 +8,27 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/planner/logical_operator.hpp"
 
 namespace duckdb {
 
 // Forward declaration.
 class DuckCatalog;
 class DatabaseInstance;
+class PhysicalDistributedTableScan;
+
+// Configuration for remote tables
+struct RemoteTableConfig {
+	string server_url;
+	string remote_table_name;
+	bool is_distributed;
+
+	RemoteTableConfig() : is_distributed(false) {
+	}
+	RemoteTableConfig(const string &url, const string &table)
+	    : server_url(url), remote_table_name(table), is_distributed(true) {
+	}
+};
 
 class MotherduckCatalog : public DuckCatalog {
 public:
@@ -41,6 +56,9 @@ public:
 	                             PhysicalOperator &plan) override;
 	PhysicalOperator &PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op,
 	                             PhysicalOperator &plan) override;
+
+	// Note: PlanGet is handled by PhysicalPlanGenerator, not by Catalog
+
 	unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
 	                                            unique_ptr<LogicalOperator> plan) override;
 	unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
@@ -66,12 +84,22 @@ public:
 
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
+	// Remote table management
+	void RegisterRemoteTable(const string &table_name, const string &server_url, const string &remote_table_name);
+	void UnregisterRemoteTable(const string &table_name);
+	bool IsRemoteTable(const string &table_name) const;
+	RemoteTableConfig GetRemoteTableConfig(const string &table_name) const;
+
 private:
 	std::mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
 
 	unique_ptr<DuckCatalog> duckdb_catalog;
 	DatabaseInstance &db_instance;
+
+	// Remote table configuration
+	mutable std::mutex remote_tables_mu;
+	unordered_map<string, RemoteTableConfig> remote_tables;
 };
 
 } // namespace duckdb

@@ -13,6 +13,7 @@
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
+#include "physical_distributed_table_scan.hpp"
 
 namespace duckdb {
 
@@ -143,6 +144,36 @@ optional_ptr<DependencyManager> MotherduckCatalog::GetDependencyManager() {
 void MotherduckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	// TODO(hjiang): Implement drop feature.
 	throw NotImplementedException("DropSchema not implemented");
+}
+
+// Remote table management implementation
+void MotherduckCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
+                                            const string &remote_table_name) {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	remote_tables[table_name] = RemoteTableConfig(server_url, remote_table_name);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote table %s -> %s:%s", table_name, server_url,
+	                                                 remote_table_name));
+}
+
+void MotherduckCatalog::UnregisterRemoteTable(const string &table_name) {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	remote_tables.erase(table_name);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote table %s", table_name));
+}
+
+bool MotherduckCatalog::IsRemoteTable(const string &table_name) const {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	auto it = remote_tables.find(table_name);
+	return it != remote_tables.end() && it->second.is_distributed;
+}
+
+RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_name) const {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	auto it = remote_tables.find(table_name);
+	if (it != remote_tables.end()) {
+		return it->second;
+	}
+	return RemoteTableConfig(); // Returns default (not distributed)
 }
 
 } // namespace duckdb
