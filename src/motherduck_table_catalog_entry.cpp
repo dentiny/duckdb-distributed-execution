@@ -7,13 +7,15 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
+#include "duckdb/storage/data_table.hpp"
 
 namespace duckdb {
 
 MotherduckTableCatalogEntry::MotherduckTableCatalogEntry(DatabaseInstance &db_instance_p,
                                                          DuckTableEntry *duck_table_entry_p,
                                                          unique_ptr<BoundCreateTableInfo> bound_create_table_info_p)
-    : DuckTableEntry(duck_table_entry_p->catalog, duck_table_entry_p->schema, *bound_create_table_info_p),
+    : DuckTableEntry(duck_table_entry_p->catalog, duck_table_entry_p->schema, *bound_create_table_info_p,
+                     duck_table_entry_p->GetStorage().shared_from_this()),
       db_instance(db_instance_p), bound_create_table_info(std::move(bound_create_table_info_p)),
       duck_table_entry(duck_table_entry_p) {
 }
