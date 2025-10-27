@@ -2,13 +2,26 @@
 
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 
 namespace duckdb {
+
+namespace {
+vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constraint>> &constraints) {
+	vector<unique_ptr<Constraint>> res;
+	res.reserve(constraints.size());
+	for (const auto &cur_constraint : constraints) {
+		res.emplace_back(cur_constraint->Copy());
+	}
+	return res;
+}
+} // namespace
 
 MotherduckSchemaCatalogEntry::MotherduckSchemaCatalogEntry(DatabaseInstance &db_instance_p,
                                                            SchemaCatalogEntry *schema_catalog_entry_p,
                                                            unique_ptr<CreateSchemaInfo> create_schema_info_p)
-    : SchemaCatalogEntry(schema_catalog_entry_p->catalog, *create_schema_info_p), db_instance(db_instance_p),
+    : DuckSchemaEntry(schema_catalog_entry_p->catalog, *create_schema_info_p), db_instance(db_instance_p),
       create_schema_info(std::move(create_schema_info_p)), schema_catalog_entry(schema_catalog_entry_p) {
 }
 
@@ -153,12 +166,54 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateType(CatalogTrans
 	return schema_catalog_entry->CreateType(std::move(transaction), info);
 }
 
+CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key,
+                                                                                  CatalogEntry *catalog_entry) {
+	D_ASSERT(catalog_entry->type == CatalogType::TABLE_ENTRY);
+	DuckTableEntry *table_catalog_entry = dynamic_cast<DuckTableEntry *>(catalog_entry);
+	D_ASSERT(table_catalog_entry != nullptr);
+
+	auto create_table_info = make_uniq<CreateTableInfo>();
+	create_table_info->table = table_catalog_entry->name;
+	create_table_info->columns = table_catalog_entry->GetColumns().Copy();
+	create_table_info->constraints = CopyConstraints(table_catalog_entry->GetConstraints());
+	create_table_info->temporary = table_catalog_entry->temporary;
+	create_table_info->dependencies = table_catalog_entry->dependencies;
+	create_table_info->comment = table_catalog_entry->comment;
+	create_table_info->tags = table_catalog_entry->tags;
+
+	auto bound_create_table_info = make_uniq<BoundCreateTableInfo>(*this, std::move(create_table_info));
+	auto motherduck_table_catalog_entry =
+	    make_uniq<MotherduckTableCatalogEntry>(db_instance, table_catalog_entry, std::move(bound_create_table_info));
+	auto *ret = motherduck_table_catalog_entry.get();
+	catalog_entries.emplace(std::move(key), std::move(motherduck_table_catalog_entry));
+	return ret;
+}
+
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
                                                                      const EntryLookupInfo &lookup_info) {
 	DUCKDB_LOG_DEBUG(db_instance,
 	                 StringUtil::Format("MotherduckSchemaCatalogEntry::LookupEntry lookup entry %s with type %s",
 	                                    lookup_info.GetEntryName(), CatalogTypeToString(lookup_info.GetCatalogType())));
-	return schema_catalog_entry->LookupEntry(std::move(transaction), lookup_info);
+	D_ASSERT(lookup_info.GetCatalogType() == CatalogType::TABLE_ENTRY);
+	EntryLookupInfoKey key {
+	    .type = lookup_info.GetCatalogType(),
+	    .name = lookup_info.GetEntryName(),
+	};
+
+	std::lock_guard<std::mutex> lck(mu);
+	auto iter = catalog_entries.find(key);
+	if (iter != catalog_entries.end()) {
+		DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntry cache hit");
+		return iter->second.get();
+	}
+
+	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntry cache miss");
+	auto catalog_entry = schema_catalog_entry->LookupEntry(std::move(transaction), lookup_info);
+	if (!catalog_entry) {
+		return catalog_entry;
+	}
+
+	return WrapAndCacheTableCatalogEntryWithLock(std::move(key), catalog_entry.get());
 }
 
 CatalogSet::EntryLookup MotherduckSchemaCatalogEntry::LookupEntryDetailed(CatalogTransaction transaction,

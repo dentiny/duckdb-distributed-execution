@@ -1,7 +1,19 @@
 #pragma once
 
+#include <mutex>
+
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+#include "entry_lookup_info_hash_utils.hpp"
+
+// TODO(hjiang): Likely will switch to forward declaration.
+#include "motherduck_table_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -9,7 +21,7 @@ namespace duckdb {
 class CreateSchemaInfo;
 class DatabaseInstance;
 
-class MotherduckSchemaCatalogEntry : public SchemaCatalogEntry {
+class MotherduckSchemaCatalogEntry : public DuckSchemaEntry {
 public:
 	MotherduckSchemaCatalogEntry(DatabaseInstance &db_instance_p, SchemaCatalogEntry *table_catalog_entry_p,
 	                             unique_ptr<CreateSchemaInfo> create_schema_info_p);
@@ -58,9 +70,16 @@ public:
 	void Alter(CatalogTransaction transaction, AlterInfo &info);
 
 private:
+	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
+
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
+
+	std::mutex mu;
+	unordered_map<EntryLookupInfoKey, unique_ptr<MotherduckTableCatalogEntry>, EntryLookupInfoHash,
+	              EntryLookupInfoEqual>
+	    catalog_entries;
 };
 
 } // namespace duckdb
