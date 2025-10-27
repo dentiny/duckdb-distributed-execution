@@ -10,9 +10,12 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/planner/operator/logical_insert.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
+#include "physical_distributed_insert.hpp"
+#include <iostream>
 
 namespace duckdb {
 
@@ -74,6 +77,27 @@ PhysicalOperator &MotherduckCatalog::PlanCreateTableAs(ClientContext &context, P
 PhysicalOperator &MotherduckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanInsert");
+
+	std::cout << "🔄 MotherduckCatalog::PlanInsert called for table: " << op.table.name << std::endl;
+	std::cout << "   op.table catalog type: " << op.table.catalog.GetCatalogType() << std::endl;
+	std::cout << "   op.table catalog name: " << op.table.catalog.GetName() << std::endl;
+	std::cout << "   THIS catalog name: " << GetName() << std::endl;
+
+	// Check if this is a distributed table
+	bool is_remote = IsRemoteTable(op.table.name);
+	std::cout << "   IsRemoteTable result: " << is_remote << std::endl;
+
+	if (is_remote) {
+		std::cout << "   ✨ Table is distributed! Using PhysicalDistributedInsert" << std::endl;
+
+		// Create our custom distributed insert operator
+		D_ASSERT(plan);
+		auto &distributed_insert = planner.Make<PhysicalDistributedInsert>(op.table, *plan, op.estimated_cardinality);
+		// Note: children are added in the PhysicalDistributedInsert, don't add here
+		return distributed_insert;
+	}
+
+	std::cout << "   📍 Table is local, using regular insert" << std::endl;
 	return duckdb_catalog->PlanInsert(context, planner, op, plan);
 }
 

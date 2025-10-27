@@ -1,9 +1,11 @@
 #include "motherduck_schema_catalog_entry.hpp"
+#include "distributed_server.hpp"
 
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+#include <iostream>
 
 namespace duckdb {
 
@@ -122,6 +124,36 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateFunction(CatalogT
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTransaction transaction,
                                                                      BoundCreateTableInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateTable");
+
+	// Send CREATE TABLE to distributed server
+	std::cout << "🏗️  Intercepting CREATE TABLE for: " << info.Base().table << std::endl;
+
+	// Generate CREATE TABLE SQL from info
+	auto &create_info = info.Base();
+	string create_sql = "CREATE TABLE " + create_info.table + " (";
+
+	for (idx_t i = 0; i < create_info.columns.LogicalColumnCount(); i++) {
+		auto &col = create_info.columns.GetColumn(LogicalIndex(i));
+		if (i > 0)
+			create_sql += ", ";
+		create_sql += col.Name() + " " + col.Type().ToString();
+	}
+	create_sql += ")";
+
+	std::cout << "   Generated SQL: " << create_sql << std::endl;
+
+	// Send to server (simulated)
+	auto &server = DistributedServer::GetInstance();
+	auto result = server.CreateTable(create_sql);
+
+	if (result->HasError()) {
+		std::cerr << "❌ Server CREATE TABLE failed: " << result->GetError() << std::endl;
+		throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
+	}
+
+	std::cout << "   ✅ Table created on server successfully!" << std::endl;
+
+	// Also create locally to maintain catalog consistency
 	return schema_catalog_entry->CreateTable(std::move(transaction), info);
 }
 

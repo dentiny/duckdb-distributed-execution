@@ -11,12 +11,22 @@ DistributedServer::DistributedServer() {
 	Initialize();
 }
 
+DistributedServer &DistributedServer::GetInstance() {
+	static DistributedServer instance;
+	return instance;
+}
+
 void DistributedServer::Initialize() {
+	// Only initialize once
+	if (db && conn) {
+		return;
+	}
+
 	// Create DuckDB instance for the server.
 	db = make_uniq<DuckDB>();
 	conn = make_uniq<Connection>(*db);
 
-	// Create some test data.
+	// Create some test data for testing
 	auto result = conn->Query("CREATE TABLE IF NOT EXISTS my_table (id INTEGER, name VARCHAR, value INTEGER)");
 	if (result->HasError()) {
 		std::cerr << "Error creating table: " << result->GetError() << std::endl;
@@ -30,7 +40,7 @@ void DistributedServer::Initialize() {
 		std::cerr << "Error inserting data: " << result->GetError() << std::endl;
 	}
 
-	std::cout << "Distributed server initialized with test data" << std::endl;
+	std::cout << "✅ Distributed server initialized" << std::endl;
 }
 
 unique_ptr<QueryResult> DistributedServer::ScanTable(const string &table_name, idx_t limit, idx_t offset) {
@@ -51,6 +61,21 @@ bool DistributedServer::TableExists(const string &table_name) {
 		return result->GetValue(0, 0).GetValue<int>() > 0;
 	}
 	return false;
+}
+
+unique_ptr<QueryResult> DistributedServer::ExecuteSQL(const string &sql) {
+	std::cout << "📡 Server executing SQL: " << sql << std::endl;
+	return conn->Query(sql);
+}
+
+unique_ptr<QueryResult> DistributedServer::CreateTable(const string &create_sql) {
+	std::cout << "🏗️  Server creating table: " << create_sql << std::endl;
+	return conn->Query(create_sql);
+}
+
+unique_ptr<QueryResult> DistributedServer::InsertInto(const string &insert_sql) {
+	std::cout << "💾 Server inserting data: " << insert_sql << std::endl;
+	return conn->Query(insert_sql);
 }
 
 } // namespace duckdb
