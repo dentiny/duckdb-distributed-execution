@@ -18,10 +18,11 @@ vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constrain
 }
 } // namespace
 
-MotherduckSchemaCatalogEntry::MotherduckSchemaCatalogEntry(DatabaseInstance &db_instance_p,
+MotherduckSchemaCatalogEntry::MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p,
+                                                           DatabaseInstance &db_instance_p,
                                                            SchemaCatalogEntry *schema_catalog_entry_p,
                                                            unique_ptr<CreateSchemaInfo> create_schema_info_p)
-    : DuckSchemaEntry(schema_catalog_entry_p->catalog, *create_schema_info_p), db_instance(db_instance_p),
+    : DuckSchemaEntry(motherduck_catalog_p, *create_schema_info_p), db_instance(db_instance_p),
       create_schema_info(std::move(create_schema_info_p)), schema_catalog_entry(schema_catalog_entry_p) {
 }
 
@@ -183,7 +184,7 @@ CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 
 	auto bound_create_table_info = make_uniq<BoundCreateTableInfo>(*this, std::move(create_table_info));
 	auto motherduck_table_catalog_entry =
-	    make_uniq<MotherduckTableCatalogEntry>(db_instance, table_catalog_entry, std::move(bound_create_table_info));
+	    make_uniq<MotherduckTableCatalogEntry>(catalog, db_instance, table_catalog_entry, std::move(bound_create_table_info));
 	auto *ret = motherduck_table_catalog_entry.get();
 	catalog_entries.emplace(std::move(key), std::move(motherduck_table_catalog_entry));
 	return ret;

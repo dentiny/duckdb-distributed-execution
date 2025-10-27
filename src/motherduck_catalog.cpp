@@ -13,6 +13,7 @@
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
+#include <iostream>
 #include "physical_distributed_table_scan.hpp"
 
 namespace duckdb {
@@ -51,11 +52,11 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 		create_schema_info->comment = catalog_entry->comment;
 		create_schema_info->tags = catalog_entry->tags;
 
-		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
-		D_ASSERT(schema_catalog_entry != nullptr);
-		auto motherduck_schema_entry =
-		    make_uniq<MotherduckSchemaCatalogEntry>(db_instance, schema_catalog_entry, std::move(create_schema_info));
-		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
+	auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
+	D_ASSERT(schema_catalog_entry != nullptr);
+	auto motherduck_schema_entry =
+	    make_uniq<MotherduckSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry, std::move(create_schema_info));
+	iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
 	}
 
 	return iter->second.get();
@@ -164,7 +165,13 @@ void MotherduckCatalog::UnregisterRemoteTable(const string &table_name) {
 bool MotherduckCatalog::IsRemoteTable(const string &table_name) const {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
 	auto it = remote_tables.find(table_name);
-	return it != remote_tables.end() && it->second.is_distributed;
+	bool found = it != remote_tables.end() && it->second.is_distributed;
+	for (auto& [t, _] : remote_tables) {
+		std::cout << "already contains table " << t << std::endl;
+	}
+
+	std::cout << "   📊 IsRemoteTable('" << table_name << "') checking... remote_tables.size()=" << remote_tables.size() << ", found=" << found << std::endl;
+	return found;
 }
 
 RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_name) const {
