@@ -11,18 +11,18 @@ DistributedServer::DistributedServer() {
 }
 
 void DistributedServer::Initialize() {
-	// Create DuckDB instance for the server
+	// Create DuckDB instance for the server.
 	db = make_uniq<DuckDB>();
 	conn = make_uniq<Connection>(*db);
 
-	// Create some test data
+	// Create some test data.
 	auto result = conn->Query("CREATE TABLE IF NOT EXISTS remote_table (id INTEGER, name VARCHAR, value INTEGER)");
 	if (result->HasError()) {
 		std::cerr << "Error creating table: " << result->GetError() << std::endl;
 		return;
 	}
 
-	// Insert test data
+	// Insert test data.
 	result = conn->Query(
 	    "INSERT INTO remote_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300)");
 	if (result->HasError()) {

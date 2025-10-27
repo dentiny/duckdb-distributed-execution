@@ -13,16 +13,16 @@ public:
 	DistributedServer();
 	~DistributedServer() = default;
 
-	// Initialize server with a DuckDB instance
+	// Initialize server with a DuckDB instance.
 	void Initialize();
 
-	// Execute SQL on the server
+	// Execute SQL on the server.
 	unique_ptr<QueryResult> ExecuteQuery(const string &sql);
 
-	// Get table data (simulating distributed scan)
+	// Get table data (simulating distributed scan).
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
 
-	// Check if table exists
+	// Check if table exists.
 	bool TableExists(const string &table_name);
 
 private:

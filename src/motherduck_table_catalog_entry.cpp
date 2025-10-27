@@ -1,5 +1,7 @@
+
 #include "motherduck_table_catalog_entry.hpp"
 
+#include "distributed_table_scan_function.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -8,6 +10,7 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "motherduck_catalog.hpp"
 
 namespace duckdb {
 
@@ -98,12 +101,36 @@ unique_ptr<BaseStatistics> MotherduckTableCatalogEntry::GetStatistics(ClientCont
 TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &context,
                                                            unique_ptr<FunctionData> &bind_data) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetScanFunction");
+
+	// Attempt distributed if registered remote table.
+	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&catalog);
+	if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(name)) {
+		auto config = md_catalog_ptr->GetRemoteTableConfig(name);
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 StringUtil::Format("Query on table %s is distributed to server %s", name, config.server_url));
+		bind_data = make_uniq<DistributedTableScanBindData>(*this, config.server_url, config.remote_table_name);
+		return DistributedTableScanFunction::GetFunction();
+	}
+
+	// Fallback to regular DuckDB scan for local tables.
 	return duck_table_entry->GetScanFunction(context, bind_data);
 }
 
 TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
                                                            const EntryLookupInfo &lookup_info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetScanFunction");
+
+	// Attempt distributed if registered remote table.
+	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&catalog);
+	if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(name)) {
+		auto config = md_catalog_ptr->GetRemoteTableConfig(name);
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 StringUtil::Format("Query on table %s is distributed to server %s", name, config.server_url));
+		bind_data = make_uniq<DistributedTableScanBindData>(*this, config.server_url, config.remote_table_name);
+		return DistributedTableScanFunction::GetFunction();
+	}
+
+	// Fallback to regular DuckDB scan for local tables.
 	return duck_table_entry->GetScanFunction(context, bind_data);
 }
 

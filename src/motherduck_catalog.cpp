@@ -173,7 +173,8 @@ RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_na
 	if (it != remote_tables.end()) {
 		return it->second;
 	}
-	return RemoteTableConfig(); // Returns default (not distributed)
+	// Fallbacks to default, which is not distributed table.
+	return RemoteTableConfig();
 }
 
 } // namespace duckdb

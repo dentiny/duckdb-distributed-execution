@@ -17,16 +17,18 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
+  src/distributed_server.cpp
+  src/distributed_table_scan_function.cpp
   src/entry_lookup_info_hash_utils.cpp
   src/motherduck_catalog.cpp
   src/motherduck_extension.cpp
+  src/motherduck_pragmas.cpp
   src/motherduck_storage.cpp
   src/motherduck_schema_catalog_entry.cpp
   src/motherduck_table_catalog_entry.cpp
   src/motherduck_transaction.cpp
   src/motherduck_transaction_manager.cpp
   src/physical_distributed_table_scan.cpp
-  src/distributed_server.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
