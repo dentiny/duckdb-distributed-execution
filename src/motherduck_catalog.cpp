@@ -13,8 +13,8 @@
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
+
 #include <iostream>
-#include "physical_distributed_table_scan.hpp"
 
 namespace duckdb {
 

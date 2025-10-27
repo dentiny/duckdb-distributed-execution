@@ -15,7 +15,6 @@ namespace duckdb {
 // Forward declaration.
 class DuckCatalog;
 class DatabaseInstance;
-class PhysicalDistributedTableScan;
 
 // Configuration for remote tables
 struct RemoteTableConfig {

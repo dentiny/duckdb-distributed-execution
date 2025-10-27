@@ -28,7 +28,6 @@ set(EXTENSION_SOURCES
   src/motherduck_table_catalog_entry.cpp
   src/motherduck_transaction.cpp
   src/motherduck_transaction_manager.cpp
-  src/physical_distributed_table_scan.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
