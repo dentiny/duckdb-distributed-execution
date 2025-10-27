@@ -183,8 +183,8 @@ CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 	create_table_info->tags = table_catalog_entry->tags;
 
 	auto bound_create_table_info = make_uniq<BoundCreateTableInfo>(*this, std::move(create_table_info));
-	auto motherduck_table_catalog_entry =
-	    make_uniq<MotherduckTableCatalogEntry>(catalog, db_instance, table_catalog_entry, std::move(bound_create_table_info));
+	auto motherduck_table_catalog_entry = make_uniq<MotherduckTableCatalogEntry>(
+	    catalog, db_instance, table_catalog_entry, std::move(bound_create_table_info));
 	auto *ret = motherduck_table_catalog_entry.get();
 	catalog_entries.emplace(std::move(key), std::move(motherduck_table_catalog_entry));
 	return ret;

@@ -1,11 +1,11 @@
 #include "motherduck_pragmas.hpp"
-#include "motherduck_catalog.hpp"
 
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "motherduck_catalog.hpp"
 
 namespace duckdb {
 
@@ -29,8 +29,6 @@ namespace duckdb {
 	auto server_url = parameters.values[1].ToString();
 	auto remote_table_name = parameters.values[2].ToString();
 
-	std::cout << "🔧 PRAGMA: Registering '" << table_name << "' -> '" << server_url << "'/'" << remote_table_name << "'" << std::endl;
-
 	// Get the motherduck catalog - assuming it's attached as "md".
 	auto &db_manager = DatabaseManager::Get(context);
 	auto md_db = db_manager.GetDatabase(context, "md");
@@ -39,8 +37,6 @@ namespace duckdb {
 	}
 
 	auto &catalog = md_db->GetCatalog();
-	std::cout << "   Catalog type: " << catalog.GetCatalogType() << ", name: " << catalog.GetName() << std::endl;
-	
 	if (catalog.GetCatalogType() != "motherduck") {
 		throw Exception(ExceptionType::CATALOG, "Database 'md' is not a motherduck database");
 	}
@@ -49,9 +45,8 @@ namespace duckdb {
 	if (!md_catalog_ptr) {
 		throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to MotherduckCatalog");
 	}
-	
+
 	md_catalog_ptr->RegisterRemoteTable(table_name, server_url, remote_table_name);
-	std::cout << "   ✅ Registered successfully! Catalog now has remote table." << std::endl;
 }
 
 /*static*/ void MotherduckPragmas::UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters) {

@@ -16,7 +16,7 @@ class MotherduckSchemaCatalogEntry;
 
 class MotherduckTableCatalogEntry : public DuckTableEntry {
 public:
-	MotherduckTableCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p, 
+	MotherduckTableCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
 	                            DuckTableEntry *duck_table_entry_p,
 	                            unique_ptr<BoundCreateTableInfo> create_table_info_p);
 	~MotherduckTableCatalogEntry() override = default;
@@ -57,7 +57,7 @@ private:
 	DatabaseInstance &db_instance;
 	unique_ptr<BoundCreateTableInfo> bound_create_table_info;
 	DuckTableEntry *duck_table_entry;
-	Catalog &motherduck_catalog_ref;  // Direct reference to MotherduckCatalog
+	Catalog &motherduck_catalog_ref; // Direct reference to MotherduckCatalog
 };
 
 } // namespace duckdb

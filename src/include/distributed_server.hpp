@@ -1,4 +1,5 @@
-// TODO(hjiang): Current server is populating fake data, the real implementation is populating with table creation and insertion.
+// TODO(hjiang): Current server is populating fake data, the real implementation is populating with table creation and
+// insertion.
 
 #pragma once
 

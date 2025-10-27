@@ -1,11 +1,12 @@
 #include "distributed_table_scan_function.hpp"
 
-#include <iostream>
-
 #include "distributed_server.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/main/database.hpp"
 
 namespace duckdb {
 
@@ -61,36 +62,37 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	auto &bind_data = data.bind_data->Cast<DistributedTableScanBindData>();
 	auto &local_state = data.local_state->Cast<DistributedTableScanLocalState>();
 
+	auto &db = DatabaseInstance::GetDatabase(context);
+	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Distributed scan executing for table: %s from server: %s",
+	                                        bind_data.remote_table_name, bind_data.server_url));
+
 	if (local_state.finished) {
 		output.SetCardinality(0);
 		return;
 	}
 
-	std::cout << " Distributed scan executing for table: " << bind_data.remote_table_name
-	          << " from server: " << bind_data.server_url << std::endl;
-
-	// Create server instance (in real implementation, this would connect to remote server)
+	// TODO(hjiang): Currently fake the interaction with server, should replace with client impl.
 	static DistributedServer server;
-
-	// Check if table exists on server
 	if (!server.TableExists(bind_data.remote_table_name)) {
+		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Table %s does not exist on server", bind_data.remote_table_name));
 		output.SetCardinality(0);
 		local_state.finished = true;
 		return;
 	}
 
-	// Get data from server
+	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s", bind_data.remote_table_name));
 	auto result = server.ScanTable(bind_data.remote_table_name, output.GetCapacity(), 0);
 
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL, "Distributed table scan error: " + result->GetError());
 	}
 
-	// Convert result to output chunk
 	auto data_chunk = result->Fetch();
 	if (data_chunk && data_chunk->size() > 0) {
+		DUCKDB_LOG_DEBUG(db, StringUtil::Format("✅ Fetched %llu rows from distributed table", data_chunk->size()));
 		output.Reference(*data_chunk);
-		local_state.finished = true; // For simplicity, we only return one chunk
+		// TODO(hjiang): For simplicity, we only return one chunk.
+		local_state.finished = true;
 	} else {
 		output.SetCardinality(0);
 		local_state.finished = true;
