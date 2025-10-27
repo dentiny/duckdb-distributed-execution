@@ -1,28 +1,28 @@
 #pragma once
 
-#include "duckdb/function/table_function.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/types.hpp"
+#include "duckdb/function/table_function.hpp"
 
 namespace duckdb {
 
+// Forward declaration.
 class TableCatalogEntry;
 
-// Bind data for distributed table scan
 struct DistributedTableScanBindData : public TableFunctionData {
 	explicit DistributedTableScanBindData(TableCatalogEntry &table_p, string server_url_p, string remote_table_name_p)
 	    : table(table_p), server_url(std::move(server_url_p)), remote_table_name(std::move(remote_table_name_p)) {
 	}
 
+	unique_ptr<FunctionData> Copy() const override;
+	bool Equals(const FunctionData &other_p) const override;
+
 	TableCatalogEntry &table;
 	string server_url;
 	string remote_table_name;
-
-	unique_ptr<FunctionData> Copy() const override;
-	bool Equals(const FunctionData &other_p) const override;
 };
 
-// The distributed table scan function that replaces regular table scans
+// The distributed table scan function that replaces regular table scans.
 class DistributedTableScanFunction {
 public:
 	static TableFunction GetFunction();

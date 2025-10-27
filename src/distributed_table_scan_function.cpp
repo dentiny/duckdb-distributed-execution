@@ -2,22 +2,20 @@
 
 #include "distributed_server.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
 
 namespace duckdb {
 
-// Global state for distributed table scan
 struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 	DistributedTableScanGlobalState() : finished(false) {
 	}
 	bool finished;
 };
 
-// Local state for distributed table scan
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
 	DistributedTableScanLocalState() : finished(false) {
 	}
@@ -42,8 +40,6 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 
 unique_ptr<FunctionData> DistributedTableScanFunction::Bind(ClientContext &context, TableFunctionBindInput &input,
                                                             vector<LogicalType> &return_types, vector<string> &names) {
-	// This function should not be called - GetScanFunction already provides bind_data
-	// But we need to implement it for the TableFunction interface
 	throw Exception(ExceptionType::INTERNAL, "DistributedTableScanFunction::Bind should not be called directly");
 }
 
@@ -89,7 +85,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	auto data_chunk = result->Fetch();
 	if (data_chunk && data_chunk->size() > 0) {
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("✅ Fetched %llu rows from distributed table", data_chunk->size()));
 		output.Reference(*data_chunk);
 		// TODO(hjiang): For simplicity, we only return one chunk.
 		local_state.finished = true;

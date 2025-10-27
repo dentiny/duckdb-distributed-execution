@@ -24,8 +24,8 @@ struct RemoteTableConfig {
 
 	RemoteTableConfig() : is_distributed(false) {
 	}
-	RemoteTableConfig(const string &url, const string &table)
-	    : server_url(url), remote_table_name(table), is_distributed(true) {
+	RemoteTableConfig(string url, string table)
+	    : server_url(std::move(url)), remote_table_name(std::move(table)), is_distributed(true) {
 	}
 };
 
@@ -56,8 +56,6 @@ public:
 	PhysicalOperator &PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op,
 	                             PhysicalOperator &plan) override;
 
-	// Note: PlanGet is handled by PhysicalPlanGenerator, not by Catalog
-
 	unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
 	                                            unique_ptr<LogicalOperator> plan) override;
 	unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
@@ -84,6 +82,7 @@ public:
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
 	// Remote table management.
+	// TODO(hjiang): Implement precondition check for (un)registration.
 	void RegisterRemoteTable(const string &table_name, const string &server_url, const string &remote_table_name);
 	void UnregisterRemoteTable(const string &table_name);
 	bool IsRemoteTable(const string &table_name) const;
@@ -96,7 +95,8 @@ private:
 	unique_ptr<DuckCatalog> duckdb_catalog;
 	DatabaseInstance &db_instance;
 
-	// Remote table configuration
+	// Remote table configuration.
+	// TODO(hjiang): Currently remote tables lives in memory, should provide options to persist and load.
 	mutable std::mutex remote_tables_mu;
 	unordered_map<string, RemoteTableConfig> remote_tables;
 };

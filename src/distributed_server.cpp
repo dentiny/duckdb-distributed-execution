@@ -33,11 +33,6 @@ void DistributedServer::Initialize() {
 	std::cout << "Distributed server initialized with test data" << std::endl;
 }
 
-unique_ptr<QueryResult> DistributedServer::ExecuteQuery(const string &sql) {
-	std::cout << "Server executing: " << sql << std::endl;
-	return conn->Query(sql);
-}
-
 unique_ptr<QueryResult> DistributedServer::ScanTable(const string &table_name, idx_t limit, idx_t offset) {
 	string sql = StringUtil::Format("SELECT * FROM %s LIMIT %d OFFSET %d", table_name, limit, offset);
 	std::cout << "Server scanning table: " << sql << std::endl;

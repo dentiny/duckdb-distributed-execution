@@ -145,7 +145,6 @@ void MotherduckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	throw NotImplementedException("DropSchema not implemented");
 }
 
-// Remote table management implementation
 void MotherduckCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
                                             const string &remote_table_name) {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
