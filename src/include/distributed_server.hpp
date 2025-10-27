@@ -1,9 +1,10 @@
+// TODO(hjiang): Current server is populating fake data, the real implementation is populating with table creation and insertion.
+
 #pragma once
 
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
-#include <memory>
-#include <unordered_map>
+#include "duckdb/common/unique_ptr.hpp"
 
 namespace duckdb {
 

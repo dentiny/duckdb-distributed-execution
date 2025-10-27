@@ -1,8 +1,9 @@
 #include "distributed_server.hpp"
 
+#include <iostream>
+
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
-#include <iostream>
 
 namespace duckdb {
 
@@ -16,7 +17,7 @@ void DistributedServer::Initialize() {
 	conn = make_uniq<Connection>(*db);
 
 	// Create some test data.
-	auto result = conn->Query("CREATE TABLE IF NOT EXISTS remote_table (id INTEGER, name VARCHAR, value INTEGER)");
+	auto result = conn->Query("CREATE TABLE IF NOT EXISTS my_table (id INTEGER, name VARCHAR, value INTEGER)");
 	if (result->HasError()) {
 		std::cerr << "Error creating table: " << result->GetError() << std::endl;
 		return;
@@ -24,7 +25,7 @@ void DistributedServer::Initialize() {
 
 	// Insert test data.
 	result = conn->Query(
-	    "INSERT INTO remote_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300)");
+	    "INSERT INTO my_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300)");
 	if (result->HasError()) {
 		std::cerr << "Error inserting data: " << result->GetError() << std::endl;
 	}

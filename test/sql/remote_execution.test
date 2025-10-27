@@ -14,11 +14,11 @@ statement ok
 PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
 
 statement ok
-INSERT INTO md.my_table VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 40);
+INSERT INTO md.my_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300);
 
 query III
 SELECT * FROM md.my_table;
 ----
-1	Alice	30
-2	Bob	25
-3	Charlie	40
+1	Server_Alice	100
+2	Server_Bob	200
+3	Server_Charlie	300
