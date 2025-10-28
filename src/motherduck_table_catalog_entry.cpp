@@ -71,13 +71,11 @@ string MotherduckTableCatalogEntry::ToSQL() const {
 
 Catalog &MotherduckTableCatalogEntry::ParentCatalog() {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ParentCatalog");
-	// Return the MotherduckCatalog, not the underlying DuckDB catalog!
 	return motherduck_catalog_ref;
 }
 
 const Catalog &MotherduckTableCatalogEntry::ParentCatalog() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ParentCatalog (const)");
-	// Return the MotherduckCatalog, not the underlying DuckDB catalog!
 	return motherduck_catalog_ref;
 }
 

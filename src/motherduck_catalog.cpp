@@ -15,7 +15,6 @@
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
 #include "physical_distributed_insert.hpp"
-#include <iostream>
 
 namespace duckdb {
 
