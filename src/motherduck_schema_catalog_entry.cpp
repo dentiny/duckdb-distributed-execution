@@ -138,8 +138,9 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 		string create_sql = "CREATE TABLE " + table_name + " (";
 		for (idx_t i = 0; i < create_info.columns.LogicalColumnCount(); i++) {
 			auto &col = create_info.columns.GetColumn(LogicalIndex(i));
-			if (i > 0)
+			if (i > 0) {
 				create_sql += ", ";
+			}
 			create_sql += col.Name() + " " + col.Type().ToString();
 		}
 		create_sql += ")";

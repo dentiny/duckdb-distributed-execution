@@ -20,7 +20,6 @@ namespace duckdb {
 // Forward declaration.
 class CreateSchemaInfo;
 class DatabaseInstance;
-class MotherduckCatalog;
 
 class MotherduckSchemaCatalogEntry : public DuckSchemaEntry {
 public:
@@ -77,7 +76,8 @@ private:
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
-	Catalog &motherduck_catalog_ref; // Direct reference to MotherduckCatalog
+	// Direct reference to MotherduckCatalog.
+	Catalog &motherduck_catalog_ref;
 
 	std::mutex mu;
 	unordered_map<EntryLookupInfoKey, unique_ptr<MotherduckTableCatalogEntry>, EntryLookupInfoHash,

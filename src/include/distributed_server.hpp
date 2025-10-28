@@ -24,9 +24,6 @@ public:
 	// Execute arbitrary SQL on the server
 	unique_ptr<QueryResult> ExecuteSQL(const string &sql);
 
-	// Get table data (simulating distributed scan).
-	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
-
 	// Check if table exists.
 	bool TableExists(const string &table_name);
 
@@ -35,6 +32,9 @@ public:
 
 	// INSERT INTO on server
 	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
+
+	// Get table data (simulating distributed scan).
+	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
 
 private:
 	unique_ptr<DuckDB> db;

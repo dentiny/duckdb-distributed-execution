@@ -5,13 +5,10 @@
 
 namespace duckdb {
 
-// Forward declaration.
-class LogicalInsert;
-
 // Physical operator that intercepts INSERT and sends to distributed server.
 class PhysicalDistributedInsert : public PhysicalOperator {
 public:
-	PhysicalDistributedInsert(PhysicalPlan &physical_plan, TableCatalogEntry &table, PhysicalOperator &child_operator,
+	PhysicalDistributedInsert(PhysicalPlan &physical_plan, TableCatalogEntry &table_p, PhysicalOperator &child_operator,
 	                          idx_t estimated_cardinality);
 
 	TableCatalogEntry &table;

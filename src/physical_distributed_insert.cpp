@@ -23,10 +23,10 @@ struct DistributedInsertLocalState : public LocalSinkState {};
 
 } // namespace
 
-PhysicalDistributedInsert::PhysicalDistributedInsert(PhysicalPlan &physical_plan, TableCatalogEntry &table,
+PhysicalDistributedInsert::PhysicalDistributedInsert(PhysicalPlan &physical_plan, TableCatalogEntry &table_p,
                                                      PhysicalOperator &child_operator, idx_t estimated_cardinality)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::INSERT, child_operator.types, estimated_cardinality),
-      table(table), child(child_operator) {
+      table(table_p), child(child_operator) {
 	children.emplace_back(child);
 }
 
@@ -42,14 +42,14 @@ SinkResultType PhysicalDistributedInsert::Sink(ExecutionContext &context, DataCh
                                                OperatorSinkInput &input) const {
 	auto &gstate = input.global_state.Cast<DistributedInsertGlobalState>();
 
-	auto &db = DatabaseInstance::GetDatabase(context.client);
-	DUCKDB_LOG_DEBUG(
-	    db, StringUtil::Format("Distributed insertion: received %llu rows for table %s", chunk.size(), table.name));
+	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed insertion: received %llu rows for table %s",
+	                                                 chunk.size(), table.name));
 
 	for (idx_t row_idx = 0; row_idx < chunk.size(); row_idx++) {
 		vector<Value> row;
 		row.reserve(chunk.ColumnCount());
-		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
+		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); ++col_idx) {
 			row.emplace_back(chunk.GetValue(col_idx, row_idx));
 		}
 		gstate.collected_rows.emplace_back(std::move(row));
@@ -63,9 +63,10 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
                                                      OperatorSinkFinalizeInput &input) const {
 	auto &gstate = input.global_state.Cast<DistributedInsertGlobalState>();
 
-	auto &db = DatabaseInstance::GetDatabase(context);
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Distributed insertion finalize: sending %llu rows to server for table %s",
-	                                        gstate.insert_count, table.name));
+	auto &db_instance = DatabaseInstance::GetDatabase(context);
+	DUCKDB_LOG_DEBUG(db_instance,
+	                 StringUtil::Format("Distributed insertion finalize: sending %llu rows to server for table %s",
+	                                    gstate.insert_count, table.name));
 
 	// TODO(hjiang): We should use arrow as communication protocol instead of a plain sql statement.
 	string insert_sql = "INSERT INTO " + table.name + " VALUES ";
