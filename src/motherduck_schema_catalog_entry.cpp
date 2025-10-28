@@ -5,6 +5,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "motherduck_catalog.hpp"
 
 namespace duckdb {
@@ -267,6 +268,41 @@ SimilarCatalogEntry MotherduckSchemaCatalogEntry::GetSimilarEntry(CatalogTransac
 
 void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::DropEntry");
+
+	// Intercept remote table drop to propagate to the distributed server
+	if (info.type == CatalogType::TABLE_ENTRY) {
+		auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+		if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(info.name)) {
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop remote table %s", info.name));
+
+			string drop_sql = "DROP TABLE ";
+			if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
+				drop_sql += "IF EXISTS ";
+			}
+			drop_sql += info.name;
+			if (info.cascade) {
+				drop_sql += " CASCADE";
+			}
+
+			auto &server = DistributedServer::GetInstance();
+			auto result = server.DropTable(drop_sql);
+			if (result->HasError()) {
+				throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
+			}
+
+			// Unregister after successful remote drop
+			md_catalog_ptr->UnregisterRemoteTable(info.name);
+		}
+		// Fallbacks to local table drop.
+		else {
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop local table %s", info.name));
+		}
+	}
+
+	// Local catalog entry is created for registered remote tables, which allows DuckDB to know the table existence and
+	// its schema. All actual operations (i.e., scan, insert) will be intercepted and sent to server.
+	//
+	// TODO(hjiang): Check whether we could fake a remote table entry, which doesn't do ay IO operations.
 	schema_catalog_entry->DropEntry(context, info);
 }
 

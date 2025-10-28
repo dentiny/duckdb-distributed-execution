@@ -104,7 +104,7 @@ TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &contex
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetScanFunction");
 
 	// Attempt distributed execution for registered remote table.
-	auto* md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	auto *md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
 	if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(name)) {
 		auto config = md_catalog_ptr->GetRemoteTableConfig(name);
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Table query %s is distributed. Using remote scan from %s.",

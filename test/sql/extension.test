@@ -24,3 +24,10 @@ query II
 SELECT database_name, table_name FROM duckdb_tables();
 ----
 md	my_table
+
+statement ok
+DROP TABLE md.my_table;
+
+query II
+SELECT database_name, table_name FROM duckdb_tables();
+----

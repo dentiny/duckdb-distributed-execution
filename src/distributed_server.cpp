@@ -59,6 +59,11 @@ unique_ptr<QueryResult> DistributedServer::CreateTable(const string &create_sql)
 	return conn->Query(create_sql);
 }
 
+unique_ptr<QueryResult> DistributedServer::DropTable(const string &drop_sql) {
+	std::cout << "🗑️  Server dropping table: " << drop_sql << std::endl;
+	return conn->Query(drop_sql);
+}
+
 unique_ptr<QueryResult> DistributedServer::InsertInto(const string &insert_sql) {
 	std::cout << "💾 Server inserting data: " << insert_sql << std::endl;
 	return conn->Query(insert_sql);
