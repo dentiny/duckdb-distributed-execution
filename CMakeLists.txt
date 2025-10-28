@@ -17,6 +17,7 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
+  src/distributed_insert.cpp
   src/distributed_server.cpp
   src/distributed_table_scan_function.cpp
   src/entry_lookup_info_hash_utils.cpp

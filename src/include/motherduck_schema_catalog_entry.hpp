@@ -76,6 +76,8 @@ private:
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
+	// Direct reference to MotherduckCatalog.
+	Catalog &motherduck_catalog_ref;
 
 	std::mutex mu;
 	unordered_map<EntryLookupInfoKey, unique_ptr<MotherduckTableCatalogEntry>, EntryLookupInfoHash,

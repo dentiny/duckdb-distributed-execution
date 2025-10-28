@@ -1,5 +1,6 @@
 #include "motherduck_catalog.hpp"
 
+#include "distributed_insert.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/helper.hpp"
@@ -10,6 +11,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/planner/operator/logical_insert.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
@@ -74,6 +76,20 @@ PhysicalOperator &MotherduckCatalog::PlanCreateTableAs(ClientContext &context, P
 PhysicalOperator &MotherduckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanInsert");
+
+	// Attempt insertion into remote table if registered.
+	bool is_remote = IsRemoteTable(op.table.name);
+	if (is_remote) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote insertion to table %s", op.table.name));
+
+		D_ASSERT(plan);
+		auto &distributed_insert = planner.Make<PhysicalDistributedInsert>(op.table, *plan, op.estimated_cardinality);
+		// Note: children are added in the PhysicalDistributedInsert, don't add here.
+		return distributed_insert;
+	}
+
+	// Fallback to local insertion.
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local insertion to table %s", op.table.name));
 	return duckdb_catalog->PlanInsert(context, planner, op, plan);
 }
 

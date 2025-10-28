@@ -18,7 +18,7 @@ namespace duckdb {
 MotherduckTableCatalogEntry::MotherduckTableCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
                                                          DuckTableEntry *duck_table_entry_p,
                                                          unique_ptr<BoundCreateTableInfo> bound_create_table_info_p)
-    : DuckTableEntry(duck_table_entry_p->catalog, duck_table_entry_p->schema, *bound_create_table_info_p,
+    : DuckTableEntry(motherduck_catalog_p, duck_table_entry_p->schema, *bound_create_table_info_p,
                      duck_table_entry_p->GetStorage().shared_from_this()),
       db_instance(db_instance_p), bound_create_table_info(std::move(bound_create_table_info_p)),
       duck_table_entry(duck_table_entry_p), motherduck_catalog_ref(motherduck_catalog_p) {
@@ -71,12 +71,12 @@ string MotherduckTableCatalogEntry::ToSQL() const {
 
 Catalog &MotherduckTableCatalogEntry::ParentCatalog() {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ParentCatalog");
-	return duck_table_entry->ParentCatalog();
+	return motherduck_catalog_ref;
 }
 
 const Catalog &MotherduckTableCatalogEntry::ParentCatalog() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ParentCatalog (const)");
-	return duck_table_entry->ParentCatalog();
+	return motherduck_catalog_ref;
 }
 
 SchemaCatalogEntry &MotherduckTableCatalogEntry::ParentSchema() {
@@ -104,7 +104,7 @@ TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &contex
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetScanFunction");
 
 	// Attempt distributed execution for registered remote table.
-	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	auto* md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
 	if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(name)) {
 		auto config = md_catalog_ptr->GetRemoteTableConfig(name);
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Table query %s is distributed. Using remote scan from %s.",
