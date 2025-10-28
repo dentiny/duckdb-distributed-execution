@@ -34,6 +34,14 @@ SELECT * FROM md.my_table;
 2	Server_Bob	200
 3	Server_Charlie	300
 
+# Validate all rows deletion.
+statement ok
+DELETE FROM md.my_table WHERE id=2 OR id=3;
+
+query III
+SELECT * FROM md.my_table;
+----
+
 # Validate table schema, creation and drop.
 statement ok
 DROP TABLE md.my_table;

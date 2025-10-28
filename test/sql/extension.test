@@ -31,6 +31,14 @@ SELECT * FROM md.my_table;
 2	Bob	25
 3	Charlie	40
 
+# Validate all rows deletion.
+statement ok
+DELETE FROM md.my_table WHERE id=2 OR id=3;
+
+query III
+SELECT * FROM md.my_table;
+----
+
 # Validate table schema, creation and drop.
 query II
 SELECT database_name, table_name FROM duckdb_tables();
