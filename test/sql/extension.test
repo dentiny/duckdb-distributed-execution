@@ -10,6 +10,7 @@ ATTACH DATABASE 'md' (TYPE motherduck);
 statement ok
 CREATE TABLE md.my_table (id INTEGER, name TEXT, age INTEGER);
 
+# Validate row insertions.
 statement ok
 INSERT INTO md.my_table VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 40);
 
@@ -20,6 +21,25 @@ SELECT * FROM md.my_table;
 2	Bob	25
 3	Charlie	40
 
+# Validation row deletions.
+statement ok
+DELETE FROM md.my_table WHERE id=1;
+
+query III
+SELECT * FROM md.my_table;
+----
+2	Bob	25
+3	Charlie	40
+
+# Validate all rows deletion.
+statement ok
+DELETE FROM md.my_table WHERE id=2 OR id=3;
+
+query III
+SELECT * FROM md.my_table;
+----
+
+# Validate table schema, creation and drop.
 query II
 SELECT database_name, table_name FROM duckdb_tables();
 ----

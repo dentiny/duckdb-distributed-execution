@@ -20,6 +20,7 @@ struct DistributedTableScanLocalState : public LocalTableFunctionState {
 	DistributedTableScanLocalState() : finished(false) {
 	}
 	bool finished;
+	vector<column_t> column_ids;
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
@@ -51,7 +52,9 @@ unique_ptr<GlobalTableFunctionState> DistributedTableScanFunction::InitGlobal(Cl
 unique_ptr<LocalTableFunctionState> DistributedTableScanFunction::InitLocal(ExecutionContext &context,
                                                                             TableFunctionInitInput &input,
                                                                             GlobalTableFunctionState *global_state) {
-	return make_uniq<DistributedTableScanLocalState>();
+	auto local_state = make_uniq<DistributedTableScanLocalState>();
+	local_state->column_ids = input.column_ids;
+	return std::move(local_state);
 }
 
 void DistributedTableScanFunction::Execute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -85,7 +88,22 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	auto data_chunk = result->Fetch();
 	if (data_chunk && data_chunk->size() > 0) {
-		output.Reference(*data_chunk);
+		// Handle projection pushdown: output may have fewer columns than the fetched data
+		// We need to only reference the columns that are requested
+		if (local_state.column_ids.empty() || output.ColumnCount() == data_chunk->ColumnCount()) {
+			// No projection or all columns requested
+			output.Reference(*data_chunk);
+		} else {
+			// Projection pushdown: only reference the requested columns
+			for (idx_t out_idx = 0; out_idx < output.ColumnCount(); out_idx++) {
+				auto col_idx = local_state.column_ids[out_idx];
+				if (col_idx < data_chunk->ColumnCount()) {
+					output.data[out_idx].Reference(data_chunk->data[col_idx]);
+				}
+			}
+			output.SetCardinality(data_chunk->size());
+		}
+
 		// TODO(hjiang): For simplicity, we only return one chunk.
 		local_state.finished = true;
 	} else {
