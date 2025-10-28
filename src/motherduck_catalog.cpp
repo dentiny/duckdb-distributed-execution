@@ -1,5 +1,6 @@
 #include "motherduck_catalog.hpp"
 
+#include "distributed_delete.hpp"
 #include "distributed_insert.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
@@ -10,7 +11,9 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
@@ -96,6 +99,21 @@ PhysicalOperator &MotherduckCatalog::PlanInsert(ClientContext &context, Physical
 PhysicalOperator &MotherduckCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalDelete &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanDelete");
+
+	// Attempt deletion from remote table if registered.
+	bool is_remote = IsRemoteTable(op.table.name);
+	if (is_remote) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote deletion from table %s", op.table.name));
+
+		auto &bound_ref = op.expressions[0]->Cast<BoundReferenceExpression>();
+		auto &distributed_delete = planner.Make<PhysicalDistributedDelete>(op.types, op.table, plan, bound_ref.index,
+		                                                                   op.estimated_cardinality, op.return_chunk);
+		// Note: children are added in the PhysicalDistributedDelete, don't add here.
+		return distributed_delete;
+	}
+
+	// Fallback to local deletion.
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local deletion from table %s", op.table.name));
 	return duckdb_catalog->PlanDelete(context, planner, op, plan);
 }
 
