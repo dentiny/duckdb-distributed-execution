@@ -8,10 +8,10 @@ statement ok
 ATTACH DATABASE 'md' (TYPE motherduck);
 
 statement ok
-CREATE TABLE md.my_table (id INTEGER, name TEXT, age INTEGER);
+PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
 
 statement ok
-PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
+CREATE TABLE md.my_table (id INTEGER, name TEXT, age INTEGER);
 
 statement ok
 INSERT INTO md.my_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300);

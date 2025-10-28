@@ -78,26 +78,18 @@ PhysicalOperator &MotherduckCatalog::PlanInsert(ClientContext &context, Physical
                                                 LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanInsert");
 
-	std::cout << "🔄 MotherduckCatalog::PlanInsert called for table: " << op.table.name << std::endl;
-	std::cout << "   op.table catalog type: " << op.table.catalog.GetCatalogType() << std::endl;
-	std::cout << "   op.table catalog name: " << op.table.catalog.GetName() << std::endl;
-	std::cout << "   THIS catalog name: " << GetName() << std::endl;
-
 	// Check if this is a distributed table
 	bool is_remote = IsRemoteTable(op.table.name);
-	std::cout << "   IsRemoteTable result: " << is_remote << std::endl;
-
 	if (is_remote) {
-		std::cout << "   ✨ Table is distributed! Using PhysicalDistributedInsert" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote insertion to table %s", op.table.name));
 
-		// Create our custom distributed insert operator
 		D_ASSERT(plan);
 		auto &distributed_insert = planner.Make<PhysicalDistributedInsert>(op.table, *plan, op.estimated_cardinality);
-		// Note: children are added in the PhysicalDistributedInsert, don't add here
+		// Note: children are added in the PhysicalDistributedInsert, don't add here.
 		return distributed_insert;
 	}
 
-	std::cout << "   📍 Table is local, using regular insert" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local insertion to table %s", op.table.name));
 	return duckdb_catalog->PlanInsert(context, planner, op, plan);
 }
 

@@ -1,13 +1,14 @@
 #pragma once
 
-#include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/execution/physical_operator.hpp"
 
 namespace duckdb {
 
+// Forward declaration.
 class LogicalInsert;
 
-// Physical operator that intercepts INSERT and sends to distributed server
+// Physical operator that intercepts INSERT and sends to distributed server.
 class PhysicalDistributedInsert : public PhysicalOperator {
 public:
 	PhysicalDistributedInsert(PhysicalPlan &physical_plan, TableCatalogEntry &table, PhysicalOperator &child_operator,
@@ -17,7 +18,7 @@ public:
 	PhysicalOperator &child;
 
 public:
-	// Sink interface
+	// Sink interface.
 	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
 	unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;
 
@@ -33,7 +34,7 @@ public:
 		return false;
 	}
 
-	// Source interface (for returning results if needed)
+	// Source interface.
 	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {

@@ -12,21 +12,22 @@
 
 namespace duckdb {
 
+namespace {
+
 struct DistributedInsertGlobalState : public GlobalSinkState {
 	idx_t insert_count = 0;
 	vector<vector<Value>> collected_rows;
 };
 
-struct DistributedInsertLocalState : public LocalSinkState {
-	// Empty for now
-};
+struct DistributedInsertLocalState : public LocalSinkState {};
+
+} // namespace
 
 PhysicalDistributedInsert::PhysicalDistributedInsert(PhysicalPlan &physical_plan, TableCatalogEntry &table,
                                                      PhysicalOperator &child_operator, idx_t estimated_cardinality)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::INSERT, child_operator.types, estimated_cardinality),
       table(table), child(child_operator) {
-	// Add the child operator
-	children.push_back(child);
+	children.emplace_back(child);
 }
 
 unique_ptr<GlobalSinkState> PhysicalDistributedInsert::GetGlobalSinkState(ClientContext &context) const {
@@ -43,15 +44,15 @@ SinkResultType PhysicalDistributedInsert::Sink(ExecutionContext &context, DataCh
 
 	auto &db = DatabaseInstance::GetDatabase(context.client);
 	DUCKDB_LOG_DEBUG(
-	    db, StringUtil::Format("💾 Distributed INSERT: Received %llu rows for table %s", chunk.size(), table.name));
+	    db, StringUtil::Format("Distributed insertion: received %llu rows for table %s", chunk.size(), table.name));
 
-	// Collect the rows to send to server
 	for (idx_t row_idx = 0; row_idx < chunk.size(); row_idx++) {
 		vector<Value> row;
+		row.reserve(chunk.ColumnCount());
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			row.push_back(chunk.GetValue(col_idx, row_idx));
+			row.emplace_back(chunk.GetValue(col_idx, row_idx));
 		}
-		gstate.collected_rows.push_back(std::move(row));
+		gstate.collected_rows.emplace_back(std::move(row));
 	}
 
 	gstate.insert_count += chunk.size();
@@ -63,12 +64,11 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 	auto &gstate = input.global_state.Cast<DistributedInsertGlobalState>();
 
 	auto &db = DatabaseInstance::GetDatabase(context);
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("💾 Distributed INSERT Finalize: Sending %llu rows to server for table %s",
+	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Distributed insertion finalize: sending %llu rows to server for table %s",
 	                                        gstate.insert_count, table.name));
 
-	// Build INSERT SQL
+	// TODO(hjiang): We should use arrow as communication protocol instead of a plain sql statement.
 	string insert_sql = "INSERT INTO " + table.name + " VALUES ";
-
 	for (idx_t row_idx = 0; row_idx < gstate.collected_rows.size(); row_idx++) {
 		if (row_idx > 0)
 			insert_sql += ", ";
@@ -84,25 +84,17 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 		insert_sql += ")";
 	}
 
-	std::cout << "📡 Sending INSERT to server: " << insert_sql.substr(0, 100) << "..." << std::endl;
-
-	// Send to server
 	auto &server = DistributedServer::GetInstance();
 	auto result = server.InsertInto(insert_sql);
 
 	if (result->HasError()) {
-		std::cerr << "❌ Server INSERT failed: " << result->GetError() << std::endl;
 		throw Exception(ExceptionType::IO, "Failed to insert into server: " + result->GetError());
 	}
-
-	std::cout << "   ✅ Inserted " << gstate.insert_count << " rows on server successfully!" << std::endl;
-
 	return SinkFinalizeType::READY;
 }
 
 SourceResultType PhysicalDistributedInsert::GetData(ExecutionContext &context, DataChunk &chunk,
                                                     OperatorSourceInput &input) const {
-	// INSERT doesn't return data (unless RETURNING is used, which we don't support yet)
 	chunk.SetCardinality(0);
 	return SourceResultType::FINISHED;
 }

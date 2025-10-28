@@ -26,21 +26,7 @@ void DistributedServer::Initialize() {
 	db = make_uniq<DuckDB>();
 	conn = make_uniq<Connection>(*db);
 
-	// Create some test data for testing
-	auto result = conn->Query("CREATE TABLE IF NOT EXISTS my_table (id INTEGER, name VARCHAR, value INTEGER)");
-	if (result->HasError()) {
-		std::cerr << "Error creating table: " << result->GetError() << std::endl;
-		return;
-	}
-
-	// Insert test data.
-	result = conn->Query(
-	    "INSERT INTO my_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300)");
-	if (result->HasError()) {
-		std::cerr << "Error inserting data: " << result->GetError() << std::endl;
-	}
-
-	std::cout << "✅ Distributed server initialized" << std::endl;
+	std::cout << "✅ Distributed server initialized (empty database ready)" << std::endl;
 }
 
 unique_ptr<QueryResult> DistributedServer::ScanTable(const string &table_name, idx_t limit, idx_t offset) {
