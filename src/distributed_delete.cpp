@@ -25,9 +25,9 @@ struct DistributedDeleteLocalState : public LocalSinkState {};
 
 PhysicalDistributedDelete::PhysicalDistributedDelete(PhysicalPlan &physical_plan, vector<LogicalType> types,
                                                      TableCatalogEntry &table_p, PhysicalOperator &child_operator,
-                                                     idx_t row_id_index, idx_t estimated_cardinality, bool return_chunk)
+                                                     idx_t row_id_index_p, idx_t estimated_cardinality, bool return_chunk_p)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::DELETE_OPERATOR, std::move(types), estimated_cardinality),
-      table(table_p), child(child_operator), row_id_index(row_id_index), return_chunk(return_chunk) {
+      table(table_p), child(child_operator), row_id_index(row_id_index_p), return_chunk(return_chunk_p) {
 	children.emplace_back(child);
 }
 
@@ -47,8 +47,6 @@ SinkResultType PhysicalDistributedDelete::Sink(ExecutionContext &context, DataCh
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed deletion: received %llu rows for table %s",
 	                                                 chunk.size(), table.name));
 
-	// Store a copy of the chunk with all column values (except rowid)
-	// We'll use these to reconstruct the WHERE clause
 	auto stored_chunk = make_uniq<DataChunk>();
 	stored_chunk->Initialize(Allocator::DefaultAllocator(), chunk.GetTypes());
 	chunk.Copy(*stored_chunk);
@@ -71,13 +69,11 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	// TODO(hjiang): Simplified implementation using the first column as a key.
 	// In a real distributed system, you'd forward the original WHERE clause SQL.
 	// For now, we reconstruct the DELETE using the first column values.
-
 	if (gstate.collected_chunks.empty() || gstate.delete_count == 0) {
 		return SinkFinalizeType::READY;
 	}
 
-	// Build DELETE statement using the first column values (assuming it's the primary key)
-	// This is a simplification - in reality you'd need proper key identification
+	// TODO(hjiang): A simplified implementation which builds DELETE statement using the first column values.
 	auto &first_chunk = *gstate.collected_chunks[0];
 	if (first_chunk.ColumnCount() == 0) {
 		return SinkFinalizeType::READY;
@@ -91,7 +87,7 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 
 	string key_column = columns.GetColumn(LogicalIndex(0)).Name();
 
-	// Collect all key values from all chunks
+	// Collect all key values from all chunks.
 	vector<Value> key_values;
 	for (auto &chunk_ptr : gstate.collected_chunks) {
 		auto &chunk = *chunk_ptr;
@@ -101,11 +97,12 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 		}
 	}
 
-	// Build DELETE statement
+	// Build DELETE statement.
 	string delete_sql = "DELETE FROM " + table.name + " WHERE " + key_column + " IN (";
 	for (idx_t i = 0; i < key_values.size(); i++) {
-		if (i > 0)
+		if (i > 0) {
 			delete_sql += ", ";
+		}
 		delete_sql += key_values[i].ToSQLString();
 	}
 	delete_sql += ")";
@@ -116,13 +113,12 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to delete from server: " + result->GetError());
 	}
-
 	return SinkFinalizeType::READY;
 }
 
 SourceResultType PhysicalDistributedDelete::GetData(ExecutionContext &context, DataChunk &chunk,
                                                     OperatorSourceInput &input) const {
-	// For now, don't return deleted rows (return_chunk is not fully implemented)
+	// TODO(hjiang): Implement return chunk.
 	chunk.SetCardinality(0);
 	return SourceResultType::FINISHED;
 }

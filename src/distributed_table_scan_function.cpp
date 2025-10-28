@@ -103,6 +103,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 			}
 			output.SetCardinality(data_chunk->size());
 		}
+
 		// TODO(hjiang): For simplicity, we only return one chunk.
 		local_state.finished = true;
 	} else {

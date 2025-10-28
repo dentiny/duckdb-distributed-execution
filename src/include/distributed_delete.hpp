@@ -9,8 +9,8 @@ namespace duckdb {
 class PhysicalDistributedDelete : public PhysicalOperator {
 public:
 	PhysicalDistributedDelete(PhysicalPlan &physical_plan, vector<LogicalType> types, TableCatalogEntry &table_p,
-	                          PhysicalOperator &child_operator, idx_t row_id_index, idx_t estimated_cardinality,
-	                          bool return_chunk);
+	                          PhysicalOperator &child_operator, idx_t row_id_index_p, idx_t estimated_cardinality,
+	                          bool return_chunk_p);
 
 	TableCatalogEntry &table;
 	PhysicalOperator &child;
