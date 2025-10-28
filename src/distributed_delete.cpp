@@ -25,7 +25,8 @@ struct DistributedDeleteLocalState : public LocalSinkState {};
 
 PhysicalDistributedDelete::PhysicalDistributedDelete(PhysicalPlan &physical_plan, vector<LogicalType> types,
                                                      TableCatalogEntry &table_p, PhysicalOperator &child_operator,
-                                                     idx_t row_id_index_p, idx_t estimated_cardinality, bool return_chunk_p)
+                                                     idx_t row_id_index_p, idx_t estimated_cardinality,
+                                                     bool return_chunk_p)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::DELETE_OPERATOR, std::move(types), estimated_cardinality),
       table(table_p), child(child_operator), row_id_index(row_id_index_p), return_chunk(return_chunk_p) {
 	children.emplace_back(child);
