@@ -4,6 +4,7 @@
 #include "distributed_insert.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -182,14 +183,23 @@ void MotherduckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 void MotherduckCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
                                             const string &remote_table_name) {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
-	remote_tables[table_name] = RemoteTableConfig(server_url, remote_table_name);
+	auto remote_table_config = RemoteTableConfig(server_url, remote_table_name);
+	const bool succ = remote_tables.emplace(table_name, std::move(remote_table_config)).second;
+	if (!succ) {
+		throw InvalidInputException(
+		    StringUtil::Format("Failed to register table %s because it's already registered!", table_name));
+	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote table %s -> %s:%s", table_name, server_url,
 	                                                 remote_table_name));
 }
 
 void MotherduckCatalog::UnregisterRemoteTable(const string &table_name) {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
-	remote_tables.erase(table_name);
+	const size_t count = remote_tables.erase(table_name);
+	if (count != 1) {
+		throw InvalidInputException(
+		    StringUtil::Format("Failed to unregister table %s because it hasn't been registered!", table_name));
+	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote table %s", table_name));
 }
 

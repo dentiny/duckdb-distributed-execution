@@ -1,0 +1,31 @@
+# name: test/sql/registration.test
+# description: test motherduck extension to register and unregister table
+# group: [sql]
+
+require motherduck
+
+statement ok
+ATTACH DATABASE 'md' (TYPE motherduck);
+
+statement ok
+PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
+
+# Double registration.
+statement error
+PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
+----
+Invalid Input Error: Failed to register table my_table because it's already registered!
+
+statement ok
+PRAGMA md_unregister_remote_table('my_table');
+
+statement error
+PRAGMA md_unregister_remote_table('non_existent_table');
+----
+Invalid Input Error: Failed to unregister table non_existent_table because it hasn't been registered!
+
+# Double unregistration.
+statement error
+PRAGMA md_unregister_remote_table('my_table');
+----
+Invalid Input Error: Failed to unregister table my_table because it hasn't been registered!
