@@ -1,14 +1,13 @@
-#include "physical_distributed_insert.hpp"
-#include "distributed_server.hpp"
+#include "distributed_insert.hpp"
 
+#include "distributed_server.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/execution/execution_context.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/logging/logger.hpp"
-#include <iostream>
 
 namespace duckdb {
 

@@ -17,6 +17,7 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
+  src/distributed_insert.cpp
   src/distributed_server.cpp
   src/distributed_table_scan_function.cpp
   src/entry_lookup_info_hash_utils.cpp
@@ -28,7 +29,6 @@ set(EXTENSION_SOURCES
   src/motherduck_table_catalog_entry.cpp
   src/motherduck_transaction.cpp
   src/motherduck_transaction_manager.cpp
-  src/physical_distributed_insert.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
