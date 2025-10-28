@@ -22,3 +22,10 @@ SELECT * FROM md.my_table;
 1	Server_Alice	100
 2	Server_Bob	200
 3	Server_Charlie	300
+
+statement ok
+DROP TABLE md.my_table;
+
+query II
+SELECT database_name, table_name FROM duckdb_tables();
+----

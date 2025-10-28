@@ -30,6 +30,9 @@ public:
 	// CREATE TABLE on server
 	unique_ptr<QueryResult> CreateTable(const string &create_sql);
 
+	// DROP TABLE on server
+	unique_ptr<QueryResult> DropTable(const string &drop_sql);
+
 	// INSERT INTO on server
 	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
 
