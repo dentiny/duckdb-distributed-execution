@@ -19,11 +19,13 @@
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
+#include "query_recorder.hpp"
 
 namespace duckdb {
 
 MotherduckCatalog::MotherduckCatalog(AttachedDatabase &db)
-    : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()) {
+    : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()),
+      query_recorder(make_uniq<QueryRecorder>()) {
 }
 
 MotherduckCatalog::~MotherduckCatalog() = default;
@@ -58,8 +60,8 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 
 		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
 		D_ASSERT(schema_catalog_entry != nullptr);
-		auto motherduck_schema_entry = make_uniq<MotherduckSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
-		                                                                       std::move(create_schema_info));
+		auto motherduck_schema_entry = make_uniq<MotherduckSchemaCatalogEntry>(
+		    *this, db_instance, *query_recorder, schema_catalog_entry, std::move(create_schema_info));
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
 	}
 

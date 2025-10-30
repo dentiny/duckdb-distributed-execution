@@ -2,6 +2,7 @@
 
 #include <mutex>
 
+#include "base_query_recorder.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
@@ -24,7 +25,7 @@ class DatabaseInstance;
 class MotherduckSchemaCatalogEntry : public DuckSchemaEntry {
 public:
 	MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
-	                             SchemaCatalogEntry *table_catalog_entry_p,
+	                             BaseQueryRecorder &query_recorder_p, SchemaCatalogEntry *table_catalog_entry_p,
 	                             unique_ptr<CreateSchemaInfo> create_schema_info_p);
 	~MotherduckSchemaCatalogEntry() override = default;
 
@@ -74,6 +75,7 @@ private:
 	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
 
 	DatabaseInstance &db_instance;
+	BaseQueryRecorder &query_recorder;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
 	// Direct reference to MotherduckCatalog.
