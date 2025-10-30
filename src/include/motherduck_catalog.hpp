@@ -2,6 +2,7 @@
 
 #include <mutex>
 
+#include "base_query_recorder.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/string.hpp"
@@ -94,6 +95,9 @@ private:
 
 	unique_ptr<DuckCatalog> duckdb_catalog;
 	DatabaseInstance &db_instance;
+
+	// Query recorder.
+	unique_ptr<BaseQueryRecorder> query_recorder;
 
 	// Remote table configuration.
 	// TODO(hjiang): Currently remote tables lives in memory, should provide options to persist and load.
