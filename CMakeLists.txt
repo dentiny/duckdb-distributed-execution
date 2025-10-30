@@ -17,6 +17,7 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
+  src/base_query_recorder.cpp
   src/distributed_delete.cpp
   src/distributed_insert.cpp
   src/distributed_server.cpp
@@ -30,6 +31,7 @@ set(EXTENSION_SOURCES
   src/motherduck_table_catalog_entry.cpp
   src/motherduck_transaction.cpp
   src/motherduck_transaction_manager.cpp
+  src/query_recorder.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
