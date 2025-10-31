@@ -80,7 +80,7 @@ void GetQueryHistoryTableFunc(ClientContext &context, TableFunctionInput &data_p
 } // namespace
 
 TableFunction GetQueryHistory() {
-	TableFunction list_filesystems_query_func {/*name=*/"motherduck_get_query_history",
+	TableFunction list_filesystems_query_func {/*name=*/"md_get_query_history",
 	                                           /*arguments=*/ {},
 	                                           /*function=*/GetQueryHistoryTableFunc,
 	                                           /*bind=*/GetQueryHistoryTableFuncBind,

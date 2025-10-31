@@ -26,6 +26,6 @@ statement ok
 DROP TABLE md.test_query_table;
 
 query I
-SELECT COUNT(*) FROM motherduck_get_query_history();
+SELECT COUNT(*) FROM md_get_query_history();
 ----
 2
