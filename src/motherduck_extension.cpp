@@ -4,6 +4,7 @@
 #include "motherduck_extension.hpp"
 #include "motherduck_pragmas.hpp"
 #include "motherduck_storage.hpp"
+#include "query_history_query_function.hpp"
 
 namespace duckdb {
 
@@ -16,6 +17,9 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	// Register pragma functions to register and unregister remote table.
 	MotherduckPragmas::RegisterPragmas(loader);
+
+	// Register function to get query stats.
+	loader.RegisterFunction(GetQueryHistory());
 }
 
 } // namespace
