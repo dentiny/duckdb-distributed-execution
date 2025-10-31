@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 # Set extension name here
 set(TARGET_NAME motherduck)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 14)
 
 # DuckDB's extension distribution supports vcpkg. As such, dependencies can be added in ./vcpkg.json and then
 # used in cmake with find_package. Feel free to remove or replace with other dependencies.
@@ -31,7 +31,9 @@ set(EXTENSION_SOURCES
   src/motherduck_table_catalog_entry.cpp
   src/motherduck_transaction.cpp
   src/motherduck_transaction_manager.cpp
+  src/query_history_query_function.cpp
   src/query_recorder.cpp
+  src/query_recorder_factory.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

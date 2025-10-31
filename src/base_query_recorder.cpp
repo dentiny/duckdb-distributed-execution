@@ -21,4 +21,8 @@ QueryRecorderHandle NoopQueryRecorder::RecordQueryStart(string query) {
 void NoopQueryRecorder::RecordFinish(string query, uint64_t duration_millisec) {
 }
 
+vector<QueryRecord> NoopQueryRecorder::GetQueryRecords() const {
+	return {};
+}
+
 } // namespace duckdb

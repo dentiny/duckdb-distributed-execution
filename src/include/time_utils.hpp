@@ -14,6 +14,7 @@ inline constexpr uint64_t kMicrosToNanos = 1000ULL;
 inline constexpr uint64_t kSecondsToMicros = 1000ULL * 1000ULL;
 inline constexpr uint64_t kSecondsToNanos = 1000ULL * 1000ULL * 1000ULL;
 inline constexpr uint64_t kMilliToNanos = 1000ULL * 1000ULL;
+inline constexpr uint64_t kMilliToMicros = 1000ULL;
 
 // Get current timestamp in steady clock since epoch in nanoseconds.
 inline int64_t GetSteadyNowNanoSecSinceEpoch() {
