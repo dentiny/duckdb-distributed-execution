@@ -5,10 +5,20 @@
 #include "motherduck_pragmas.hpp"
 #include "motherduck_storage.hpp"
 #include "query_history_query_function.hpp"
+#include "query_recorder_factory.hpp"
 
 namespace duckdb {
 
 namespace {
+
+// Successful execution result.
+constexpr bool SUCCESS = true;
+
+// Clear stats for query recorder.
+void ClearQueryRecorderStats(const DataChunk &args, ExpressionState &state, Vector &result) {
+	GetQueryRecorder().ClearQueryRecords();
+	result.Reference(Value(SUCCESS));
+}
 
 void LoadInternal(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
@@ -20,6 +30,12 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	// Register function to get query stats.
 	loader.RegisterFunction(GetQueryHistory());
+
+	// Register function to clear query recorder stats.
+	ScalarFunction clear_recorder_stats_function("md_clear_query_recorder_stats",
+	                                             /*arguments=*/ {},
+	                                             /*return_type=*/LogicalType::BOOLEAN, ClearQueryRecorderStats);
+	loader.RegisterFunction(clear_recorder_stats_function);
 }
 
 } // namespace

@@ -41,6 +41,9 @@ public:
 	// Get all query stats.
 	virtual vector<QueryRecord> GetQueryRecords() const = 0;
 
+	// Clear all query stats.
+	virtual void ClearQueryRecords() = 0;
+
 private:
 	friend QueryRecorderHandle;
 
@@ -56,6 +59,8 @@ public:
 	QueryRecorderHandle RecordQueryStart(string query) override;
 
 	vector<QueryRecord> GetQueryRecords() const override;
+
+	void ClearQueryRecords() override;
 
 private:
 	void RecordFinish(string query, uint64_t duration_millisec) override;
