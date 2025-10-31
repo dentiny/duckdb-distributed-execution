@@ -25,4 +25,7 @@ vector<QueryRecord> NoopQueryRecorder::GetQueryRecords() const {
 	return {};
 }
 
+void NoopQueryRecorder::ClearQueryRecords() {
+}
+
 } // namespace duckdb

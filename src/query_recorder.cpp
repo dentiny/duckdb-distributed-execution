@@ -25,4 +25,9 @@ vector<QueryRecord> QueryRecorder::GetQueryRecords() const {
 	return query_records;
 }
 
+void QueryRecorder::ClearQueryRecords() {
+	const std::lock_guard<std::mutex> lck(mu);
+	query_timing.clear();
+}
+
 } // namespace duckdb

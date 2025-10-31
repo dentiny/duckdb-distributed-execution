@@ -29,3 +29,11 @@ query I
 SELECT COUNT(*) FROM md_get_query_history();
 ----
 2
+
+statement ok
+SELECT md_clear_query_recorder_stats();
+
+query I
+SELECT COUNT(*) FROM md_get_query_history();
+----
+0

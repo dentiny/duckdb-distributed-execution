@@ -18,6 +18,8 @@ public:
 
 	vector<QueryRecord> GetQueryRecords() const override;
 
+	void ClearQueryRecords() override;
+
 private:
 	void RecordFinish(string query, uint64_t duration_millisec) override;
 
