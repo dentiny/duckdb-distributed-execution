@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/vector.hpp"
 
 namespace duckdb {
 
@@ -23,6 +24,12 @@ private:
 	int64_t start_timestamp = 0;
 };
 
+// Query record for single statement execution.
+struct QueryRecord {
+	string query;
+	vector<int64_t> latencies;
+};
+
 class BaseQueryRecorder {
 public:
 	BaseQueryRecorder() = default;
@@ -30,6 +37,9 @@ public:
 
 	// Record the start of the query.
 	virtual QueryRecorderHandle RecordQueryStart(string query) = 0;
+
+	// Get all query stats.
+	virtual vector<QueryRecord> GetQueryRecords() const = 0;
 
 private:
 	friend QueryRecorderHandle;
@@ -44,6 +54,8 @@ public:
 	~NoopQueryRecorder() override = default;
 
 	QueryRecorderHandle RecordQueryStart(string query) override;
+
+	vector<QueryRecord> GetQueryRecords() const override;
 
 private:
 	void RecordFinish(string query, uint64_t duration_millisec) override;

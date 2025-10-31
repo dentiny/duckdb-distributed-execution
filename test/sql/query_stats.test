@@ -1,0 +1,31 @@
+# name: test/sql/query_stats.test
+# description: test motherduck extension to perform remote execution
+# group: [sql]
+
+require motherduck
+
+statement ok
+ATTACH DATABASE 'md' (TYPE motherduck);
+
+statement ok
+PRAGMA md_register_remote_table('test_query_table', 'http://localhost:8080', 'test_query_table');
+
+statement ok
+CREATE TABLE md.test_query_table (id INTEGER, name TEXT, age INTEGER);
+
+statement ok
+INSERT INTO md.test_query_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300);
+
+statement ok
+DELETE FROM md.test_query_table WHERE id=1;
+
+statement ok
+DELETE FROM md.test_query_table WHERE id=2 OR id=3;
+
+statement ok
+DROP TABLE md.test_query_table;
+
+query I
+SELECT COUNT(*) FROM md_get_query_history();
+----
+2

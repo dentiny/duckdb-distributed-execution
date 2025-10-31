@@ -7,6 +7,7 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "motherduck_catalog.hpp"
+#include "query_recorder_factory.hpp"
 
 namespace duckdb {
 
@@ -23,12 +24,11 @@ vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constrain
 
 MotherduckSchemaCatalogEntry::MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p,
                                                            DatabaseInstance &db_instance_p,
-                                                           BaseQueryRecorder &query_recorder_p,
                                                            SchemaCatalogEntry *schema_catalog_entry_p,
                                                            unique_ptr<CreateSchemaInfo> create_schema_info_p)
     : DuckSchemaEntry(motherduck_catalog_p, *create_schema_info_p), db_instance(db_instance_p),
-      query_recorder(query_recorder_p), create_schema_info(std::move(create_schema_info_p)),
-      schema_catalog_entry(schema_catalog_entry_p), motherduck_catalog_ref(motherduck_catalog_p) {
+      create_schema_info(std::move(create_schema_info_p)), schema_catalog_entry(schema_catalog_entry_p),
+      motherduck_catalog_ref(motherduck_catalog_p) {
 }
 
 unique_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
@@ -147,7 +147,7 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 		}
 		create_sql += ")";
 
-		const auto query_recorder_handle = query_recorder.RecordQueryStart(create_sql);
+		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
 		auto &server = DistributedServer::GetInstance();
 		auto result = server.CreateTable(create_sql);
 		if (result->HasError()) {
@@ -286,7 +286,7 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 				drop_sql += " CASCADE";
 			}
 
-			const auto query_recorder_handle = query_recorder.RecordQueryStart(drop_sql);
+			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
 			auto &server = DistributedServer::GetInstance();
 			auto result = server.DropTable(drop_sql);
 			if (result->HasError()) {

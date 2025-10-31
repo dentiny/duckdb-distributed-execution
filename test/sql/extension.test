@@ -8,6 +8,9 @@ statement ok
 ATTACH DATABASE 'md' (TYPE motherduck);
 
 statement ok
+DROP TABLE IF EXISTS md.my_table;
+
+statement ok
 CREATE TABLE md.my_table (id INTEGER, name TEXT, age INTEGER);
 
 # Validate row insertions.
