@@ -34,6 +34,11 @@ The main binaries that will be built are:
 - `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
 - `<extension_name>.duckdb_extension` is the loadable binary as it would be distributed.
 
+One build command
+```sh
+export VCPKG_TOOLCHAIN_PATH=/home/vscode/vcpkg/scripts/buildsystems/vcpkg.cmake && OVERRIDE_GIT_DESCRIBE=v1.4.1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) make debug
+```
+
 ### Tips for speedy builds
 DuckDB extensions currently rely on DuckDB's build system to provide easy testing and distributing. This does however come at the downside of requiring the template to build DuckDB and its unittest binary every time you build your extension. To mitigate this, we highly recommend installing [ccache](https://ccache.dev/) and [ninja](https://ninja-build.org/). This will ensure you only need to build core DuckDB once and allows for rapid rebuilds.
 

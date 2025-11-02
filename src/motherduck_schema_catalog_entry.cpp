@@ -1,11 +1,12 @@
 #include "motherduck_schema_catalog_entry.hpp"
 
-#include "distributed_server.hpp"
+#include "distributed_client.hpp"
+#include "distributed_protocol.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
-#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "motherduck_catalog.hpp"
 #include "query_recorder_factory.hpp"
 
@@ -148,8 +149,9 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 		create_sql += ")";
 
 		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
-		auto &server = DistributedServer::GetInstance();
-		auto result = server.CreateTable(create_sql);
+
+		auto &client = DistributedClient::GetInstance();
+		auto result = client.CreateTable(create_sql);
 		if (result->HasError()) {
 			throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
 		}
@@ -287,8 +289,8 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 			}
 
 			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
-			auto &server = DistributedServer::GetInstance();
-			auto result = server.DropTable(drop_sql);
+			auto &client = DistributedClient::GetInstance();
+			auto result = client.ExecuteSQL(drop_sql);
 			if (result->HasError()) {
 				throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
 			}

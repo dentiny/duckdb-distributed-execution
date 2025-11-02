@@ -1,5 +1,6 @@
 #define DUCKDB_EXTENSION_MAIN
 
+#include "distributed_server_function.hpp"
 #include "duckdb.hpp"
 #include "motherduck_extension.hpp"
 #include "motherduck_pragmas.hpp"
@@ -36,6 +37,10 @@ void LoadInternal(ExtensionLoader &loader) {
 	                                             /*arguments=*/ {},
 	                                             /*return_type=*/LogicalType::BOOLEAN, ClearQueryRecorderStats);
 	loader.RegisterFunction(clear_recorder_stats_function);
+
+	// Register distributed server control functions, which could be local usage.
+	loader.RegisterFunction(GetStartDistributedServerFunction());
+	loader.RegisterFunction(GetStopDistributedServerFunction());
 }
 
 } // namespace

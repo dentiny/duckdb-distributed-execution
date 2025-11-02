@@ -1,6 +1,16 @@
 {
         "dependencies": [
-                "openssl"
+                {
+                        "name": "openssl"
+                },
+                {
+                        "name": "arrow",
+                        "default-features": false,
+                        "features": [
+                                "filesystem",
+                                "flight"
+                        ]
+                }
         ],
         "vcpkg-configuration": {
                 "overlay-ports": [

@@ -1,0 +1,90 @@
+# name: test/sql/type_support.test
+# description: Test distributed execution with various data types
+# group: [sql]
+
+require motherduck
+
+statement ok
+SELECT start_distributed_server(8815);
+
+statement ok
+ATTACH DATABASE 'md:' AS md;
+
+statement ok
+PRAGMA md_register_remote_table('type_test_table', 'http://localhost:8080', 'type_test_table');
+
+statement ok
+DROP TABLE IF EXISTS md.type_test_table;
+
+statement ok
+CREATE TABLE md.type_test_table (
+    col_tinyint TINYINT,
+    col_smallint SMALLINT,
+    col_integer INTEGER,
+    col_bigint BIGINT,
+    col_utinyint UTINYINT,
+    col_usmallint USMALLINT,
+    col_uinteger UINTEGER,
+    col_ubigint UBIGINT,
+    col_float FLOAT,
+    col_double DOUBLE,
+    col_boolean BOOLEAN,
+    col_varchar VARCHAR
+);
+
+statement ok
+INSERT INTO md.type_test_table VALUES 
+    (-128, -32768, -2147483648, -9223372036854775808, 0, 0, 0, 0, -1.5, -2.5, true, 'negative'),
+    (0, 0, 0, 0, 128, 32768, 2147483648, 9223372036854775808, 0.0, 0.0, false, 'zero'),
+    (127, 32767, 2147483647, 9223372036854775807, 255, 65535, 4294967295, 18446744073709551615, 1.5, 2.5, true, 'positive');
+
+query IIIIIIIIRRIT
+SELECT * FROM md.type_test_table ORDER BY col_integer;
+----
+-128	-32768	-2147483648	-9223372036854775808	0	0	0	0	-1.5	-2.5	1	negative
+0	0	0	0	128	32768	2147483648	9223372036854775808	0.0	0.0	0	zero
+127	32767	2147483647	9223372036854775807	255	65535	4294967295	18446744073709551615	1.5	2.5	1	positive
+
+# Test filtering on different types.
+query I
+SELECT col_integer FROM md.type_test_table WHERE col_boolean = true ORDER BY col_integer;
+----
+-2147483648
+2147483647
+
+query T
+SELECT col_varchar FROM md.type_test_table WHERE col_float > 0 ORDER BY col_varchar;
+----
+positive
+
+query I
+SELECT col_tinyint FROM md.type_test_table WHERE col_double = 0.0;
+----
+0
+
+# Test aggregations on numeric types.
+query I
+SELECT COUNT(*) FROM md.type_test_table;
+----
+3
+
+query I
+SELECT SUM(col_integer) FROM md.type_test_table;
+----
+-1
+
+query R
+SELECT AVG(col_float) FROM md.type_test_table;
+----
+0.0
+
+# Test MIN/MAX on various types.
+query I
+SELECT MIN(col_tinyint) FROM md.type_test_table;
+----
+-128
+
+query I
+SELECT MAX(col_ubigint) FROM md.type_test_table;
+----
+18446744073709551615

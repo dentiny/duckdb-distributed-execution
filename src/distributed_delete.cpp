@@ -1,6 +1,6 @@
 #include "distributed_delete.hpp"
 
-#include "distributed_server.hpp"
+#include "distributed_client.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -15,7 +15,7 @@ namespace {
 
 struct DistributedDeleteGlobalState : public GlobalSinkState {
 	idx_t delete_count = 0;
-	// Store the actual data chunks with column values, not just row IDs
+	// Store the actual data chunks with column values, not just row IDs.
 	vector<unique_ptr<DataChunk>> collected_chunks;
 };
 
@@ -108,9 +108,8 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	}
 	delete_sql += ")";
 
-	auto &server = DistributedServer::GetInstance();
-	auto result = server.ExecuteSQL(delete_sql);
-
+	auto &client = DistributedClient::GetInstance();
+	auto result = client.ExecuteSQL(delete_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to delete from server: " + result->GetError());
 	}
