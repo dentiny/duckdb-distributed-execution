@@ -167,7 +167,9 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
-
+	// SERVER SIDE: Received CreateTableRequest protobuf message
+	// req.sql() contains the CREATE TABLE statement (type-safe access)
+	
 	std::cout << "🏗️  Server creating table: " << req.sql() << std::endl;
 	auto result = conn_->Query(req.sql());
 
@@ -177,8 +179,16 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 		return arrow::Status::OK();
 	}
 
+	// Build response using protobuf oneof
 	resp.set_success(true);
-	resp.mutable_create_table();  // Set the response type
+	resp.mutable_create_table();  // Sets oneof to CreateTableResponse
+	
+	// This returns:
+	// - resp.SerializeAsString() → bytes
+	// - Arrow Flight returns bytes to client
+	// - Client does: response.ParseFromArray(bytes)
+	// - Client checks: response.success() and response.has_create_table()
+	
 	return arrow::Status::OK();
 }
 

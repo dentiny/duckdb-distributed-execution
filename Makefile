@@ -11,8 +11,5 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: format-all
 
 format-all:
-	@echo "🎨 Formatting CMake files..."
-	@cmake-format -i CMakeLists.txt || echo "⚠️  cmake-format not installed. Install with: pip install cmake-format"
-	@echo "🎨 Formatting protobuf files..."
+	@cmake-format -i CMakeLists.txt
 	@buf format -w src/proto/
-	@echo "✅ All formatting complete!"

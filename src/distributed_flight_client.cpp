@@ -27,10 +27,19 @@ arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, distributed
 }
 
 arrow::Status DistributedFlightClient::CreateTable(const string &create_sql, distributed::DistributedResponse &response) {
-
+	// CLIENT SIDE: Build protobuf request with oneof
 	distributed::DistributedRequest req;
-	auto *create_req = req.mutable_create_table();
+	auto *create_req = req.mutable_create_table();  // Sets oneof to CreateTableRequest
 	create_req->set_sql(create_sql);
+	
+	// This sends:
+	// - req.SerializeAsString() → bytes
+	// - Arrow Flight DoAction(bytes)
+	// 
+	// Server receives and does:
+	// - req.ParseFromArray(bytes)
+	// - switch(req.request_case()) case kCreateTable:
+	// - HandleCreateTable(req.create_table())  // Type-safe protobuf access
 
 	return SendAction(req, response);
 }
@@ -97,19 +106,25 @@ arrow::Status DistributedFlightClient::InsertData(const string &table_name, std:
 
 arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
                                                  std::unique_ptr<arrow::flight::FlightStreamReader> &stream) {
-
+	// CLIENT SIDE: Build protobuf request for table scan
 	distributed::DistributedRequest req;
-	auto *scan_req = req.mutable_scan_table();
+	auto *scan_req = req.mutable_scan_table();  // Sets oneof to ScanTableRequest
 	scan_req->set_table_name(table_name);
 	scan_req->set_limit(limit);
 	scan_req->set_offset(offset);
 
-	// Serialize request to ticket
+	// Serialize protobuf to bytes and create Flight ticket
 	std::string req_data = req.SerializeAsString();
 	arrow::flight::Ticket ticket;
 	ticket.ticket = req_data;
 
-	// Call DoGet and get the stream
+	// Send via Arrow Flight DoGet
+	// Server will:
+	// 1. req.ParseFromArray(ticket bytes)
+	// 2. switch(req.request_case()) case kScanTable
+	// 3. HandleScanTable(req.scan_table()) - gets table_name, limit, offset
+	// 4. Execute query and return Arrow RecordBatches (NOT protobuf - efficient!)
+	
 	ARROW_ASSIGN_OR_RAISE(stream, client_->DoGet(ticket));
 
 	return arrow::Status::OK();
