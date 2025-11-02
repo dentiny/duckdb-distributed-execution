@@ -8,15 +8,8 @@
                         "default-features": false,
                         "features": [
                                 "filesystem",
-                                "flight",
-                                "parquet"
+                                "flight"
                         ]
-                },
-                {
-                        "name": "grpc"
-                },
-                {
-                        "name": "protobuf"
                 }
         ],
         "vcpkg-configuration": {
