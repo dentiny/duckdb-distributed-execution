@@ -48,10 +48,10 @@ void StartDistributedServer(DataChunk &args, ExpressionState &state, Vector &res
 				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
 			}
 		});
-		
+
 		// Detach the thread so it doesn't need cleanup
 		g_server_thread->detach();
-		
+
 		// TODO(hjiang): Use readiness probe to validate server on.
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -91,22 +91,20 @@ void StopDistributedServer(DataChunk &args, ExpressionState &state, Vector &resu
 	result_data[0] = StringVector::AddString(result, "Distributed server stopped");
 }
 
-}  // namespace
+} // namespace
 
 ScalarFunction GetStartDistributedServerFunction() {
-	auto start_func = ScalarFunction("start_distributed_server", 
-									  /*arguments*/{LogicalType::INTEGER}, 
-									  /*return_type=*/LogicalType::VARCHAR,
-	                                  StartDistributedServer);
+	auto start_func = ScalarFunction("start_distributed_server",
+	                                 /*arguments*/ {LogicalType::INTEGER},
+	                                 /*return_type=*/LogicalType::VARCHAR, StartDistributedServer);
 	start_func.varargs = LogicalType::ANY;
 	return start_func;
 }
 
 ScalarFunction GetStopDistributedServerFunction() {
-	return ScalarFunction("stop_distributed_server", 
-							/*arguments*/{}, 
-							/*return_type=*/LogicalType::VARCHAR,
-	                      StopDistributedServer);
+	return ScalarFunction("stop_distributed_server",
+	                      /*arguments*/ {},
+	                      /*return_type=*/LogicalType::VARCHAR, StopDistributedServer);
 }
 
 } // namespace duckdb

@@ -30,7 +30,8 @@ public:
 	unique_ptr<QueryResult> DropTable(const string &drop_sql);
 
 	// INSERT INTO on server.
-	// TODO(hjiang): Currently for implementation easy, directly execute SQL statements, should be use transfer rows and table name.
+	// TODO(hjiang): Currently for implementation easy, directly execute SQL statements, should be use transfer rows and
+	// table name.
 	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
 
 	// Get table data.
