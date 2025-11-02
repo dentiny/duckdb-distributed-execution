@@ -1,6 +1,23 @@
 {
         "dependencies": [
-                "openssl"
+                {
+                        "name": "openssl"
+                },
+                {
+                        "name": "arrow",
+                        "default-features": false,
+                        "features": [
+                                "filesystem",
+                                "flight",
+                                "parquet"
+                        ]
+                },
+                {
+                        "name": "grpc"
+                },
+                {
+                        "name": "protobuf"
+                }
         ],
         "vcpkg-configuration": {
                 "overlay-ports": [
