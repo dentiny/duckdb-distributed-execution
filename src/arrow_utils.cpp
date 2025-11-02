@@ -9,6 +9,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
 #include <arrow/array.h>
+#include <arrow/extension_type.h>
 #include <arrow/type.h>
 #include <cstring>
 
@@ -38,7 +39,7 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::UINT64:
 		return LogicalType {LogicalTypeId::UBIGINT};
 	// Half-precision floats convert to regular float.
-	case arrow::Type::HALF_FLOAT:		
+	case arrow::Type::HALF_FLOAT:
 	case arrow::Type::FLOAT:
 		return LogicalType {LogicalTypeId::FLOAT};
 	case arrow::Type::DOUBLE:
@@ -50,13 +51,30 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::LARGE_BINARY:
 		return LogicalType {LogicalTypeId::BLOB};
 	case arrow::Type::FIXED_SIZE_BINARY: {
-		// Check if this is a UUID (16 bytes)
-		auto fixed_binary_type = std::static_pointer_cast<arrow::FixedSizeBinaryType>(arrow_type);
-		if (fixed_binary_type->byte_width() == 16) {
-			// 16-byte fixed binary is likely UUID
-			return LogicalType {LogicalTypeId::UUID};
-		}
+		// Default to BLOB for fixed-size binary data
+		// Note: UUID detection requires checking Arrow extension metadata.
+		// If the type has extension metadata with name "arrow.uuid", it should be treated as UUID.
+		// For now, we treat all FIXED_SIZE_BINARY as BLOB unless explicitly marked as extension.
 		return LogicalType {LogicalTypeId::BLOB};
+	}
+	case arrow::Type::EXTENSION: {
+		// Handle Arrow extension types (UUID, HUGEINT, UHUGEINT, custom types, etc.)
+		auto ext_type = std::static_pointer_cast<arrow::ExtensionType>(arrow_type);
+		auto ext_name = ext_type->extension_name();
+
+		// Check for known extension types
+		if (ext_name == "arrow.uuid") {
+			return LogicalType {LogicalTypeId::UUID};
+		} else if (ext_name == "duckdb.hugeint") {
+			return LogicalType {LogicalTypeId::HUGEINT};
+		} else if (ext_name == "duckdb.uhugeint") {
+			return LogicalType {LogicalTypeId::UHUGEINT};
+		} else if (ext_name == "duckdb.time_tz") {
+			return LogicalType {LogicalTypeId::TIME_TZ};
+		}
+
+		// For unknown extensions, use the storage type
+		return ArrowTypeToDuckDBType(ext_type->storage_type());
 	}
 	case arrow::Type::DATE32:
 	case arrow::Type::DATE64:
@@ -74,12 +92,12 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::TIMESTAMP: {
 		// Map Arrow timestamp to DuckDB timestamp based on time unit and timezone.
 		auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
-		
+
 		// If timezone is present, use TIMESTAMP_TZ
 		if (!ts_type->timezone().empty()) {
 			return LogicalType {LogicalTypeId::TIMESTAMP_TZ};
 		}
-		
+
 		// Otherwise map based on time unit
 		switch (ts_type->unit()) {
 		case arrow::TimeUnit::SECOND:
@@ -104,19 +122,8 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::DECIMAL128:
 	case arrow::Type::DECIMAL256: {
 		// Extract precision and scale from Arrow decimal type.
+		// Note: HUGEINT/UHUGEINT should be sent as extension types, not as DECIMAL.
 		auto decimal_type = std::static_pointer_cast<arrow::DecimalType>(arrow_type);
-		
-		// If scale is 0 and precision is 38/39, treat as HUGEINT/UHUGEINT
-		if (decimal_type->scale() == 0) {
-			if (decimal_type->precision() == 38) {
-				// 128-bit signed integer (max precision for DECIMAL128)
-				return LogicalType {LogicalTypeId::HUGEINT};
-			} else if (decimal_type->precision() == 39) {
-				// 128-bit unsigned integer
-				return LogicalType {LogicalTypeId::UHUGEINT};
-			}
-		}
-		
 		return LogicalType::DECIMAL(decimal_type->precision(), decimal_type->scale());
 	}
 	default:
@@ -203,7 +210,9 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<double>(duckdb_vector)[row_idx] = double_array->Value(row_idx);
 			break;
 		}
+		case LogicalTypeId::CHAR:
 		case LogicalTypeId::VARCHAR: {
+			// CHAR and VARCHAR both map to Arrow STRING types
 			if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
 				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
 				auto str_val = str_array->GetString(row_idx);
@@ -242,11 +251,23 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			break;
 		}
 		case LogicalTypeId::UUID: {
-			// UUID is stored as FIXED_SIZE_BINARY(16) in Arrow
-			D_ASSERT(arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY);
-			auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(arrow_array);
-			auto data = binary_array->GetValue(row_idx);
-			
+			// UUID is stored as EXTENSION type with FIXED_SIZE_BINARY(16) storage in Arrow
+			// The actual array type will be the storage type (FIXED_SIZE_BINARY)
+			const uint8_t *data = nullptr;
+
+			if (arrow_array->type_id() == arrow::Type::EXTENSION) {
+				// Extension type wraps the storage array
+				auto ext_array = std::static_pointer_cast<arrow::ExtensionArray>(arrow_array);
+				auto storage_array = ext_array->storage();
+				D_ASSERT(storage_array->type_id() == arrow::Type::FIXED_SIZE_BINARY);
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(storage_array);
+				data = binary_array->GetValue(row_idx);
+			} else if (arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY) {
+				// Sometimes UUID may come as plain FIXED_SIZE_BINARY(16)
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(arrow_array);
+				data = binary_array->GetValue(row_idx);
+			}
+
 			// DuckDB stores UUID as hugeint_t (16 bytes)
 			hugeint_t uuid_val;
 			memcpy(&uuid_val, data, 16);
@@ -270,11 +291,20 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			break;
 		}
 		case LogicalTypeId::TIME:
-		case LogicalTypeId::TIME_NS: {
+		case LogicalTypeId::TIME_NS:
+		case LogicalTypeId::TIME_TZ: {
 			dtime_t time_val;
-			if (arrow_array->type_id() == arrow::Type::TIME32) {
-				auto time_array = std::static_pointer_cast<arrow::Time32Array>(arrow_array);
-				auto time_type = std::static_pointer_cast<arrow::Time32Type>(arrow_array->type());
+
+			// Handle extension types (like TIME_TZ)
+			auto actual_array = arrow_array;
+			if (arrow_array->type_id() == arrow::Type::EXTENSION) {
+				auto ext_array = std::static_pointer_cast<arrow::ExtensionArray>(arrow_array);
+				actual_array = ext_array->storage();
+			}
+
+			if (actual_array->type_id() == arrow::Type::TIME32) {
+				auto time_array = std::static_pointer_cast<arrow::Time32Array>(actual_array);
+				auto time_type = std::static_pointer_cast<arrow::Time32Type>(actual_array->type());
 				int32_t value = time_array->Value(row_idx);
 				if (time_type->unit() == arrow::TimeUnit::SECOND) {
 					time_val = Time::FromTime(value / 3600, (value % 3600) / 60, value % 60, 0);
@@ -282,10 +312,9 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 					D_ASSERT(time_type->unit() == arrow::TimeUnit::MILLI);
 					time_val = dtime_t(static_cast<int64_t>(value) * Interval::MICROS_PER_MSEC);
 				}
-			} else {
-				D_ASSERT(arrow_array->type_id() == arrow::Type::TIME64);
-				auto time_array = std::static_pointer_cast<arrow::Time64Array>(arrow_array);
-				auto time_type = std::static_pointer_cast<arrow::Time64Type>(arrow_array->type());
+			} else if (actual_array->type_id() == arrow::Type::TIME64) {
+				auto time_array = std::static_pointer_cast<arrow::Time64Array>(actual_array);
+				auto time_type = std::static_pointer_cast<arrow::Time64Type>(actual_array->type());
 				int64_t value = time_array->Value(row_idx);
 				if (time_type->unit() == arrow::TimeUnit::MICRO) {
 					time_val = dtime_t(value);
@@ -293,6 +322,13 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 					D_ASSERT(time_type->unit() == arrow::TimeUnit::NANO);
 					time_val = dtime_t(value / 1000);
 				}
+			} else if (actual_array->type_id() == arrow::Type::FIXED_SIZE_BINARY) {
+				// TIME_TZ stored as FIXED_SIZE_BINARY(8) - int64_t microseconds
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(actual_array);
+				auto data = binary_array->GetValue(row_idx);
+				int64_t value;
+				memcpy(&value, data, sizeof(int64_t));
+				time_val = dtime_t(value);
 			}
 			FlatVector::GetData<dtime_t>(duckdb_vector)[row_idx] = time_val;
 			break;
@@ -307,7 +343,7 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_array->type());
 			int64_t value = ts_array->Value(row_idx);
 			timestamp_t ts_val;
-			
+
 			switch (ts_type->unit()) {
 			case arrow::TimeUnit::SECOND:
 				ts_val = Timestamp::FromEpochSeconds(value);
@@ -350,10 +386,10 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 				auto duration_array = std::static_pointer_cast<arrow::DurationArray>(arrow_array);
 				auto duration_type = std::static_pointer_cast<arrow::DurationType>(arrow_array->type());
 				int64_t value = duration_array->Value(row_idx);
-				
+
 				interval_val.months = 0;
 				interval_val.days = 0;
-				
+
 				// Convert duration to microseconds based on time unit
 				switch (duration_type->unit()) {
 				case arrow::TimeUnit::SECOND:
@@ -375,17 +411,25 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 		}
 		case LogicalTypeId::HUGEINT:
 		case LogicalTypeId::UHUGEINT: {
-			// 128-bit integers stored as DECIMAL128 with scale=0 in Arrow
-			D_ASSERT(arrow_array->type_id() == arrow::Type::DECIMAL128);
-			auto decimal_array = std::static_pointer_cast<arrow::Decimal128Array>(arrow_array);
-			auto arrow_value = decimal_array->GetValue(row_idx);
-			
-			// Convert Arrow DECIMAL128 bytes to DuckDB hugeint_t
+			// 128-bit integers stored as EXTENSION type with FIXED_SIZE_BINARY(16) storage in Arrow
+			const uint8_t *data = nullptr;
+
+			if (arrow_array->type_id() == arrow::Type::EXTENSION) {
+				// Extension type wraps the storage array
+				auto ext_array = std::static_pointer_cast<arrow::ExtensionArray>(arrow_array);
+				auto storage_array = ext_array->storage();
+				D_ASSERT(storage_array->type_id() == arrow::Type::FIXED_SIZE_BINARY);
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(storage_array);
+				data = binary_array->GetValue(row_idx);
+			} else if (arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY) {
+				// Fallback for plain FIXED_SIZE_BINARY(16)
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(arrow_array);
+				data = binary_array->GetValue(row_idx);
+			}
+
+			// DuckDB stores HUGEINT/UHUGEINT as hugeint_t (16 bytes)
 			hugeint_t value;
-			auto bytes = reinterpret_cast<const uint8_t *>(arrow_value);
-			memcpy(&value.lower, bytes, sizeof(uint64_t));
-			memcpy(&value.upper, bytes + sizeof(uint64_t), sizeof(int64_t));
-			
+			memcpy(&value, data, 16);
 			FlatVector::GetData<hugeint_t>(duckdb_vector)[row_idx] = value;
 			break;
 		}
