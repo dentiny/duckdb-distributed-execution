@@ -15,25 +15,25 @@ namespace duckdb {
 
 class DistributedFlightClient {
 public:
-	explicit DistributedFlightClient(const string &server_url);
+	explicit DistributedFlightClient(string server_url);
 	~DistributedFlightClient() = default;
 
-	// Connect to server
+	// Connect to server.
 	arrow::Status Connect();
 
-	// Execute arbitrary SQL
+	// Execute arbitrary SQL.
 	arrow::Status ExecuteSQL(const string &sql, distributed::DistributedResponse &response);
 
-	// Create table
+	// Create table.
 	arrow::Status CreateTable(const string &create_sql, distributed::DistributedResponse &response);
 
-	// Drop table
+	// Drop table.
 	arrow::Status DropTable(const string &drop_sql, distributed::DistributedResponse &response);
 
-	// Check if table exists
+	// Check if table exists.
 	arrow::Status TableExists(const string &table_name, bool &exists);
 
-	// Insert data using Arrow RecordBatch
+	// Insert data using Arrow RecordBatch.
 	arrow::Status InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
 	                         distributed::DistributedResponse &response);
 
@@ -42,12 +42,13 @@ public:
 	                        std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
 
 private:
+	// RPC implementation to send request and block wait response.
 	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);
 
 private:
-	string server_url_;
-	arrow::flight::Location location_;
-	std::unique_ptr<arrow::flight::FlightClient> client_;
+	string server_url;
+	arrow::flight::Location location;
+	std::unique_ptr<arrow::flight::FlightClient> client;
 };
 
 } // namespace duckdb

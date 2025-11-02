@@ -9,8 +9,7 @@
 #include <chrono>
 #include <iostream>
 
-using namespace duckdb;
-
+using namespace duckdb; // NOLINT
 namespace {
 
 // Global server instance
@@ -27,8 +26,7 @@ void StartServerInBackground() {
 	if (!status.ok()) {
 		throw std::runtime_error("Failed to start server: " + status.ToString());
 	}
-
-	std::cout << "✅ Test server started on " << SERVER_URL << std::endl;
+	std::cout << "Test server started on " << SERVER_URL << std::endl;
 
 	// Run server (blocking)
 	auto serve_status = g_server->Serve();
@@ -49,12 +47,10 @@ void TeardownTestServer() {
 	if (g_server) {
 		g_server->Shutdown();
 	}
-
 	if (g_server_thread.joinable()) {
 		g_server_thread.join();
 	}
-
-	std::cout << "✅ Test server shut down" << std::endl;
+	std::cout << "Test server shut down" << std::endl;
 }
 
 } // namespace
@@ -192,15 +188,12 @@ TEST_CASE("Test DropTable via protobuf", "[distributed_flight]") {
 }
 
 int main(int argc, char **argv) {
-	// Setup: Start server in background
-	std::cout << "🧪 Setting up test server..." << std::endl;
+	std::cout << "Setting up test server..." << std::endl;
 	SetupTestServer();
 
-	// Run tests
 	int result = Catch::Session().run(argc, argv);
 
-	// Teardown: Stop server
-	std::cout << "🧹 Tearing down test server..." << std::endl;
+	std::cout << "Tearing down test server..." << std::endl;
 	TeardownTestServer();
 
 	return result;
