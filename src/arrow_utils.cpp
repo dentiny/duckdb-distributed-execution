@@ -54,13 +54,44 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::DATE64:
 		return LogicalType {LogicalTypeId::DATE};
 	case arrow::Type::TIME32:
-	case arrow::Type::TIME64:
+	case arrow::Type::TIME64: {
+		// Map Arrow time to DuckDB time types.
+		// Note: Arrow doesn't have a native TIME_TZ type, but we handle nanosecond precision.
+		auto time_type = std::static_pointer_cast<arrow::TimeType>(arrow_type);
+		if (time_type->unit() == arrow::TimeUnit::NANO) {
+			return LogicalType {LogicalTypeId::TIME_NS};
+		}
 		return LogicalType {LogicalTypeId::TIME};
-	case arrow::Type::TIMESTAMP:
-		return LogicalType {LogicalTypeId::TIMESTAMP};
+	}
+	case arrow::Type::TIMESTAMP: {
+		// Map Arrow timestamp to DuckDB timestamp based on time unit and timezone.
+		auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
+		
+		// If timezone is present, use TIMESTAMP_TZ
+		if (!ts_type->timezone().empty()) {
+			return LogicalType {LogicalTypeId::TIMESTAMP_TZ};
+		}
+		
+		// Otherwise map based on time unit
+		switch (ts_type->unit()) {
+		case arrow::TimeUnit::SECOND:
+			return LogicalType {LogicalTypeId::TIMESTAMP_SEC};
+		case arrow::TimeUnit::MILLI:
+			return LogicalType {LogicalTypeId::TIMESTAMP_MS};
+		case arrow::TimeUnit::MICRO:
+			return LogicalType {LogicalTypeId::TIMESTAMP}; // Default microseconds
+		case arrow::TimeUnit::NANO:
+			return LogicalType {LogicalTypeId::TIMESTAMP_NS};
+		default:
+			return LogicalType {LogicalTypeId::TIMESTAMP};
+		}
+	}
 	case arrow::Type::INTERVAL_MONTHS:
 	case arrow::Type::INTERVAL_DAY_TIME:
 	case arrow::Type::INTERVAL_MONTH_DAY_NANO:
+		return LogicalType {LogicalTypeId::INTERVAL};
+	case arrow::Type::DURATION:
+		// Arrow DURATION maps to DuckDB INTERVAL (elapsed time measurement)
 		return LogicalType {LogicalTypeId::INTERVAL};
 	case arrow::Type::DECIMAL128:
 	case arrow::Type::DECIMAL256: {
@@ -206,7 +237,8 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<date_t>(duckdb_vector)[row_idx] = date_val;
 			break;
 		}
-		case LogicalTypeId::TIME: {
+		case LogicalTypeId::TIME:
+		case LogicalTypeId::TIME_NS: {
 			dtime_t time_val;
 			if (arrow_array->type_id() == arrow::Type::TIME32) {
 				auto time_array = std::static_pointer_cast<arrow::Time32Array>(arrow_array);
@@ -233,13 +265,17 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<dtime_t>(duckdb_vector)[row_idx] = time_val;
 			break;
 		}
-		case LogicalTypeId::TIMESTAMP: {
-			// Arrow TIMESTAMP can be in various units.
+		case LogicalTypeId::TIMESTAMP_SEC:
+		case LogicalTypeId::TIMESTAMP_MS:
+		case LogicalTypeId::TIMESTAMP:
+		case LogicalTypeId::TIMESTAMP_NS:
+		case LogicalTypeId::TIMESTAMP_TZ: {
+			// Arrow TIMESTAMP can be in various units, with or without timezone.
 			auto ts_array = std::static_pointer_cast<arrow::TimestampArray>(arrow_array);
 			auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_array->type());
 			int64_t value = ts_array->Value(row_idx);
 			timestamp_t ts_val;
-
+			
 			switch (ts_type->unit()) {
 			case arrow::TimeUnit::SECOND:
 				ts_val = Timestamp::FromEpochSeconds(value);
@@ -258,7 +294,7 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			break;
 		}
 		case LogicalTypeId::INTERVAL: {
-			// Arrow intervals map to DuckDB intervals.
+			// Arrow intervals and durations map to DuckDB intervals.
 			interval_t interval_val;
 			if (arrow_array->type_id() == arrow::Type::INTERVAL_MONTHS) {
 				auto interval_array = std::static_pointer_cast<arrow::MonthIntervalArray>(arrow_array);
@@ -271,13 +307,36 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 				interval_val.months = 0;
 				interval_val.days = day_time.days;
 				interval_val.micros = static_cast<int64_t>(day_time.milliseconds) * 1000;
-			} else {
-				D_ASSERT(arrow_array->type_id() == arrow::Type::INTERVAL_MONTH_DAY_NANO);
+			} else if (arrow_array->type_id() == arrow::Type::INTERVAL_MONTH_DAY_NANO) {
 				auto interval_array = std::static_pointer_cast<arrow::MonthDayNanoIntervalArray>(arrow_array);
 				auto month_day_nano = interval_array->Value(row_idx);
 				interval_val.months = month_day_nano.months;
 				interval_val.days = month_day_nano.days;
 				interval_val.micros = month_day_nano.nanoseconds / 1000;
+			} else if (arrow_array->type_id() == arrow::Type::DURATION) {
+				// Arrow DURATION represents elapsed time in various units
+				auto duration_array = std::static_pointer_cast<arrow::DurationArray>(arrow_array);
+				auto duration_type = std::static_pointer_cast<arrow::DurationType>(arrow_array->type());
+				int64_t value = duration_array->Value(row_idx);
+				
+				interval_val.months = 0;
+				interval_val.days = 0;
+				
+				// Convert duration to microseconds based on time unit
+				switch (duration_type->unit()) {
+				case arrow::TimeUnit::SECOND:
+					interval_val.micros = value * 1000000;
+					break;
+				case arrow::TimeUnit::MILLI:
+					interval_val.micros = value * 1000;
+					break;
+				case arrow::TimeUnit::MICRO:
+					interval_val.micros = value;
+					break;
+				case arrow::TimeUnit::NANO:
+					interval_val.micros = value / 1000;
+					break;
+				}
 			}
 			FlatVector::GetData<interval_t>(duckdb_vector)[row_idx] = interval_val;
 			break;
