@@ -15,7 +15,7 @@
 namespace duckdb {
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
-	// TODO(hjiang): Add support for complex nested types (LIST, STRUCT, MAP) and more temporal variants.
+	// TODO: Add support for complex nested types (LIST, STRUCT, MAP, UNION) and special types (ENUM, BIT, BIGNUM).
 	switch (arrow_type->id()) {
 	case arrow::Type::NA:
 		return LogicalType {LogicalTypeId::SQLNULL};
@@ -48,8 +48,16 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 		return LogicalType {LogicalTypeId::VARCHAR};
 	case arrow::Type::BINARY:
 	case arrow::Type::LARGE_BINARY:
-	case arrow::Type::FIXED_SIZE_BINARY:
 		return LogicalType {LogicalTypeId::BLOB};
+	case arrow::Type::FIXED_SIZE_BINARY: {
+		// Check if this is a UUID (16 bytes)
+		auto fixed_binary_type = std::static_pointer_cast<arrow::FixedSizeBinaryType>(arrow_type);
+		if (fixed_binary_type->byte_width() == 16) {
+			// 16-byte fixed binary is likely UUID
+			return LogicalType {LogicalTypeId::UUID};
+		}
+		return LogicalType {LogicalTypeId::BLOB};
+	}
 	case arrow::Type::DATE32:
 	case arrow::Type::DATE64:
 		return LogicalType {LogicalTypeId::DATE};
@@ -97,6 +105,18 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::DECIMAL256: {
 		// Extract precision and scale from Arrow decimal type.
 		auto decimal_type = std::static_pointer_cast<arrow::DecimalType>(arrow_type);
+		
+		// If scale is 0 and precision is 38/39, treat as HUGEINT/UHUGEINT
+		if (decimal_type->scale() == 0) {
+			if (decimal_type->precision() == 38) {
+				// 128-bit signed integer (max precision for DECIMAL128)
+				return LogicalType {LogicalTypeId::HUGEINT};
+			} else if (decimal_type->precision() == 39) {
+				// 128-bit unsigned integer
+				return LogicalType {LogicalTypeId::UHUGEINT};
+			}
+		}
+		
 		return LogicalType::DECIMAL(decimal_type->precision(), decimal_type->scale());
 	}
 	default:
@@ -221,6 +241,18 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<string_t>(duckdb_vector)[row_idx] = blob_val;
 			break;
 		}
+		case LogicalTypeId::UUID: {
+			// UUID is stored as FIXED_SIZE_BINARY(16) in Arrow
+			D_ASSERT(arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY);
+			auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(arrow_array);
+			auto data = binary_array->GetValue(row_idx);
+			
+			// DuckDB stores UUID as hugeint_t (16 bytes)
+			hugeint_t uuid_val;
+			memcpy(&uuid_val, data, 16);
+			FlatVector::GetData<hugeint_t>(duckdb_vector)[row_idx] = uuid_val;
+			break;
+		}
 		case LogicalTypeId::DATE: {
 			// Arrow DATE32 is days since epoch, DATE64 is milliseconds since epoch.
 			date_t date_val;
@@ -339,6 +371,22 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 				}
 			}
 			FlatVector::GetData<interval_t>(duckdb_vector)[row_idx] = interval_val;
+			break;
+		}
+		case LogicalTypeId::HUGEINT:
+		case LogicalTypeId::UHUGEINT: {
+			// 128-bit integers stored as DECIMAL128 with scale=0 in Arrow
+			D_ASSERT(arrow_array->type_id() == arrow::Type::DECIMAL128);
+			auto decimal_array = std::static_pointer_cast<arrow::Decimal128Array>(arrow_array);
+			auto arrow_value = decimal_array->GetValue(row_idx);
+			
+			// Convert Arrow DECIMAL128 bytes to DuckDB hugeint_t
+			hugeint_t value;
+			auto bytes = reinterpret_cast<const uint8_t *>(arrow_value);
+			memcpy(&value.lower, bytes, sizeof(uint64_t));
+			memcpy(&value.upper, bytes + sizeof(uint64_t), sizeof(int64_t));
+			
+			FlatVector::GetData<hugeint_t>(duckdb_vector)[row_idx] = value;
 			break;
 		}
 		case LogicalTypeId::DECIMAL: {
