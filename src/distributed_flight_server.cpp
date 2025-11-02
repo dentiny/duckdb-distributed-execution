@@ -11,7 +11,6 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
-#include <iostream>
 
 namespace duckdb {
 
@@ -19,7 +18,6 @@ DistributedFlightServer::DistributedFlightServer(const string &host, int port) :
 	// Initialize DuckDB instance
 	db_ = make_uniq<DuckDB>();
 	conn_ = make_uniq<Connection>(*db_);
-	std::cout << "✅ Flight server initialized with DuckDB instance" << std::endl;
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -29,16 +27,12 @@ arrow::Status DistributedFlightServer::Start() {
 	arrow::flight::FlightServerOptions options(location);
 	ARROW_RETURN_NOT_OK(Init(options));
 
-	std::cout << "🚀 Flight server listening on " << location.ToString() << std::endl;
 	return arrow::Status::OK();
 }
 
 void DistributedFlightServer::Shutdown() {
 	auto status = FlightServerBase::Shutdown();
-	if (!status.ok()) {
-		std::cerr << "Warning: Shutdown returned error: " << status.ToString() << std::endl;
-	}
-	std::cout << "🛑 Flight server shut down" << std::endl;
+	// Ignore shutdown errors in production
 }
 
 string DistributedFlightServer::GetLocation() const {
@@ -170,9 +164,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
 	// SERVER SIDE: Received CreateTableRequest protobuf message
-	// req.sql() contains the CREATE TABLE statement (type-safe access)
-
-	std::cout << "🏗️  Server creating table: " << req.sql() << std::endl;
 	auto result = conn_->Query(req.sql());
 
 	if (result->HasError()) {
@@ -196,8 +187,6 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 
 arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTableRequest &req,
                                                        distributed::DistributedResponse &resp) {
-
-	std::cout << "🗑️  Server dropping table: " << req.table_name() << std::endl;
 	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
 	auto result = conn_->Query(sql);
 
@@ -214,7 +203,6 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 
 arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
                                                          distributed::DistributedResponse &resp) {
-
 	string sql =
 	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
 
@@ -242,9 +230,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	string sql =
 	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
-
-	std::cout << "🔍 Server scanning table: " << sql << std::endl;
-
 	auto result = conn_->Query(sql);
 
 	if (result->HasError()) {
@@ -261,9 +246,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table_name,
                                                         std::shared_ptr<arrow::RecordBatch> batch,
                                                         distributed::DistributedResponse &resp) {
-
-	std::cout << "💾 Server inserting " << batch->num_rows() << " rows into table: " << table_name << std::endl;
-
 	// For now, we'll use a simplified approach: convert Arrow to SQL INSERT
 	// TODO: Use proper Arrow->DuckDB integration when available
 

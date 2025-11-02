@@ -1,6 +1,5 @@
 #include "distributed_client.hpp"
 
-#include <iostream>
 #include <arrow/array.h>
 #include <arrow/type.h>
 
@@ -34,9 +33,8 @@ void DistributedClient::Initialize() {
 	if (!status.ok()) {
 		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
 	}
-
+	
 	connected_ = true;
-	std::cout << "✅ Distributed server client connected to " << server_url_ << std::endl;
 }
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset) {

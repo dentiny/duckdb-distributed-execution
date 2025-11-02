@@ -2,7 +2,6 @@
 #include "duckdb/common/string_util.hpp"
 
 #include <arrow/buffer.h>
-#include <iostream>
 
 namespace duckdb {
 
@@ -13,7 +12,6 @@ arrow::Status DistributedFlightClient::Connect() {
 	ARROW_ASSIGN_OR_RAISE(location_, arrow::flight::Location::Parse(server_url_));
 	ARROW_ASSIGN_OR_RAISE(client_, arrow::flight::FlightClient::Connect(location_));
 
-	std::cout << "🔌 Connected to Flight server at " << server_url_ << std::endl;
 	return arrow::Status::OK();
 }
 
