@@ -18,4 +18,3 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
                                      const LogicalType &type, idx_t num_rows);
 
 } // namespace duckdb
-
