@@ -1,6 +1,6 @@
 #include "distributed_client.hpp"
-#include "arrow_utils.hpp"
 
+#include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
