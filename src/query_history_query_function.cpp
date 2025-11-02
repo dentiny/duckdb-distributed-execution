@@ -25,7 +25,7 @@ unique_ptr<FunctionData> GetQueryHistoryTableFuncBind(ClientContext &context, Ta
 	return_types.reserve(2);
 	names.reserve(2);
 
-	return_types.emplace_back(LogicalType{LogicalTypeId::VARCHAR});
+	return_types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
 	names.emplace_back("query");
 
 	return_types.emplace_back(LogicalType::LIST(/*child=*/LogicalType {LogicalTypeId::TIME}));
