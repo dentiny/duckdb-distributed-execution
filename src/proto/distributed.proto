@@ -1,8 +1,10 @@
+// TODO(hjiang): Document table creation and drop behavior. For example, behavior on whether table exists or not.
+
 syntax = "proto3";
 
 package duckdb.distributed;
 
-// Request types for distributed operations
+// Request types for distributed operations.
 enum RequestType {
   REQUEST_TYPE_UNSPECIFIED = 0;
   EXECUTE_SQL = 1;
@@ -14,42 +16,42 @@ enum RequestType {
   TABLE_EXISTS = 7;
 }
 
-// Execute SQL request
+// Execute SQL request.
 message ExecuteSQLRequest {
   string sql = 1;
 }
 
-// Create table request
+// Create table request.
 message CreateTableRequest {
   string sql = 1;
 }
 
-// Drop table request
+// Drop table request.
 message DropTableRequest {
   string table_name = 1;
 }
 
-// Scan table request
+// Scan table request.
 message ScanTableRequest {
   string table_name = 1;
   uint64 limit = 2;
   uint64 offset = 3;
 }
 
-// Delete data request
+// Delete data request.
 message DeleteDataRequest {
   string table_name = 1;
   string where_clause = 2;
 }
 
-// Table exists request
+// Table exists request.
 message TableExistsRequest {
   string table_name = 1;
 }
 
-// Request message for distributed operations
+// Request message for distributed operations.
 message DistributedRequest {
-  // Request-specific parameters
+  // Request-specific parameters.
   oneof request {
     ExecuteSQLRequest execute_sql = 1;
     CreateTableRequest create_table = 2;
@@ -59,47 +61,48 @@ message DistributedRequest {
     TableExistsRequest table_exists = 6;
   }
 
-  // Common metadata for all requests
+  // Common metadata for all requests.
   map<string, string> metadata = 10;
 }
 
-// Execute SQL response
+// Execute SQL response.
 message ExecuteSQLResponse {
   uint64 rows_affected = 1;
 }
 
-// Create table response
+// Create table response.
 message CreateTableResponse {
   // Empty - success indicated by parent
 }
 
-// Drop table response
+// Drop table response.
 message DropTableResponse {
   // Empty - success indicated by parent
 }
 
-// Scan table response (data returned via Arrow Flight)
+// Scan table response, data returned via Arrow Flight.
 message ScanTableResponse {
   uint64 row_count = 1;
 }
 
-// Delete data response
+// Delete data response.
 message DeleteDataResponse {
   uint64 rows_deleted = 1;
 }
 
-// Table exists response
+// Table exists response.
 message TableExistsResponse {
   bool exists = 1;
 }
 
-// Response message for distributed operations
+// Response message for distributed operations.
 message DistributedResponse {
-  // Success or error
+  // Whether option succeeds.
+  // TODO(hjiang): Use grpc response.
   bool success = 1;
   string error_message = 2;
 
-  // Response-specific data
+  // Response-specific data.
   oneof response {
     ExecuteSQLResponse execute_sql = 3;
     CreateTableResponse create_table = 4;
@@ -108,17 +111,4 @@ message DistributedResponse {
     DeleteDataResponse delete_data = 7;
     TableExistsResponse table_exists = 8;
   }
-
-  // Common metadata for all responses
-  map<string, string> metadata = 10;
-}
-
-// Service definition for distributed operations
-// This integrates with Arrow Flight for data transfer
-service DistributedExecutor {
-  // Execute a control operation (uses protobuf)
-  rpc ExecuteControl(DistributedRequest) returns (DistributedResponse);
-
-  // Note: Data transfer uses Arrow Flight's DoGet/DoPut
-  // instead of protobuf for efficiency
 }
