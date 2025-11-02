@@ -1,6 +1,6 @@
 #pragma once
 
-#include "distributed.pb.h"  // Generated protobuf header
+#include "distributed.pb.h" // Generated protobuf header
 
 namespace duckdb {
 

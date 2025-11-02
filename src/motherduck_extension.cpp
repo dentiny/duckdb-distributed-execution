@@ -6,6 +6,7 @@
 #include "motherduck_storage.hpp"
 #include "query_history_query_function.hpp"
 #include "query_recorder_factory.hpp"
+#include "distributed_server_function.hpp"
 
 namespace duckdb {
 
@@ -36,6 +37,9 @@ void LoadInternal(ExtensionLoader &loader) {
 	                                             /*arguments=*/ {},
 	                                             /*return_type=*/LogicalType::BOOLEAN, ClearQueryRecorderStats);
 	loader.RegisterFunction(clear_recorder_stats_function);
+
+	// Register distributed server control functions for SQL tests
+	RegisterDistributedServerFunctions(loader);
 }
 
 } // namespace

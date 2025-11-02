@@ -1,6 +1,8 @@
 #include "distributed_flight_server.hpp"
 #include "distributed_protocol.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
+#include "duckdb/common/arrow/arrow_converter.hpp"
+#include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/string_util.hpp"
 
 #include <arrow/array.h>
@@ -169,7 +171,7 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
                                                          distributed::DistributedResponse &resp) {
 	// SERVER SIDE: Received CreateTableRequest protobuf message
 	// req.sql() contains the CREATE TABLE statement (type-safe access)
-	
+
 	std::cout << "🏗️  Server creating table: " << req.sql() << std::endl;
 	auto result = conn_->Query(req.sql());
 
@@ -181,14 +183,14 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 
 	// Build response using protobuf oneof
 	resp.set_success(true);
-	resp.mutable_create_table();  // Sets oneof to CreateTableResponse
-	
+	resp.mutable_create_table(); // Sets oneof to CreateTableResponse
+
 	// This returns:
 	// - resp.SerializeAsString() → bytes
 	// - Arrow Flight returns bytes to client
 	// - Client does: response.ParseFromArray(bytes)
 	// - Client checks: response.success() and response.has_create_table()
-	
+
 	return arrow::Status::OK();
 }
 
@@ -238,7 +240,8 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 
-	string sql = StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
+	string sql =
+	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
 
 	std::cout << "🔍 Server scanning table: " << sql << std::endl;
 
@@ -303,37 +306,40 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
                                                           std::shared_ptr<arrow::RecordBatchReader> &reader) {
 
-	// Convert DuckDB QueryResult to Arrow RecordBatchReader using C API bridge
-	// This is the standard way DuckDB integrates with Arrow
+	// Convert DuckDB QueryResult to Arrow using C API bridge
 
-	// Create an Arrow stream from the query result
-	auto stream_wrapper = make_uniq<ArrowArrayStreamWrapper>();
-	stream_wrapper->arrow_array_stream.release = nullptr;
+	// Step 1: Create Arrow schema from DuckDB types
+	ArrowSchema arrow_schema;
+	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
 
-	// Get all data chunks and convert to Arrow
+	// Convert to Arrow C++ schema
+	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
+
+	// Step 2: Collect all data chunks and convert to Arrow RecordBatches
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	std::shared_ptr<arrow::Schema> schema;
 
-	unique_ptr<DataChunk> chunk;
 	while (true) {
-		chunk = result.Fetch();
+		auto chunk = result.Fetch();
 		if (!chunk || chunk->size() == 0) {
 			break;
 		}
 
-		// Export to Arrow C API
-		// Note: This is a simplified version - may need adjustment based on DuckDB version
-		// For now, just create an empty schema
-		if (!schema) {
-			std::vector<std::shared_ptr<arrow::Field>> fields;
-			for (idx_t i = 0; i < result.ColumnCount(); i++) {
-				fields.push_back(arrow::field(result.ColumnName(i), arrow::utf8()));
-			}
-			schema = arrow::schema(fields);
+		// Convert DataChunk to Arrow using C API
+		ArrowArray arrow_array;
+		auto extension_types =
+		    ArrowTypeExtensionData::GetExtensionTypes(*result.client_properties.client_context, result.types);
+		ArrowConverter::ToArrowArray(*chunk, &arrow_array, result.client_properties, extension_types);
+
+		// Import to Arrow C++ RecordBatch
+		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
+		if (!batch_result.ok()) {
+			return arrow::Status::Invalid("Failed to import Arrow batch: " + batch_result.status().ToString());
 		}
+
+		batches.push_back(batch_result.ValueOrDie());
 	}
 
-	// Create reader from empty batches for now
+	// Step 3: Create RecordBatchReader from collected batches
 	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(batches, schema));
 
 	return arrow::Status::OK();

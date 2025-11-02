@@ -35,7 +35,8 @@ set(EXTENSION_SOURCES
     src/distributed_flight_client.cpp
     src/distributed_flight_server.cpp
     src/distributed_insert.cpp
-    src/distributed_server.cpp
+    src/distributed_client.cpp
+    src/distributed_server_function.cpp
     src/distributed_table_scan_function.cpp
     src/entry_lookup_info_hash_utils.cpp
     src/motherduck_catalog.cpp
@@ -56,18 +57,64 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 # Link all required libraries Note: gRPC and Protobuf are transitive
 # dependencies of ArrowFlight
 target_link_libraries(
-  ${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto Arrow::arrow_static
-  ArrowFlight::arrow_flight_static protobuf::libprotobuf)
+  ${EXTENSION_NAME}
+  OpenSSL::SSL
+  OpenSSL::Crypto
+  Arrow::arrow_static
+  ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
 
 target_link_libraries(
-  ${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto Arrow::arrow_static
-  ArrowFlight::arrow_flight_static protobuf::libprotobuf)
+  ${LOADABLE_EXTENSION_NAME}
+  OpenSSL::SSL
+  OpenSSL::Crypto
+  Arrow::arrow_static
+  ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
 
-# Add distributed server executable TODO: Fix duplicate symbol linking issue
-# before enabling add_executable(distributed_server
-# src/distributed_server_main.cpp) target_link_libraries(distributed_server
-# ${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto Arrow::arrow_static
-# ArrowFlight::arrow_flight_static gRPC::grpc++ protobuf::libprotobuf )
+# Add distributed server executable
+add_executable(distributed_server src/distributed_server_main.cpp)
+target_link_libraries(
+  distributed_server
+  ${EXTENSION_NAME}
+  OpenSSL::SSL
+  OpenSSL::Crypto
+  Arrow::arrow_static
+  ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
+
+# Add test client executable
+add_executable(test_distributed_client src/test_distributed_client.cpp)
+target_link_libraries(
+  test_distributed_client
+  ${EXTENSION_NAME}
+  OpenSSL::SSL
+  OpenSSL::Crypto
+  Arrow::arrow_static
+  ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
+
+# Unit test for distributed flight with Catch
+include_directories(duckdb/third_party/catch)
+add_executable(test_distributed_flight test/cpp/test_distributed_flight.cpp)
+target_link_libraries(
+  test_distributed_flight
+  ${EXTENSION_NAME}
+  OpenSSL::SSL
+  OpenSSL::Crypto
+  Arrow::arrow_static
+  ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
 
 install(
   TARGETS ${EXTENSION_NAME}

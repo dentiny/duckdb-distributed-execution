@@ -4,28 +4,32 @@
 
 require motherduck
 
+# Start distributed server in background thread
+statement ok
+SELECT start_distributed_server(8815);
+
 statement ok
 ATTACH DATABASE 'md' (TYPE motherduck);
 
 statement ok
-PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
+PRAGMA md_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
 
 # Double registration.
 statement error
-PRAGMA md_register_remote_table('my_table', 'http://localhost:8080', 'my_table');
+PRAGMA md_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
 ----
-Invalid Input Error: Failed to register table my_table because it's already registered!
+Invalid Input Error: Failed to register table registration_test_table because it's already registered!
 
 statement ok
-PRAGMA md_unregister_remote_table('my_table');
+PRAGMA md_unregister_remote_table('registration_test_table');
 
 statement error
-PRAGMA md_unregister_remote_table('non_existent_table');
+PRAGMA md_unregister_remote_table('non_existent_table_xyz');
 ----
-Invalid Input Error: Failed to unregister table non_existent_table because it hasn't been registered!
+Invalid Input Error: Failed to unregister table non_existent_table_xyz because it hasn't been registered!
 
 # Double unregistration.
 statement error
-PRAGMA md_unregister_remote_table('my_table');
+PRAGMA md_unregister_remote_table('registration_test_table');
 ----
-Invalid Input Error: Failed to unregister table my_table because it hasn't been registered!
+Invalid Input Error: Failed to unregister table registration_test_table because it hasn't been registered!

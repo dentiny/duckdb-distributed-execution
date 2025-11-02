@@ -1,6 +1,6 @@
 #include "distributed_delete.hpp"
 
-#include "distributed_server.hpp"
+#include "distributed_client.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -108,8 +108,8 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	}
 	delete_sql += ")";
 
-	auto &server = DistributedServer::GetInstance();
-	auto result = server.ExecuteSQL(delete_sql);
+	auto &client = DistributedClient::GetInstance();
+	auto result = client.ExecuteSQL(delete_sql);
 
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to delete from server: " + result->GetError());

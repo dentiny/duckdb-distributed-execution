@@ -1,6 +1,6 @@
 #include "distributed_insert.hpp"
 
-#include "distributed_server.hpp"
+#include "distributed_client.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -84,8 +84,8 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 		insert_sql += ")";
 	}
 
-	auto &server = DistributedServer::GetInstance();
-	auto result = server.InsertInto(insert_sql);
+	auto &client = DistributedClient::GetInstance();
+	auto result = client.InsertInto(insert_sql);
 
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to insert into server: " + result->GetError());

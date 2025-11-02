@@ -1,6 +1,6 @@
 #include "distributed_table_scan_function.hpp"
 
-#include "distributed_server.hpp"
+#include "distributed_client.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -71,8 +71,8 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	}
 
 	// TODO(hjiang): Currently fake the interaction with server, should replace with client impl.
-	auto &server = DistributedServer::GetInstance();
-	if (!server.TableExists(bind_data.remote_table_name)) {
+	auto &client = DistributedClient::GetInstance();
+	if (!client.TableExists(bind_data.remote_table_name)) {
 		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Table %s does not exist on server", bind_data.remote_table_name));
 		output.SetCardinality(0);
 		local_state.finished = true;
@@ -80,7 +80,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	}
 
 	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s", bind_data.remote_table_name));
-	auto result = server.ScanTable(bind_data.remote_table_name, output.GetCapacity(), 0);
+	auto result = client.ScanTable(bind_data.remote_table_name, output.GetCapacity(), 0);
 
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL, "Distributed table scan error: " + result->GetError());

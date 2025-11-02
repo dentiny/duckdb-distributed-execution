@@ -1,6 +1,6 @@
 #include "motherduck_schema_catalog_entry.hpp"
 
-#include "distributed_server.hpp"
+#include "distributed_client.hpp"
 #include "distributed_flight_client.hpp"
 #include "distributed_protocol.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -150,16 +150,16 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 		create_sql += ")";
 
 		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
-		
-		// Current: Use local DistributedServer (in-process)
-		auto &server = DistributedServer::GetInstance();
-		auto result = server.CreateTable(create_sql);
+
+		// Use DistributedClient (sends gRPC/protobuf to Flight server)
+		auto &client = DistributedClient::GetInstance();
+		auto result = client.CreateTable(create_sql);
 		if (result->HasError()) {
 			throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
 		}
-		
+
 		// PROTOBUF INTEGRATION FLOW (when using remote Flight server):
-		// 
+		//
 		// 1. High-level call from this function:
 		//    DistributedFlightClient client("grpc://server:8815");
 		//    client.Connect();
@@ -327,8 +327,8 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 			}
 
 			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
-			auto &server = DistributedServer::GetInstance();
-			auto result = server.DropTable(drop_sql);
+			auto &client = DistributedClient::GetInstance();
+			auto result = client.ExecuteSQL(drop_sql);
 			if (result->HasError()) {
 				throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
 			}
