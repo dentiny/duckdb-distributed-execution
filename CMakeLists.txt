@@ -52,6 +52,7 @@ target_link_libraries(${EXTENSION_NAME}
   OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
+  gRPC::grpc++
 )
 
 target_link_libraries(${LOADABLE_EXTENSION_NAME} 
@@ -59,6 +60,7 @@ target_link_libraries(${LOADABLE_EXTENSION_NAME}
   OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
+  gRPC::grpc++
 )
 
 # Add distributed server executable
