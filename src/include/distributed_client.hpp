@@ -23,16 +23,17 @@ public:
 	// Check if table exists (via protobuf TableExistsRequest)
 	bool TableExists(const string &table_name);
 
-	// CREATE TABLE on server (via protobuf CreateTableRequest)
+	// CREATE TABLE on server.
 	unique_ptr<QueryResult> CreateTable(const string &create_sql);
 
-	// DROP TABLE on server (via protobuf DropTableRequest)
+	// DROP TABLE on server.
 	unique_ptr<QueryResult> DropTable(const string &drop_sql);
 
-	// INSERT INTO on server (via protobuf ExecuteSQLRequest)
+	// INSERT INTO on server.
+	// TODO(hjiang): Currently for implementation easy, directly execute SQL statements, should be use transfer rows and table name.
 	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
 
-	// Get table data (via protobuf ScanTableRequest → Arrow RecordBatches)
+	// Get table data.
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
 
 private:

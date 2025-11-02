@@ -11,22 +11,22 @@
 
 namespace duckdb {
 
-// Arrow Flight-based RPC server for distributed execution
+// Arrow Flight-based RPC server for distributed execution.
 class DistributedFlightServer : public arrow::flight::FlightServerBase {
 public:
-	explicit DistributedFlightServer(const string &host = "0.0.0.0", int port = 8815);
+	explicit DistributedFlightServer(string host_p = "0.0.0.0", int port_p = 8815);
 	~DistributedFlightServer() override = default;
 
-	// Start the server
+	// Start the server.
 	arrow::Status Start();
 
-	// Stop the server
+	// Stop the server.
 	void Shutdown();
 
-	// Get server location
+	// Get server location.
 	string GetLocation() const;
 
-	// Flight RPC methods
+	// Flight RPC methods.
 	arrow::Status DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
 	                       std::unique_ptr<arrow::flight::ResultStream> *result) override;
 
@@ -38,7 +38,7 @@ public:
 	                    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) override;
 
 private:
-	// Process different request types using protobuf messages directly
+	// Process different request types using protobuf messages directly.
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, distributed::DistributedResponse &resp);
@@ -48,14 +48,14 @@ private:
 	arrow::Status HandleInsertData(const std::string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
 	                               distributed::DistributedResponse &resp);
 
-	// Convert DuckDB result to Arrow RecordBatch
+	// Convert DuckDB result to Arrow RecordBatch.
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader);
 
 private:
-	string host_;
-	int port_;
-	unique_ptr<DuckDB> db_;
-	unique_ptr<Connection> conn_;
+	string host;
+	int port;
+	unique_ptr<DuckDB> db;
+	unique_ptr<Connection> conn;
 };
 
 } // namespace duckdb

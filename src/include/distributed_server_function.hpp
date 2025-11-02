@@ -1,11 +1,11 @@
 #pragma once
 
-#include "duckdb/main/extension.hpp"
+#include "duckdb/function/scalar_function.hpp"
 
 namespace duckdb {
 
-// Register scalar functions for starting/stopping distributed server
-// This allows SQL tests to start the server via: SELECT start_distributed_server();
-void RegisterDistributedServerFunctions(ExtensionLoader &loader);
+// Create scalar functions for starting/stopping distributed server
+ScalarFunction GetStartDistributedServerFunction();
+ScalarFunction GetStopDistributedServerFunction();
 
 } // namespace duckdb

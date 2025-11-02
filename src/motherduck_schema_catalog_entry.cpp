@@ -1,7 +1,6 @@
 #include "motherduck_schema_catalog_entry.hpp"
 
 #include "distributed_client.hpp"
-#include "distributed_flight_client.hpp"
 #include "distributed_protocol.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -151,48 +150,11 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 
 		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
 
-		// Use DistributedClient (sends gRPC/protobuf to Flight server)
 		auto &client = DistributedClient::GetInstance();
 		auto result = client.CreateTable(create_sql);
 		if (result->HasError()) {
 			throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
 		}
-
-		// PROTOBUF INTEGRATION FLOW (when using remote Flight server):
-		//
-		// 1. High-level call from this function:
-		//    DistributedFlightClient client("grpc://server:8815");
-		//    client.Connect();
-		//    distributed::DistributedResponse response;
-		//    client.CreateTable(create_sql, response);
-		//
-		// 2. Inside client.CreateTable() - builds protobuf request:
-		//    distributed::DistributedRequest req;
-		//    auto* create_req = req.mutable_create_table();  // oneof → CreateTableRequest
-		//    create_req->set_sql(create_sql);
-		//    SendAction(req, response);  // Serialize and send
-		//
-		// 3. Network: protobuf bytes sent via Arrow Flight gRPC
-		//
-		// 4. Server receives in DoAction():
-		//    distributed::DistributedRequest req;
-		//    req.ParseFromArray(bytes);  // Deserialize protobuf
-		//    switch(req.request_case()) {
-		//      case kCreateTable:
-		//        HandleCreateTable(req.create_table(), response);  // Type-safe!
-		//    }
-		//
-		// 5. Server handles:
-		//    const CreateTableRequest& create = req.create_table();
-		//    conn_->Query(create.sql());
-		//    response.set_success(true);
-		//    response.mutable_create_table();  // oneof → CreateTableResponse
-		//
-		// 6. Server returns: response.SerializeAsString() → bytes
-		//
-		// 7. Client receives and checks:
-		//    if (!response.success()) throw Exception(response.error_message());
-		//    // response.has_create_table() == true
 	} else {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local table %s", table_name));
 	}

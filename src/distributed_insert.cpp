@@ -86,7 +86,6 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 
 	auto &client = DistributedClient::GetInstance();
 	auto result = client.InsertInto(insert_sql);
-
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to insert into server: " + result->GetError());
 	}

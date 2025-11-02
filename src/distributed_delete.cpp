@@ -15,7 +15,7 @@ namespace {
 
 struct DistributedDeleteGlobalState : public GlobalSinkState {
 	idx_t delete_count = 0;
-	// Store the actual data chunks with column values, not just row IDs
+	// Store the actual data chunks with column values, not just row IDs.
 	vector<unique_ptr<DataChunk>> collected_chunks;
 };
 
@@ -110,7 +110,6 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 
 	auto &client = DistributedClient::GetInstance();
 	auto result = client.ExecuteSQL(delete_sql);
-
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to delete from server: " + result->GetError());
 	}
