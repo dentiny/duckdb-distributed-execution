@@ -1,14 +1,14 @@
 #include "distributed_client.hpp"
 
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/common/types/data_chunk.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/main/query_result.hpp"
+
 #include <arrow/array.h>
 #include <arrow/type.h>
-
-#include "duckdb/common/string_util.hpp"
-#include "duckdb/logging/logger.hpp"
-#include "duckdb/main/query_result.hpp"
-#include "duckdb/main/materialized_query_result.hpp"
-#include "duckdb/common/types/data_chunk.hpp"
-#include "duckdb/common/types/column/column_data_collection.hpp"
 
 namespace duckdb {
 

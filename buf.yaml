@@ -1,10 +1,8 @@
 version: v1
-# buf configuration for protobuf linting and formatting
 
 lint:
   use:
     - DEFAULT
-  # Additional rules for better code quality
   enum_zero_value_suffix: _UNSPECIFIED
   rpc_allow_same_request_response: false
   rpc_allow_google_protobuf_empty_requests: true
@@ -22,4 +20,3 @@ lint:
   ignore:
     - build
     - vcpkg_installed
-

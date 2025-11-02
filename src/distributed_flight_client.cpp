@@ -1,4 +1,5 @@
 #include "distributed_flight_client.hpp"
+
 #include "duckdb/common/string_util.hpp"
 
 #include <arrow/buffer.h>

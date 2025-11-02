@@ -1,9 +1,10 @@
-#include "duckdb/function/scalar_function.hpp"
-#include "duckdb/main/extension.hpp"
 #include "distributed_flight_server.hpp"
 
-#include <thread>
+#include "duckdb/function/scalar_function.hpp"
+#include "duckdb/main/extension.hpp"
+
 #include <memory>
+#include <thread>
 
 namespace duckdb {
 

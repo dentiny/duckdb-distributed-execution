@@ -1,8 +1,9 @@
 #include "distributed_flight_server.hpp"
+
 #include "distributed_protocol.hpp"
-#include "duckdb/common/arrow/arrow_wrapper.hpp"
-#include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
+#include "duckdb/common/arrow/arrow_converter.hpp"
+#include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 
 #include <arrow/array.h>
