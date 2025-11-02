@@ -226,7 +226,7 @@ SELECT COUNT(*) FROM md.uuid_test_table WHERE user_uuid IS NOT NULL;
 ----
 2
 
-# Test HUGEINT type support
+# Test HUGEINT type support.
 statement ok
 DROP TABLE IF EXISTS md.hugeint_test_table;
 
@@ -260,7 +260,7 @@ SELECT MAX(uhuge_value) FROM md.hugeint_test_table;
 ----
 340282366920938463463374607431768211455
 
-# Test TIMESTAMP precision variants
+# Test TIMESTAMP precision variants.
 statement ok
 DROP TABLE IF EXISTS md.timestamp_precision_test;
 
@@ -291,7 +291,7 @@ SELECT COUNT(*) FROM md.timestamp_precision_test WHERE ts_sec > '2020-01-01';
 ----
 2
 
-# Test INTERVAL type
+# Test INTERVAL type.
 statement ok
 DROP TABLE IF EXISTS md.interval_test_table;
 
