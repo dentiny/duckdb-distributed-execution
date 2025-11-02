@@ -1,0 +1,25 @@
+version: v1
+# buf configuration for protobuf linting and formatting
+
+lint:
+  use:
+    - DEFAULT
+  # Additional rules for better code quality
+  enum_zero_value_suffix: _UNSPECIFIED
+  rpc_allow_same_request_response: false
+  rpc_allow_google_protobuf_empty_requests: true
+  rpc_allow_google_protobuf_empty_responses: true
+  
+breaking:
+  use:
+    - FILE
+  # Ignore breaking changes during development
+  # Remove or change this for production use
+  ignore_unstable_packages: true
+
+# Exclude generated files from linting
+lint:
+  ignore:
+    - build
+    - vcpkg_installed
+

@@ -21,27 +21,27 @@ public:
 	arrow::Status Connect();
 
 	// Execute arbitrary SQL
-	arrow::Status ExecuteSQL(const string &sql, DistributedResponse &response);
+	arrow::Status ExecuteSQL(const string &sql, distributed::DistributedResponse &response);
 
 	// Create table
-	arrow::Status CreateTable(const string &create_sql, DistributedResponse &response);
+	arrow::Status CreateTable(const string &create_sql, distributed::DistributedResponse &response);
 
 	// Drop table
-	arrow::Status DropTable(const string &drop_sql, DistributedResponse &response);
+	arrow::Status DropTable(const string &drop_sql, distributed::DistributedResponse &response);
 
 	// Check if table exists
 	arrow::Status TableExists(const string &table_name, bool &exists);
 
 	// Insert data using Arrow RecordBatch
 	arrow::Status InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
-	                         DistributedResponse &response);
+	                         distributed::DistributedResponse &response);
 
 	// Scan table and get Arrow Flight stream
 	arrow::Status ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
 	                        std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
 
 private:
-	arrow::Status SendAction(const DistributedRequest &req, DistributedResponse &resp);
+	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);
 
 private:
 	string server_url_;

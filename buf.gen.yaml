@@ -1,0 +1,13 @@
+version: v1
+# buf code generation configuration (for reference)
+# Currently using CMake's protobuf_generate_cpp instead
+
+managed:
+  enabled: true
+  
+plugins:
+  - plugin: buf.build/protocolbuffers/cpp
+    out: build/gen/proto
+    opt:
+      - speed
+

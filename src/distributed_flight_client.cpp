@@ -17,61 +17,55 @@ arrow::Status DistributedFlightClient::Connect() {
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, DistributedResponse &response) {
+arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, distributed::DistributedResponse &response) {
 
-	DistributedRequest req;
-	req.type = RequestType::EXECUTE_SQL;
-	req.sql = sql;
-
-	return SendAction(req, response);
-}
-
-arrow::Status DistributedFlightClient::CreateTable(const string &create_sql, DistributedResponse &response) {
-
-	DistributedRequest req;
-	req.type = RequestType::CREATE_TABLE;
-	req.sql = create_sql;
+	distributed::DistributedRequest req;
+	auto *exec_req = req.mutable_execute_sql();
+	exec_req->set_sql(sql);
 
 	return SendAction(req, response);
 }
 
-arrow::Status DistributedFlightClient::DropTable(const string &drop_sql, DistributedResponse &response) {
+arrow::Status DistributedFlightClient::CreateTable(const string &create_sql, distributed::DistributedResponse &response) {
 
-	DistributedRequest req;
-	req.type = RequestType::DROP_TABLE;
-	req.sql = drop_sql;
+	distributed::DistributedRequest req;
+	auto *create_req = req.mutable_create_table();
+	create_req->set_sql(create_sql);
+
+	return SendAction(req, response);
+}
+
+arrow::Status DistributedFlightClient::DropTable(const string &drop_sql, distributed::DistributedResponse &response) {
+
+	distributed::DistributedRequest req;
+	auto *drop_req = req.mutable_drop_table();
+	drop_req->set_table_name(drop_sql);
 
 	return SendAction(req, response);
 }
 
 arrow::Status DistributedFlightClient::TableExists(const string &table_name, bool &exists) {
 
-	DistributedRequest req;
-	req.type = RequestType::TABLE_EXISTS;
-	req.table_name = table_name;
+	distributed::DistributedRequest req;
+	auto *exists_req = req.mutable_table_exists();
+	exists_req->set_table_name(table_name);
 
-	DistributedResponse resp;
+	distributed::DistributedResponse resp;
 	ARROW_RETURN_NOT_OK(SendAction(req, resp));
 
-	if (!resp.success) {
-		return arrow::Status::Invalid(resp.error_message);
+	if (!resp.success()) {
+		return arrow::Status::Invalid(resp.error_message());
 	}
 
-	exists = resp.exists;
+	exists = resp.table_exists().exists();
 	return arrow::Status::OK();
 }
 
 arrow::Status DistributedFlightClient::InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
-                                                  DistributedResponse &response) {
+                                                  distributed::DistributedResponse &response) {
 
-	DistributedRequest req;
-	req.type = RequestType::INSERT_DATA;
-	req.table_name = table_name;
-
-	// Serialize request
-	auto req_data = req.Serialize();
-	auto descriptor = arrow::flight::FlightDescriptor::Command(
-	    std::string(reinterpret_cast<const char *>(req_data.data()), req_data.size()));
+	// Use descriptor path to pass table name
+	arrow::flight::FlightDescriptor descriptor = arrow::flight::FlightDescriptor::Path({table_name});
 
 	// Start DoPut stream
 	std::unique_ptr<arrow::flight::FlightStreamWriter> writer;
@@ -90,11 +84,12 @@ arrow::Status DistributedFlightClient::InsertData(const string &table_name, std:
 	ARROW_RETURN_NOT_OK(metadata_reader->ReadMetadata(&metadata));
 
 	if (metadata) {
-		auto resp_data = vector<uint8_t>(metadata->data(), metadata->data() + metadata->size());
-		response = DistributedResponse::Deserialize(resp_data);
+		if (!response.ParseFromArray(metadata->data(), metadata->size())) {
+			return arrow::Status::Invalid("Failed to parse response");
+		}
 	} else {
-		response.success = false;
-		response.error_message = "No response from server";
+		response.set_success(false);
+		response.set_error_message("No response from server");
 	}
 
 	return arrow::Status::OK();
@@ -103,16 +98,16 @@ arrow::Status DistributedFlightClient::InsertData(const string &table_name, std:
 arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
                                                  std::unique_ptr<arrow::flight::FlightStreamReader> &stream) {
 
-	DistributedRequest req;
-	req.type = RequestType::SCAN_TABLE;
-	req.table_name = table_name;
-	req.limit = limit;
-	req.offset = offset;
+	distributed::DistributedRequest req;
+	auto *scan_req = req.mutable_scan_table();
+	scan_req->set_table_name(table_name);
+	scan_req->set_limit(limit);
+	scan_req->set_offset(offset);
 
 	// Serialize request to ticket
-	auto req_data = req.Serialize();
+	std::string req_data = req.SerializeAsString();
 	arrow::flight::Ticket ticket;
-	ticket.ticket = std::string(reinterpret_cast<const char *>(req_data.data()), req_data.size());
+	ticket.ticket = req_data;
 
 	// Call DoGet and get the stream
 	ARROW_ASSIGN_OR_RAISE(stream, client_->DoGet(ticket));
@@ -120,14 +115,14 @@ arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint6
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightClient::SendAction(const DistributedRequest &req, DistributedResponse &resp) {
+arrow::Status DistributedFlightClient::SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp) {
 
 	// Serialize request
-	auto req_data = req.Serialize();
+	std::string req_data = req.SerializeAsString();
 
 	arrow::flight::Action action;
 	action.type = "execute";
-	action.body = arrow::Buffer::Wrap(req_data.data(), req_data.size());
+	action.body = arrow::Buffer::FromString(req_data);
 
 	// Send action and get results
 	std::unique_ptr<arrow::flight::ResultStream> results;
@@ -142,8 +137,9 @@ arrow::Status DistributedFlightClient::SendAction(const DistributedRequest &req,
 	}
 
 	// Deserialize response
-	auto resp_data = vector<uint8_t>(result->body->data(), result->body->data() + result->body->size());
-	resp = DistributedResponse::Deserialize(resp_data);
+	if (!resp.ParseFromArray(result->body->data(), result->body->size())) {
+		return arrow::Status::Invalid("Failed to parse response");
+	}
 
 	return arrow::Status::OK();
 }

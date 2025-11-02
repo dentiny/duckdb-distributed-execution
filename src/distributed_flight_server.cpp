@@ -47,33 +47,39 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
                                                 const arrow::flight::Action &action,
                                                 std::unique_ptr<arrow::flight::ResultStream> *result) {
 
-	// Deserialize request
-	auto req_data = vector<uint8_t>(action.body->data(), action.body->data() + action.body->size());
-	auto req = DistributedRequest::Deserialize(req_data);
+	// Deserialize protobuf request directly
+	distributed::DistributedRequest request;
+	if (!request.ParseFromArray(action.body->data(), action.body->size())) {
+		return arrow::Status::Invalid("Failed to parse DistributedRequest");
+	}
 
-	DistributedResponse resp;
+	// Create response
+	distributed::DistributedResponse response;
+	response.set_success(true);
 
-	// Handle different request types
-	switch (req.type) {
-	case RequestType::EXECUTE_SQL:
-		ARROW_RETURN_NOT_OK(HandleExecuteSQL(req, resp));
+	// Handle different request types using oneof
+	switch (request.request_case()) {
+	case distributed::DistributedRequest::kExecuteSql:
+		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
 		break;
-	case RequestType::CREATE_TABLE:
-		ARROW_RETURN_NOT_OK(HandleCreateTable(req, resp));
+	case distributed::DistributedRequest::kCreateTable:
+		ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
 		break;
-	case RequestType::DROP_TABLE:
-		ARROW_RETURN_NOT_OK(HandleDropTable(req, resp));
+	case distributed::DistributedRequest::kDropTable:
+		ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
 		break;
-	case RequestType::TABLE_EXISTS:
-		ARROW_RETURN_NOT_OK(HandleTableExists(req, resp));
+	case distributed::DistributedRequest::kTableExists:
+		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
 		break;
+	case distributed::DistributedRequest::REQUEST_NOT_SET:
+		return arrow::Status::Invalid("Request type not set");
 	default:
 		return arrow::Status::Invalid("Unknown request type");
 	}
 
-	// Serialize response and return
-	auto resp_data = resp.Serialize();
-	auto buffer = arrow::Buffer::Wrap(resp_data.data(), resp_data.size());
+	// Serialize response
+	std::string response_data = response.SerializeAsString();
+	auto buffer = arrow::Buffer::FromString(response_data);
 
 	std::vector<arrow::flight::Result> results;
 	results.push_back(arrow::flight::Result {buffer});
@@ -86,16 +92,19 @@ arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallCont
                                              const arrow::flight::Ticket &ticket,
                                              std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
 
-	// Ticket contains serialized request
-	auto req_data = vector<uint8_t>(ticket.ticket.data(), ticket.ticket.data() + ticket.ticket.size());
-	auto req = DistributedRequest::Deserialize(req_data);
+	// Deserialize protobuf request
+	distributed::DistributedRequest request;
+	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
+		return arrow::Status::Invalid("Failed to parse DistributedRequest");
+	}
 
-	if (req.type != RequestType::SCAN_TABLE) {
+	// DoGet only handles scan requests
+	if (request.request_case() != distributed::DistributedRequest::kScanTable) {
 		return arrow::Status::Invalid("DoGet only supports SCAN_TABLE requests");
 	}
 
 	std::unique_ptr<arrow::flight::FlightDataStream> data_stream;
-	ARROW_RETURN_NOT_OK(HandleScanTable(req, data_stream));
+	ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), data_stream));
 
 	*stream = std::move(data_stream);
 	return arrow::Status::OK();
@@ -105,18 +114,19 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
                                              std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                              std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 
-	// Read descriptor to get request info
+	// Read descriptor to get table name from descriptor path
 	auto descriptor = reader->descriptor();
-
-	// Deserialize request from descriptor
-	auto req_data = vector<uint8_t>(descriptor.cmd.data(), descriptor.cmd.data() + descriptor.cmd.size());
-	auto req = DistributedRequest::Deserialize(req_data);
+	std::string table_name;
+	if (!descriptor.path.empty()) {
+		table_name = descriptor.path[0];
+	}
 
 	// Read all record batches
 	ARROW_ASSIGN_OR_RAISE(auto schema, reader->GetSchema());
 	std::shared_ptr<arrow::RecordBatch> batch;
 
-	DistributedResponse resp;
+	distributed::DistributedResponse resp;
+	resp.set_success(true);
 
 	while (true) {
 		ARROW_ASSIGN_OR_RAISE(auto next, reader->Next());
@@ -126,91 +136,99 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 		batch = next.data;
 
 		// Process each batch
-		ARROW_RETURN_NOT_OK(HandleInsertData(req, batch, resp));
+		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, resp));
 	}
 
 	// Write response metadata
-	auto resp_data = resp.Serialize();
-	auto buffer = arrow::Buffer::Wrap(resp_data.data(), resp_data.size());
+	std::string resp_data = resp.SerializeAsString();
+	auto buffer = arrow::Buffer::FromString(resp_data);
 	ARROW_RETURN_NOT_OK(writer->WriteMetadata(*buffer));
 
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleExecuteSQL(const DistributedRequest &req, DistributedResponse &resp) {
+arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
+                                                        distributed::DistributedResponse &resp) {
 
-	std::cout << "📡 Server executing SQL: " << req.sql << std::endl;
-	auto result = conn_->Query(req.sql);
+	std::cout << "📡 Server executing SQL: " << req.sql() << std::endl;
+	auto result = conn_->Query(req.sql());
 
 	if (result->HasError()) {
-		resp.success = false;
-		resp.error_message = result->GetError();
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	resp.success = true;
-	resp.rows_affected = 0; // SQL execution doesn't return row count easily
+	resp.set_success(true);
+	auto *exec_resp = resp.mutable_execute_sql();
+	exec_resp->set_rows_affected(0);
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleCreateTable(const DistributedRequest &req, DistributedResponse &resp) {
+arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
+                                                         distributed::DistributedResponse &resp) {
 
-	std::cout << "🏗️  Server creating table: " << req.sql << std::endl;
-	auto result = conn_->Query(req.sql);
+	std::cout << "🏗️  Server creating table: " << req.sql() << std::endl;
+	auto result = conn_->Query(req.sql());
 
 	if (result->HasError()) {
-		resp.success = false;
-		resp.error_message = result->GetError();
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	resp.success = true;
+	resp.set_success(true);
+	resp.mutable_create_table();  // Set the response type
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleDropTable(const DistributedRequest &req, DistributedResponse &resp) {
+arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTableRequest &req,
+                                                       distributed::DistributedResponse &resp) {
 
-	std::cout << "🗑️  Server dropping table: " << req.sql << std::endl;
-	auto result = conn_->Query(req.sql);
+	std::cout << "🗑️  Server dropping table: " << req.table_name() << std::endl;
+	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
+	auto result = conn_->Query(sql);
 
 	if (result->HasError()) {
-		resp.success = false;
-		resp.error_message = result->GetError();
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	resp.success = true;
+	resp.set_success(true);
+	resp.mutable_drop_table();
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleTableExists(const DistributedRequest &req, DistributedResponse &resp) {
+arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
+                                                         distributed::DistributedResponse &resp) {
 
 	string sql =
-	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name);
+	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
 
 	auto result = conn_->Query(sql);
 
 	if (result->HasError()) {
-		resp.success = false;
-		resp.error_message = result->GetError();
-		resp.exists = false;
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
+	auto *exists_resp = resp.mutable_table_exists();
 	if (result->Fetch()) {
-		resp.exists = result->GetValue(0, 0).GetValue<int>() > 0;
+		exists_resp->set_exists(result->GetValue(0, 0).GetValue<int>() > 0);
 	} else {
-		resp.exists = false;
+		exists_resp->set_exists(false);
 	}
 
-	resp.success = true;
+	resp.set_success(true);
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleScanTable(const DistributedRequest &req,
+arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 
-	string sql = StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name, req.limit, req.offset);
+	string sql = StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
 
 	std::cout << "🔍 Server scanning table: " << sql << std::endl;
 
@@ -227,17 +245,17 @@ arrow::Status DistributedFlightServer::HandleScanTable(const DistributedRequest 
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleInsertData(const DistributedRequest &req,
+arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table_name,
                                                         std::shared_ptr<arrow::RecordBatch> batch,
-                                                        DistributedResponse &resp) {
+                                                        distributed::DistributedResponse &resp) {
 
-	std::cout << "💾 Server inserting " << batch->num_rows() << " rows into table: " << req.table_name << std::endl;
+	std::cout << "💾 Server inserting " << batch->num_rows() << " rows into table: " << table_name << std::endl;
 
 	// For now, we'll use a simplified approach: convert Arrow to SQL INSERT
 	// TODO: Use proper Arrow->DuckDB integration when available
 
 	// Build INSERT statement
-	std::string insert_sql = "INSERT INTO " + req.table_name + " VALUES ";
+	std::string insert_sql = "INSERT INTO " + table_name + " VALUES ";
 
 	for (int64_t row = 0; row < batch->num_rows(); row++) {
 		if (row > 0)
@@ -263,13 +281,12 @@ arrow::Status DistributedFlightServer::HandleInsertData(const DistributedRequest
 
 	auto result = conn_->Query(insert_sql);
 	if (result->HasError()) {
-		resp.success = false;
-		resp.error_message = result->GetError();
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	resp.success = true;
-	resp.rows_affected = batch->num_rows();
+	resp.set_success(true);
 	return arrow::Status::OK();
 }
 

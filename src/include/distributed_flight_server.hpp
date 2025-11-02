@@ -38,15 +38,15 @@ public:
 	                    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) override;
 
 private:
-	// Process different request types
-	arrow::Status HandleExecuteSQL(const DistributedRequest &req, DistributedResponse &resp);
-	arrow::Status HandleCreateTable(const DistributedRequest &req, DistributedResponse &resp);
-	arrow::Status HandleDropTable(const DistributedRequest &req, DistributedResponse &resp);
-	arrow::Status HandleTableExists(const DistributedRequest &req, DistributedResponse &resp);
-	arrow::Status HandleScanTable(const DistributedRequest &req,
+	// Process different request types using protobuf messages directly
+	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
-	arrow::Status HandleInsertData(const DistributedRequest &req, std::shared_ptr<arrow::RecordBatch> batch,
-	                               DistributedResponse &resp);
+	arrow::Status HandleInsertData(const std::string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
+	                               distributed::DistributedResponse &resp);
 
 	// Convert DuckDB result to Arrow RecordBatch
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader);
