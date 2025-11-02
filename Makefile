@@ -21,4 +21,4 @@ test_reldebug_unit: reldebug
 test_debug_unit: debug
 	find build/debug/extension/motherduck/ -type f -name "test*" -not -name "*.o" -not -name "*.cpp" -not -name "*.d" -exec {} \;
 
-.PHONY: format-all
+.PHONY: format-all test_unit test_reldebug_unit test_debug_unit

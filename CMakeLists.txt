@@ -26,6 +26,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources
+    src/arrow_utils.cpp
     src/base_query_recorder.cpp
     src/distributed_delete.cpp
     src/distributed_flight_client.cpp

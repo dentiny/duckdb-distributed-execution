@@ -1,5 +1,6 @@
 #include "distributed_client.hpp"
 
+#include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
@@ -60,52 +61,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 			for (int idx = 0; idx < schema->num_fields(); ++idx) {
 				auto field = schema->field(idx);
 				names.emplace_back(field->name());
-
-				// Convert Arrow type to DuckDB LogicalType.
-				// TODO(hjiang): Add more type support.
-				auto arrow_type = field->type();
-				switch (arrow_type->id()) {
-				case arrow::Type::INT8:
-					types.emplace_back(LogicalType {LogicalTypeId::TINYINT});
-					break;
-				case arrow::Type::INT16:
-					types.emplace_back(LogicalType {LogicalTypeId::SMALLINT});
-					break;
-				case arrow::Type::INT32:
-					types.emplace_back(LogicalType {LogicalTypeId::INTEGER});
-					break;
-				case arrow::Type::INT64:
-					types.emplace_back(LogicalType {LogicalTypeId::BIGINT});
-					break;
-				case arrow::Type::UINT8:
-					types.emplace_back(LogicalType {LogicalTypeId::UTINYINT});
-					break;
-				case arrow::Type::UINT16:
-					types.emplace_back(LogicalType {LogicalTypeId::USMALLINT});
-					break;
-				case arrow::Type::UINT32:
-					types.emplace_back(LogicalType {LogicalTypeId::UINTEGER});
-					break;
-				case arrow::Type::UINT64:
-					types.emplace_back(LogicalType {LogicalTypeId::UBIGINT});
-					break;
-				case arrow::Type::FLOAT:
-					types.emplace_back(LogicalType {LogicalTypeId::FLOAT});
-					break;
-				case arrow::Type::DOUBLE:
-					types.emplace_back(LogicalType {LogicalTypeId::DOUBLE});
-					break;
-				case arrow::Type::BOOL:
-					types.emplace_back(LogicalType {LogicalTypeId::BOOLEAN});
-					break;
-				case arrow::Type::STRING:
-					types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
-					break;
-				default:
-					// Fallback to VARCHAR for unsupported types.
-					types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
-					break;
-				}
+				types.emplace_back(ArrowTypeToDuckDBType(field->type()));
 			}
 
 			collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
@@ -119,56 +75,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 		for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
 			auto arrow_array = arrow_batch->column(col_idx);
 			auto &duckdb_vector = chunk.data[col_idx];
-
-			// Convert based on type - match Arrow array type to DuckDB type.
-			for (int64_t row_idx = 0; row_idx < arrow_batch->num_rows(); row_idx++) {
-				if (arrow_array->IsNull(row_idx)) {
-					FlatVector::SetNull(duckdb_vector, row_idx, true);
-					continue;
-				}
-
-				// Type-specific conversion using correct Arrow array types
-				auto &type = types[col_idx];
-				if (type == LogicalType {LogicalTypeId::TINYINT}) {
-					auto int_array = std::static_pointer_cast<arrow::Int8Array>(arrow_array);
-					FlatVector::GetData<int8_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::SMALLINT}) {
-					auto int_array = std::static_pointer_cast<arrow::Int16Array>(arrow_array);
-					FlatVector::GetData<int16_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::INTEGER}) {
-					auto int_array = std::static_pointer_cast<arrow::Int32Array>(arrow_array);
-					FlatVector::GetData<int32_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::BIGINT}) {
-					auto int_array = std::static_pointer_cast<arrow::Int64Array>(arrow_array);
-					FlatVector::GetData<int64_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::UTINYINT}) {
-					auto int_array = std::static_pointer_cast<arrow::UInt8Array>(arrow_array);
-					FlatVector::GetData<uint8_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::USMALLINT}) {
-					auto int_array = std::static_pointer_cast<arrow::UInt16Array>(arrow_array);
-					FlatVector::GetData<uint16_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::UINTEGER}) {
-					auto int_array = std::static_pointer_cast<arrow::UInt32Array>(arrow_array);
-					FlatVector::GetData<uint32_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::UBIGINT}) {
-					auto int_array = std::static_pointer_cast<arrow::UInt64Array>(arrow_array);
-					FlatVector::GetData<uint64_t>(duckdb_vector)[row_idx] = int_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::FLOAT}) {
-					auto float_array = std::static_pointer_cast<arrow::FloatArray>(arrow_array);
-					FlatVector::GetData<float>(duckdb_vector)[row_idx] = float_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::DOUBLE}) {
-					auto double_array = std::static_pointer_cast<arrow::DoubleArray>(arrow_array);
-					FlatVector::GetData<double>(duckdb_vector)[row_idx] = double_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::BOOLEAN}) {
-					auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(arrow_array);
-					FlatVector::GetData<bool>(duckdb_vector)[row_idx] = bool_array->Value(row_idx);
-				} else if (type == LogicalType {LogicalTypeId::VARCHAR}) {
-					auto str_array = std::static_pointer_cast<arrow::StringArray>(arrow_array);
-					auto str_val = str_array->GetString(row_idx);
-					FlatVector::GetData<string_t>(duckdb_vector)[row_idx] =
-					    StringVector::AddString(duckdb_vector, str_val);
-				}
-			}
+			ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, types[col_idx], arrow_batch->num_rows());
 		}
 
 		chunk.SetCardinality(arrow_batch->num_rows());

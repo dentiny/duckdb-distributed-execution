@@ -29,21 +29,26 @@ CREATE TABLE md.type_test_table (
     col_float FLOAT,
     col_double DOUBLE,
     col_boolean BOOLEAN,
-    col_varchar VARCHAR
+    col_varchar VARCHAR,
+    col_date DATE,
+    col_time TIME,
+    col_timestamp TIMESTAMP,
+    col_blob BLOB,
+    col_decimal DECIMAL(10,2)
 );
 
 statement ok
 INSERT INTO md.type_test_table VALUES 
-    (-128, -32768, -2147483648, -9223372036854775808, 0, 0, 0, 0, -1.5, -2.5, true, 'negative'),
-    (0, 0, 0, 0, 128, 32768, 2147483648, 9223372036854775808, 0.0, 0.0, false, 'zero'),
-    (127, 32767, 2147483647, 9223372036854775807, 255, 65535, 4294967295, 18446744073709551615, 1.5, 2.5, true, 'positive');
+    (-128, -32768, -2147483648, -9223372036854775808, 0, 0, 0, 0, -1.5, -2.5, true, 'negative', '2023-01-15', '08:30:00', '2023-01-15 08:30:00', '\xDE\xAD\xBE\xEF'::BLOB, -123.45),
+    (0, 0, 0, 0, 128, 32768, 2147483648, 9223372036854775808, 0.0, 0.0, false, 'zero', '1970-01-01', '00:00:00', '1970-01-01 00:00:00', '\x00\x00'::BLOB, 0.00),
+    (127, 32767, 2147483647, 9223372036854775807, 255, 65535, 4294967295, 18446744073709551615, 1.5, 2.5, true, 'positive', '2025-12-31', '23:59:59', '2025-12-31 23:59:59.999999', '\xFF\xFF\xFF\xFF'::BLOB, 999.99);
 
-query IIIIIIIIRRIT
+query IIIIIIIIRRITTTTTR
 SELECT * FROM md.type_test_table ORDER BY col_integer;
 ----
--128	-32768	-2147483648	-9223372036854775808	0	0	0	0	-1.5	-2.5	1	negative
-0	0	0	0	128	32768	2147483648	9223372036854775808	0.0	0.0	0	zero
-127	32767	2147483647	9223372036854775807	255	65535	4294967295	18446744073709551615	1.5	2.5	1	positive
+-128	-32768	-2147483648	-9223372036854775808	0	0	0	0	-1.5	-2.5	1	negative	2023-01-15	08:30:00	2023-01-15 08:30:00	\xDE\xAD\xBE\xEF	-123.45
+0	0	0	0	128	32768	2147483648	9223372036854775808	0.0	0.0	0	zero	1970-01-01	00:00:00	1970-01-01 00:00:00	\x00\x00	0.00
+127	32767	2147483647	9223372036854775807	255	65535	4294967295	18446744073709551615	1.5	2.5	1	positive	2025-12-31	23:59:59	2025-12-31 23:59:59.999999	\xFF\xFF\xFF\xFF	999.99
 
 # Test filtering on different types.
 query I
@@ -88,3 +93,106 @@ query I
 SELECT MAX(col_ubigint) FROM md.type_test_table;
 ----
 18446744073709551615
+
+# Test DATE type operations.
+query T
+SELECT MIN(col_date) FROM md.type_test_table;
+----
+1970-01-01
+
+query T
+SELECT MAX(col_date) FROM md.type_test_table;
+----
+2025-12-31
+
+query I
+SELECT COUNT(*) FROM md.type_test_table WHERE col_date >= '2023-01-01';
+----
+2
+
+# Test TIME type operations.
+query T
+SELECT MIN(col_time) FROM md.type_test_table;
+----
+00:00:00
+
+query T
+SELECT MAX(col_time) FROM md.type_test_table;
+----
+23:59:59
+
+# Test TIMESTAMP type operations.
+query T
+SELECT col_timestamp FROM md.type_test_table WHERE col_integer = 0;
+----
+1970-01-01 00:00:00
+
+query I
+SELECT COUNT(*) FROM md.type_test_table WHERE col_timestamp > '2000-01-01';
+----
+2
+
+# Test BLOB type.
+query I
+SELECT OCTET_LENGTH(col_blob) FROM md.type_test_table ORDER BY col_integer;
+----
+4
+2
+4
+
+# Test DECIMAL type operations.
+query R
+SELECT SUM(col_decimal) FROM md.type_test_table;
+----
+876.54
+
+query R
+SELECT AVG(col_decimal) FROM md.type_test_table;
+----
+292.18
+
+query R
+SELECT MIN(col_decimal) FROM md.type_test_table;
+----
+-123.45
+
+query R
+SELECT MAX(col_decimal) FROM md.type_test_table;
+----
+999.99
+
+# Test filtering on DATE, TIME, and TIMESTAMP.
+query T
+SELECT col_varchar FROM md.type_test_table WHERE col_date BETWEEN '2023-01-01' AND '2024-12-31';
+----
+negative
+
+query I
+SELECT col_integer FROM md.type_test_table WHERE col_time > '12:00:00';
+----
+2147483647
+
+# Test NULL handling with all types.
+statement ok
+INSERT INTO md.type_test_table VALUES 
+    (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+query I
+SELECT COUNT(*) FROM md.type_test_table WHERE col_date IS NULL;
+----
+1
+
+query I
+SELECT COUNT(*) FROM md.type_test_table WHERE col_timestamp IS NULL;
+----
+1
+
+query I
+SELECT COUNT(*) FROM md.type_test_table WHERE col_decimal IS NULL;
+----
+1
+
+query I
+SELECT COUNT(*) FROM md.type_test_table WHERE col_blob IS NULL;
+----
+1
