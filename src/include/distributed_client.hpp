@@ -17,10 +17,10 @@ public:
 
 	static DistributedClient &GetInstance();
 
-	// Execute arbitrary SQL on the server (via protobuf ExecuteSQLRequest)
+	// Execute arbitrary SQL on the server.
 	unique_ptr<QueryResult> ExecuteSQL(const string &sql);
 
-	// Check if table exists (via protobuf TableExistsRequest)
+	// Check if table exists.
 	bool TableExists(const string &table_name);
 
 	// CREATE TABLE on server.
@@ -40,7 +40,6 @@ public:
 private:
 	string server_url;
 	unique_ptr<DistributedFlightClient> client;
-	bool connected = false;
 };
 
 } // namespace duckdb

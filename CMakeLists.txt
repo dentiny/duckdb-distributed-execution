@@ -90,9 +90,9 @@ target_link_libraries(
   gRPC::grpc++
   gRPC::grpc)
 
-# Unit tests.
+# Unit tests (in unit/ folder).
 include_directories(duckdb/third_party/catch)
-add_executable(test_distributed_flight test/cpp/test_distributed_flight.cpp)
+add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
 target_link_libraries(
   test_distributed_flight
   ${EXTENSION_NAME}

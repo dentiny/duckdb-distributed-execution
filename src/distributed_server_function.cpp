@@ -12,7 +12,6 @@ namespace {
 
 // Global server instance and thread.
 unique_ptr<DistributedFlightServer> g_test_server;
-unique_ptr<std::thread> g_server_thread;
 bool g_server_started = false;
 std::mutex g_server_mutex;
 constexpr int DEFAULT_SERVER_PORT = 8815;
@@ -40,17 +39,14 @@ void StartDistributedServer(DataChunk &args, ExpressionState &state, Vector &res
 			throw Exception(ExceptionType::IO, "Failed to start server: " + status.ToString());
 		}
 
-		// Start server in background thread (detached to avoid cleanup issues).
-		g_server_thread = make_uniq<std::thread>([port]() {
+		// Start server in background thread and detach.
+		std::thread([port]() {
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
 			if (!serve_status.ok() && g_server_started) {
 				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
 			}
-		});
-
-		// Detach the thread so it doesn't need cleanup
-		g_server_thread->detach();
+		}).detach();
 
 		// TODO(hjiang): Use readiness probe to validate server on.
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -79,12 +75,8 @@ void StopDistributedServer(DataChunk &args, ExpressionState &state, Vector &resu
 	if (g_test_server) {
 		g_test_server->Shutdown();
 	}
-	if (g_server_thread && g_server_thread->joinable()) {
-		g_server_thread->join();
-	}
 
 	g_test_server.reset();
-	g_server_thread.reset();
 	g_server_started = false;
 
 	auto result_data = FlatVector::GetData<string_t>(result);

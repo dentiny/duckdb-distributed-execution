@@ -52,7 +52,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 			break; // End of stream
 		}
 
-		// On first batch, extract schema and create collection
+		// On first batch, extract schema and create collection.
 		if (first_batch) {
 			auto schema = arrow_batch->schema();
 
@@ -62,6 +62,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 				names.emplace_back(field->name());
 
 				// Convert Arrow type to DuckDB LogicalType.
+				// TODO(hjiang): Add more type support.
 				auto arrow_type = field->type();
 				switch (arrow_type->id()) {
 				case arrow::Type::INT8:
@@ -101,7 +102,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 					types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
 					break;
 				default:
-					// Fallback to VARCHAR for unsupported types
+					// Fallback to VARCHAR for unsupported types.
 					types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
 					break;
 				}
