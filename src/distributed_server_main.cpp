@@ -16,7 +16,7 @@ void SignalHandler(int signal) {
 	}
 	exit(0);
 }
-}  // namespace
+} // namespace
 
 int main(int argc, char *argv[]) {
 	std::string host = "0.0.0.0";
@@ -54,11 +54,11 @@ int main(int argc, char *argv[]) {
 		// Keep server running.
 		auto serve_status = g_server->Serve();
 		if (!serve_status.ok()) {
-			std::cerr << "❌ Server error: " << serve_status.ToString() << std::endl;
+			std::cerr << "Server error: " << serve_status.ToString() << std::endl;
 			return 1;
 		}
 	} catch (const std::exception &ex) {
-		std::cerr << "❌ Fatal error: " << ex.what() << std::endl;
+		std::cerr << "Fatal error: " << ex.what() << std::endl;
 		return 1;
 	}
 

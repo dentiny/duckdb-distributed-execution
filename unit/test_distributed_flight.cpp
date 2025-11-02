@@ -10,6 +10,7 @@
 #include <iostream>
 
 using namespace duckdb; // NOLINT
+
 namespace {
 
 // Global server instance
@@ -36,10 +37,10 @@ void StartServerInBackground() {
 }
 
 void SetupTestServer() {
-	// Start server in background thread
+	// Start server in background thread.
 	g_server_thread = std::thread(StartServerInBackground);
 
-	// Wait for server to be ready
+	// Wait for server to be ready.
 	std::this_thread::sleep_for(std::chrono::seconds(2));
 }
 
@@ -79,19 +80,19 @@ TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 	DistributedFlightClient client(SERVER_URL);
 	REQUIRE(client.Connect().ok());
 
-	// Create table first
+	// Create table first.
 	distributed::DistributedResponse create_resp;
-	client.CreateTable("CREATE TABLE test_exists (id INTEGER)", create_resp);
+	auto status = client.CreateTable("CREATE TABLE test_exists (id INTEGER)", create_resp);
+	REQUIRE(status.ok());
 	REQUIRE(create_resp.success());
 
-	// Check existence via TableExistsRequest (protobuf)
+	// Check existence via TableExistsRequest.
 	bool exists = false;
-	auto status = client.TableExists("test_exists", exists);
-
+	status = client.TableExists("test_exists", exists);
 	REQUIRE(status.ok());
 	REQUIRE(exists == true);
 
-	// Check non-existent table
+	// Check non-existent table.
 	bool not_exists = false;
 	status = client.TableExists("nonexistent_table", not_exists);
 	REQUIRE(status.ok());
@@ -102,26 +103,25 @@ TEST_CASE("Test Insert and Scan via protobuf returning Arrow", "[distributed_fli
 	DistributedFlightClient client(SERVER_URL);
 	REQUIRE(client.Connect().ok());
 
-	// Create table
+	// Create table.
 	distributed::DistributedResponse create_resp;
-	client.CreateTable("CREATE TABLE test_scan (id INTEGER, name VARCHAR, age INTEGER)", create_resp);
+	auto status = client.CreateTable("CREATE TABLE test_scan (id INTEGER, name VARCHAR, age INTEGER)", create_resp);
+	REQUIRE(status.ok());
 	REQUIRE(create_resp.success());
 
-	// Insert data via ExecuteSQLRequest (protobuf)
+	// Insert data via ExecuteSQLRequest.
 	distributed::DistributedResponse insert_resp;
-	auto status = client.ExecuteSQL("INSERT INTO test_scan VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)",
-	                                insert_resp);
-
+	status = client.ExecuteSQL("INSERT INTO test_scan VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)",
+	                           insert_resp);
 	REQUIRE(status.ok());
 	REQUIRE(insert_resp.success());
 
-	// Scan via ScanTableRequest (protobuf) - returns Arrow RecordBatches
+	// Scan via ScanTableRequest.
 	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 	status = client.ScanTable("test_scan", 100, 0, stream);
-
 	REQUIRE(status.ok());
 
-	// Read Arrow RecordBatches
+	// Check Arrow RecordBatches.
 	uint64_t total_rows = 0;
 	int batch_count = 0;
 
@@ -150,7 +150,7 @@ TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 	DistributedFlightClient client(SERVER_URL);
 	REQUIRE(client.Connect().ok());
 
-	// Try to create table with invalid SQL
+	// Try to create table with invalid SQL.
 	distributed::DistributedResponse response;
 	auto status = client.ExecuteSQL("INVALID SQL SYNTAX", response);
 
@@ -163,27 +163,29 @@ TEST_CASE("Test DropTable via protobuf", "[distributed_flight]") {
 	DistributedFlightClient client(SERVER_URL);
 	REQUIRE(client.Connect().ok());
 
-	// Create table first
+	// Create table first.
 	distributed::DistributedResponse create_resp;
-	client.CreateTable("CREATE TABLE test_drop (id INTEGER)", create_resp);
+	auto status = client.CreateTable("CREATE TABLE test_drop (id INTEGER)", create_resp);
+	REQUIRE(status.ok());
 	REQUIRE(create_resp.success());
 
-	// Verify it exists
+	// Verify it exists.
 	bool exists = false;
-	client.TableExists("test_drop", exists);
+	status = client.TableExists("test_drop", exists);
+	REQUIRE(status.ok());
 	REQUIRE(exists == true);
 
-	// Drop via DropTableRequest (protobuf)
+	// Drop via DropTableRequest.
 	distributed::DistributedResponse drop_resp;
-	auto status = client.DropTable("test_drop", drop_resp);
-
+	status = client.DropTable("test_drop", drop_resp);
 	REQUIRE(status.ok());
 	REQUIRE(drop_resp.success());
 	REQUIRE(drop_resp.has_drop_table());
 
-	// Verify it no longer exists
+	// Verify it no longer exists.
 	exists = true;
-	client.TableExists("test_drop", exists);
+	status = client.TableExists("test_drop", exists);
+	REQUIRE(status.ok());
 	REQUIRE(exists == false);
 }
 
