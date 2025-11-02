@@ -294,10 +294,6 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 			break;
 		}
 
-		// Convert chunk to Arrow using DuckDB's built-in conversion
-		ArrowSchema arrow_schema;
-		ArrowArray arrow_array;
-
 		// Export to Arrow C API
 		// Note: This is a simplified version - may need adjustment based on DuckDB version
 		// For now, just create an empty schema
