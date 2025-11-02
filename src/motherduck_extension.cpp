@@ -1,12 +1,12 @@
 #define DUCKDB_EXTENSION_MAIN
 
+#include "query_recorder_factory.hpp"
+#include "distributed_server_function.hpp"
 #include "duckdb.hpp"
 #include "motherduck_extension.hpp"
 #include "motherduck_pragmas.hpp"
 #include "motherduck_storage.hpp"
 #include "query_history_query_function.hpp"
-#include "query_recorder_factory.hpp"
-#include "distributed_server_function.hpp"
 
 namespace duckdb {
 
