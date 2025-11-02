@@ -6,41 +6,30 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/main/query_result.hpp"
+#include "no_destructor.hpp"
 
 #include <arrow/array.h>
 #include <arrow/type.h>
 
 namespace duckdb {
 
-DistributedClient::DistributedClient(const string &server_url) : server_url_(server_url) {
-	Initialize();
+DistributedClient::DistributedClient(string server_url_p) : server_url(std::move(server_url_p)) {
+	client = make_uniq<DistributedFlightClient>(server_url);
+	auto status = client->Connect();
+	if (!status.ok()) {
+		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
+	}	
 }
 
 DistributedClient &DistributedClient::GetInstance() {
-	static DistributedClient instance;
-	return instance;
-}
-
-void DistributedClient::Initialize() {
-	// Only initialize once
-	if (connected_) {
-		return;
-	}
-
-	// Create Flight client and connect
-	client_ = make_uniq<DistributedFlightClient>(server_url_);
-	auto status = client_->Connect();
-	if (!status.ok()) {
-		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
-	}
-	
-	connected_ = true;
+	static NoDestructor<DistributedClient> client{};
+	return *client;
 }
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset) {
 	// Use Flight client with protobuf ScanTableRequest - returns Arrow RecordBatches
 	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
-	auto status = client_->ScanTable(table_name, limit, offset, stream);
+	auto status = client->ScanTable(table_name, limit, offset, stream);
 
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
@@ -134,7 +123,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 bool DistributedClient::TableExists(const string &table_name) {
 	// Use Flight client with protobuf TableExistsRequest
 	bool exists = false;
-	auto status = client_->TableExists(table_name, exists);
+	auto status = client->TableExists(table_name, exists);
 
 	if (!status.ok()) {
 		return false;
@@ -146,7 +135,7 @@ bool DistributedClient::TableExists(const string &table_name) {
 unique_ptr<QueryResult> DistributedClient::ExecuteSQL(const string &sql) {
 	// Use Flight client with protobuf ExecuteSQLRequest
 	distributed::DistributedResponse response;
-	auto status = client_->ExecuteSQL(sql, response);
+	auto status = client->ExecuteSQL(sql, response);
 
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
@@ -166,7 +155,7 @@ unique_ptr<QueryResult> DistributedClient::ExecuteSQL(const string &sql) {
 unique_ptr<QueryResult> DistributedClient::CreateTable(const string &create_sql) {
 	// Use Flight client with protobuf CreateTableRequest
 	distributed::DistributedResponse response;
-	auto status = client_->CreateTable(create_sql, response);
+	auto status = client->CreateTable(create_sql, response);
 
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
@@ -186,7 +175,7 @@ unique_ptr<QueryResult> DistributedClient::CreateTable(const string &create_sql)
 unique_ptr<QueryResult> DistributedClient::DropTable(const string &drop_sql) {
 	// Use Flight client with protobuf DropTableRequest
 	distributed::DistributedResponse response;
-	auto status = client_->DropTable(drop_sql, response);
+	auto status = client->DropTable(drop_sql, response);
 
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));

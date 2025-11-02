@@ -21,11 +21,11 @@ project(${TARGET_NAME})
 include_directories(src/include)
 include_directories(${ARROW_INCLUDE_DIR})
 
-# Generate protobuf code
+# Generate protobuf code.
 set(PROTO_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
 
-# Add directory for generated protobuf headers
+# Add directory for generated protobuf headers.
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 set(EXTENSION_SOURCES
@@ -54,8 +54,7 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# Link all required libraries Note: gRPC and Protobuf are transitive
-# dependencies of ArrowFlight
+# Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
   ${EXTENSION_NAME}
   OpenSSL::SSL
@@ -76,7 +75,13 @@ target_link_libraries(
   gRPC::grpc++
   gRPC::grpc)
 
-# Add distributed server executable
+install(
+  TARGETS ${EXTENSION_NAME}
+  EXPORT "${DUCKDB_EXPORT_SET}"
+  LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
+  ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+
+# Add distributed server executable.
 add_executable(distributed_server src/distributed_server_main.cpp)
 target_link_libraries(
   distributed_server
@@ -89,20 +94,7 @@ target_link_libraries(
   gRPC::grpc++
   gRPC::grpc)
 
-# Add test client executable
-add_executable(test_distributed_client src/test_distributed_client.cpp)
-target_link_libraries(
-  test_distributed_client
-  ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
-  Arrow::arrow_static
-  ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
-
-# Unit test for distributed flight with Catch
+# Unit tests.
 include_directories(duckdb/third_party/catch)
 add_executable(test_distributed_flight test/cpp/test_distributed_flight.cpp)
 target_link_libraries(
@@ -115,9 +107,3 @@ target_link_libraries(
   protobuf::libprotobuf
   gRPC::grpc++
   gRPC::grpc)
-
-install(
-  TARGETS ${EXTENSION_NAME}
-  EXPORT "${DUCKDB_EXPORT_SET}"
-  LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
-  ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")

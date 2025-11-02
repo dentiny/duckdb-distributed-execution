@@ -1,3 +1,5 @@
+// Arrow Flight-based RPC client for distributed execution.
+
 #pragma once
 
 #include "distributed_protocol.hpp"
@@ -11,7 +13,6 @@
 
 namespace duckdb {
 
-// Arrow Flight-based RPC client for distributed execution
 class DistributedFlightClient {
 public:
 	explicit DistributedFlightClient(const string &server_url);
