@@ -5,6 +5,7 @@ set(TARGET_NAME motherduck)
 
 set(CMAKE_CXX_STANDARD 20)
 
+find_package(OpenSSL REQUIRED)
 find_package(Arrow REQUIRED CONFIG)
 find_package(ArrowFlight REQUIRED CONFIG)
 find_package(Protobuf REQUIRED)
@@ -70,13 +71,17 @@ target_link_libraries(
   ${EXTENSION_NAME}
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf)
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
 
 target_link_libraries(
   ${LOADABLE_EXTENSION_NAME}
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf)
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
 
 install(
   TARGETS ${EXTENSION_NAME}
@@ -91,7 +96,9 @@ target_link_libraries(
   ${EXTENSION_NAME}
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf)
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
 
 # Unit tests.
 include_directories(duckdb/third_party/catch)
@@ -101,4 +108,6 @@ target_link_libraries(
   ${EXTENSION_NAME}
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf)
+  protobuf::libprotobuf
+  gRPC::grpc++
+  gRPC::grpc)
