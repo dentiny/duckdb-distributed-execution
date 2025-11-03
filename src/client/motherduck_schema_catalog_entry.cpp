@@ -24,6 +24,69 @@ vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constrain
 	}
 	return res;
 }
+
+string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
+	string sql = "ALTER TABLE " + table_name + " ";
+	
+	switch (info.alter_table_type) {
+	case AlterTableType::ADD_COLUMN: {
+		auto &add_info = info.Cast<AddColumnInfo>();
+		sql += "ADD COLUMN ";
+		if (add_info.if_column_not_exists) {
+			sql += "IF NOT EXISTS ";
+		}
+		sql += add_info.new_column.Name() + " " + add_info.new_column.Type().ToString();
+		if (add_info.new_column.HasDefaultValue()) {
+			sql += " DEFAULT " + add_info.new_column.DefaultValue().ToString();
+		}
+		break;
+	}
+	case AlterTableType::REMOVE_COLUMN: {
+		auto &remove_info = info.Cast<RemoveColumnInfo>();
+		sql += "DROP COLUMN ";
+		if (remove_info.if_column_exists) {
+			sql += "IF EXISTS ";
+		}
+		sql += remove_info.removed_column;
+		break;
+	}
+	case AlterTableType::RENAME_COLUMN: {
+		auto &rename_info = info.Cast<RenameColumnInfo>();
+		sql += "RENAME COLUMN " + rename_info.old_name + " TO " + rename_info.new_name;
+		break;
+	}
+	case AlterTableType::RENAME_TABLE: {
+		auto &rename_info = info.Cast<RenameTableInfo>();
+		sql = "ALTER TABLE " + table_name + " RENAME TO " + rename_info.new_table_name;
+		break;
+	}
+	case AlterTableType::ALTER_COLUMN_TYPE: {
+		auto &change_info = info.Cast<ChangeColumnTypeInfo>();
+		sql += "ALTER COLUMN " + change_info.column_name + " TYPE " + change_info.target_type.ToString();
+		break;
+	}
+	case AlterTableType::SET_DEFAULT: {
+		auto &set_default_info = info.Cast<SetDefaultInfo>();
+		sql += "ALTER COLUMN " + set_default_info.column_name + " SET DEFAULT " + set_default_info.expression->ToString();
+		break;
+	}
+	case AlterTableType::SET_NOT_NULL: {
+		auto &set_not_null_info = info.Cast<SetNotNullInfo>();
+		sql += "ALTER COLUMN " + set_not_null_info.column_name + " SET NOT NULL";
+		break;
+	}
+	case AlterTableType::DROP_NOT_NULL: {
+		auto &drop_not_null_info = info.Cast<DropNotNullInfo>();
+		sql += "ALTER COLUMN " + drop_not_null_info.column_name + " DROP NOT NULL";
+		break;
+	}
+	default:
+		throw NotImplementedException("Unsupported ALTER TABLE type for remote execution");
+	}
+	
+	return sql;
+}
+
 } // namespace
 
 MotherduckSchemaCatalogEntry::MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p,
@@ -406,7 +469,42 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 
 void MotherduckSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Alter");
+	
+	// Check if this is an ALTER TABLE operation on a remote table
+	auto *md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	if (md_catalog_ptr && info.type == AlterType::ALTER_TABLE) {
+		auto &table_info = info.Cast<AlterTableInfo>();
+		
+		if (md_catalog_ptr->IsRemoteTable(info.name)) {
+			// For remote tables, execute the ALTER on the server first
+			string alter_sql = GenerateAlterTableSQL(table_info, info.name);
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
+			
+			auto &client = DistributedClient::GetInstance();
+			auto result = client.ExecuteSQL(alter_sql);
+			if (result->HasError()) {
+				throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());
+			}
+		}
+	}
+	
+	// For all tables (remote and local), update the local catalog
 	schema_catalog_entry->Alter(std::move(transaction), info);
+	
+	// Clear cache for remote tables so next lookup gets the updated entry
+	if (md_catalog_ptr && info.type == AlterType::ALTER_TABLE && md_catalog_ptr->IsRemoteTable(info.name)) {
+		EntryLookupInfoKey key {
+		    .type = CatalogType::TABLE_ENTRY,
+		    .name = info.name,
+		};
+		std::lock_guard<std::mutex> lck(mu);
+		catalog_entries.erase(key);
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
+	}
 }
 
 } // namespace duckdb
+
+
+
+

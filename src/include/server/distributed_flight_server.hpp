@@ -57,6 +57,10 @@ private:
 	// Return OK status if the index doesn't exist.
 	arrow::Status HandleDropIndex(const distributed::DropIndexRequest &req, distributed::DistributedResponse &resp);
 
+	// Handle ALTER TABLE request.
+	// Return error status if the table doesn't exist or if the alteration fails.
+	arrow::Status HandleAlterTable(const distributed::AlterTableRequest &req, distributed::DistributedResponse &resp);
+
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);

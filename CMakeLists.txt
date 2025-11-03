@@ -29,6 +29,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 set(UTIL_SOURCES src/utils/time_utils.cpp)
 
 set(CLIENT_SOURCES
+    src/client/distributed_alter_table.cpp
     src/client/distributed_client.cpp
     src/client/distributed_create_index.cpp
     src/client/distributed_delete.cpp
@@ -36,6 +37,7 @@ set(CLIENT_SOURCES
     src/client/distributed_insert.cpp
     src/client/distributed_table_scan_function.cpp
     src/client/entry_lookup_info_hash_utils.cpp
+    src/client/logical_remote_alter_table.cpp
     src/client/logical_remote_create_index.cpp
     src/client/motherduck_catalog.cpp
     src/client/motherduck_index_catalog_entry.cpp

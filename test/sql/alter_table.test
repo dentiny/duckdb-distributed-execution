@@ -1,0 +1,89 @@
+# name: test/sql/alter_table.test
+# description: Test ALTER TABLE operations (currently not supported on remote tables)
+# group: [sql]
+
+require motherduck
+
+# Start distributed server in background thread
+statement ok
+SELECT start_distributed_server(8815);
+
+statement ok
+ATTACH DATABASE 'md' (TYPE motherduck);
+
+statement ok
+PRAGMA md_register_remote_table('test_alter_table', 'http://localhost:8815', 'test_alter_table');
+
+# Start with a clean state
+statement ok
+DROP TABLE IF EXISTS md.test_alter_table;
+
+# Create a remote table
+statement ok
+CREATE TABLE md.test_alter_table (id INTEGER, name VARCHAR);
+
+# Insert some initial data
+statement ok
+INSERT INTO md.test_alter_table VALUES (1, 'Alice'), (2, 'Bob');
+
+# Verify initial data
+query II
+SELECT * FROM md.test_alter_table ORDER BY id;
+----
+1	Alice
+2	Bob
+
+# Add a new column
+statement ok
+ALTER TABLE md.test_alter_table ADD COLUMN age INTEGER;
+
+# Verify the schema was updated  
+query III
+SELECT * FROM md.test_alter_table ORDER BY id;
+----
+1	Alice	NULL
+2	Bob	NULL
+
+# Insert data with the new column
+statement ok
+INSERT INTO md.test_alter_table VALUES (3, 'Charlie', 30);
+
+# Verify data after adding column
+query III
+SELECT * FROM md.test_alter_table ORDER BY id;
+----
+1	Alice	NULL
+2	Bob	NULL
+3	Charlie	30
+
+# Rename a column
+statement ok
+ALTER TABLE md.test_alter_table RENAME COLUMN name TO full_name;
+
+# Verify renamed column
+query III
+SELECT id, full_name, age FROM md.test_alter_table ORDER BY id;
+----
+1	Alice	NULL
+2	Bob	NULL
+3	Charlie	30
+
+# Drop a column
+statement ok
+ALTER TABLE md.test_alter_table DROP COLUMN age;
+
+# Verify column dropped
+query II
+SELECT * FROM md.test_alter_table ORDER BY id;
+----
+1	Alice
+2	Bob
+3	Charlie
+
+# Clean up
+statement ok
+PRAGMA md_unregister_remote_table('test_alter_table');
+
+statement ok
+DROP TABLE md.test_alter_table;
+

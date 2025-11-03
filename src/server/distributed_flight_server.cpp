@@ -65,6 +65,9 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 	case distributed::DistributedRequest::kDropIndex:
 		ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
 		break;
+	case distributed::DistributedRequest::kAlterTable:
+		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		break;
 	case distributed::DistributedRequest::kTableExists:
 		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
 		break;
@@ -215,6 +218,21 @@ arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIn
 
 	resp.set_success(true);
 	resp.mutable_drop_index();
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::AlterTableRequest &req,
+                                                        distributed::DistributedResponse &resp) {
+	auto result = conn->Query(req.sql());
+
+	if (result->HasError()) {
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
+		return arrow::Status::OK();
+	}
+
+	resp.set_success(true);
+	resp.mutable_alter_table();
 	return arrow::Status::OK();
 }
 
