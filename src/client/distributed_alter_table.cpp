@@ -10,24 +10,11 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "motherduck_catalog.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
 namespace {
-
-// Remove all occurrences of the catalog prefix from SQL string.
-// The remote server doesn't have the local catalog, so we need to strip it from table names, column references, and any
-// other fully-qualified identifiers.
-string SanitizeQuery(const string &sql, const string &catalog_name) {
-	string result = sql;
-	string catalog_prefix = catalog_name + ".";
-	size_t pos = 0;
-	while ((pos = result.find(catalog_prefix, pos)) != string::npos) {
-		result.erase(pos, catalog_prefix.length());
-		// Don't increment pos since we just erased characters.
-	}
-	return result;
-}
 
 // Global source state for tracking remote ALTER TABLE execution.
 class RemoteAlterTableGlobalState : public GlobalSourceState {
