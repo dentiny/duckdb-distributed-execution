@@ -11,64 +11,44 @@
 
 namespace duckdb {
 
-//===--------------------------------------------------------------------===//
-// MotherduckIndexCatalogEntry (Local Indexes)
-//===--------------------------------------------------------------------===//
-
-// Constructor for local indexes (with storage)
-MotherduckIndexCatalogEntry::MotherduckIndexCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
-                                                         SchemaCatalogEntry &schema, CreateIndexInfo &info,
-                                                         TableCatalogEntry &table)
-    : DuckIndexEntry(motherduck_catalog_p, schema, info, table), db_instance(db_instance_p),
-      motherduck_catalog_ref(motherduck_catalog_p) {
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("Creating local MotherduckIndexCatalogEntry: %s", info.index_name));
-}
-
-MotherduckIndexCatalogEntry::~MotherduckIndexCatalogEntry() {
-}
-
-//===--------------------------------------------------------------------===//
-// RemoteIndexCatalogEntry (Remote Indexes)
-//===--------------------------------------------------------------------===//
-
-shared_ptr<DataTableInfo> RemoteIndexCatalogEntry::GetDummyDataTableInfo(Catalog &catalog) {
-	// Create a dummy DataTableInfo that can safely handle CommitDrop() and RemoveIndex() calls
-	// The TableIndexList inside will be empty, so all operations will safely no-op
+/*static*/ shared_ptr<DataTableInfo> MotherduckIndexCatalogEntry::GetDummyDataTableInfo(Catalog &catalog) {
+	// Create a dummy DataTableInfo that can safely handle CommitDrop() and RemoveIndex() calls.
+	// The TableIndexList inside will be empty, so all operations will safely no-op.
 	auto &db = catalog.GetAttached();
-	return make_shared_ptr<DataTableInfo>(db, nullptr, "remote_dummy_schema", "remote_dummy_table");
+	return make_shared_ptr<DataTableInfo>(db, /*table_io_manager_p=*/nullptr, "remote_dummy_schema",
+	                                      "remote_dummy_table");
 }
 
-RemoteIndexCatalogEntry::RemoteIndexCatalogEntry(Catalog &motherduck_catalog_p, SchemaCatalogEntry &schema,
-                                                 CreateIndexInfo &info)
+MotherduckIndexCatalogEntry::MotherduckIndexCatalogEntry(Catalog &motherduck_catalog_p, SchemaCatalogEntry &schema,
+                                                         CreateIndexInfo &info)
     : DuckIndexEntry(motherduck_catalog_p, schema, info,
                      make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(motherduck_catalog_p), info.index_name)),
       motherduck_catalog_ref(motherduck_catalog_p), remote_schema_name(schema.name), remote_table_name(info.table) {
 }
 
-RemoteIndexCatalogEntry::~RemoteIndexCatalogEntry() {
+MotherduckIndexCatalogEntry::~MotherduckIndexCatalogEntry() {
 }
 
-string RemoteIndexCatalogEntry::GetSchemaName() const {
+string MotherduckIndexCatalogEntry::GetSchemaName() const {
 	return remote_schema_name;
 }
 
-string RemoteIndexCatalogEntry::GetTableName() const {
+string MotherduckIndexCatalogEntry::GetTableName() const {
 	return remote_table_name;
 }
 
-void RemoteIndexCatalogEntry::Rollback(CatalogEntry &prev_entry) {
-	// Remote indexes don't have local storage to rollback
-	// The base DuckIndexEntry::Rollback handles null info->info safely
+void MotherduckIndexCatalogEntry::Rollback(CatalogEntry &prev_entry) {
+	// Remote indexes don't have local storage to rollback.
+	// The base DuckIndexEntry::Rollback handles null info->info safely.
 	DuckIndexEntry::Rollback(prev_entry);
 }
 
-unique_ptr<CatalogEntry> RemoteIndexCatalogEntry::Copy(ClientContext &context) const {
-	// For remote indexes, create a copy with the same remote info
+unique_ptr<CatalogEntry> MotherduckIndexCatalogEntry::Copy(ClientContext &context) const {
+	// For remote indexes, create a copy with the same remote info.
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateIndexInfo>();
-	auto result =
-	    make_uniq<RemoteIndexCatalogEntry>(motherduck_catalog_ref, const_cast<SchemaCatalogEntry &>(schema), cast_info);
+	auto result = make_uniq<MotherduckIndexCatalogEntry>(motherduck_catalog_ref,
+	                                                     const_cast<SchemaCatalogEntry &>(schema), cast_info);
 	return std::move(result);
 }
 

@@ -132,12 +132,12 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTran
 		                 StringUtil::Format("Creating remote index %s on table %s", index_name, table_name));
 
 		// For remote tables, create a stub catalog entry for DROP INDEX lookups.
-		// [`RemoteIndexCatalogEntry`] inherits from DuckIndexEntry with dummy storage infrastructure, allowing
-		// [`CommitDrop`] to be called safely as a no-op during transaction commit.
+		// MotherduckIndexCatalogEntry inherits from DuckIndexEntry with dummy storage infrastructure,
+		// allowing CommitDrop() to be called safely as a no-op during transaction commit.
 		info.dependencies.AddDependency(table);
 
 		// Create a remote index catalog entry.
-		auto remote_index = make_uniq<RemoteIndexCatalogEntry>(motherduck_catalog_ref, *this, info);
+		auto remote_index = make_uniq<MotherduckIndexCatalogEntry>(motherduck_catalog_ref, *this, info);
 		auto dependencies = remote_index->dependencies;
 		auto *result = remote_index.get();
 
