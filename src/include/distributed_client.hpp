@@ -24,9 +24,11 @@ public:
 	bool TableExists(const string &table_name);
 
 	// CREATE TABLE on server.
+	// Return error status if the table already exists.
 	unique_ptr<QueryResult> CreateTable(const string &create_sql);
 
 	// DROP TABLE on server.
+	// Return success status if the table doesn't exist.
 	unique_ptr<QueryResult> DropTable(const string &drop_sql);
 
 	// INSERT INTO on server.

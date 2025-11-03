@@ -83,7 +83,6 @@ public:
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
 	// Remote table management.
-	// TODO(hjiang): Implement precondition check for (un)registration.
 	void RegisterRemoteTable(const string &table_name, const string &server_url, const string &remote_table_name);
 	void UnregisterRemoteTable(const string &table_name);
 	bool IsRemoteTable(const string &table_name) const;

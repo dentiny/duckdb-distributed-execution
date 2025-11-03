@@ -40,8 +40,15 @@ public:
 private:
 	// Process different request types using protobuf messages directly.
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
+
+	// Handle CREATE TABLE request.
+	// Return error status if the table already exists.
 	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, distributed::DistributedResponse &resp);
+
+	// Handle DROP TABLE request.
+	// Return OK status if the table doesn't exist.
 	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, distributed::DistributedResponse &resp);
+
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
