@@ -75,6 +75,9 @@ private:
 	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
 	CatalogEntry *WrapAndCacheIndexCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
 
+	void DropRemoteIndex(ClientContext &context, DropInfo &info, MotherduckCatalog &md_catalog);
+	void DropRemoteTable(ClientContext &context, DropInfo &info, MotherduckCatalog &md_catalog);
+
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
@@ -82,7 +85,7 @@ private:
 	Catalog &motherduck_catalog_ref;
 
 	std::mutex mu;
-	// Cache for catalog entries, including table and index entries.
+	// Cache for catalog entries, including table entries.
 	unordered_map<EntryLookupInfoKey, unique_ptr<CatalogEntry>, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries;
 };
