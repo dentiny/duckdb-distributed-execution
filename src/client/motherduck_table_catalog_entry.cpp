@@ -1,3 +1,5 @@
+// Implementation note: most of the functions are delegated to parent class DuckTableEntry instead of taking a
+// DuckTableEntry* entry. Because alter table would invalidate the pointer to the entry.
 
 #include "motherduck_table_catalog_entry.hpp"
 
@@ -26,58 +28,52 @@ MotherduckTableCatalogEntry::MotherduckTableCatalogEntry(Catalog &motherduck_cat
     : DuckTableEntry(motherduck_catalog_p, duck_table_entry_p->schema, *bound_create_table_info_p,
                      duck_table_entry_p->GetStorage().shared_from_this()),
       db_instance(db_instance_p), bound_create_table_info(std::move(bound_create_table_info_p)),
-      duck_table_entry(duck_table_entry_p), motherduck_catalog_ref(motherduck_catalog_p) {
+      motherduck_catalog_ref(motherduck_catalog_p) {
 }
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::AlterEntry");
-
-	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in
-	// MotherduckSchemaCatalogEntry::Alter.
-	return duck_table_entry->AlterEntry(context, info);
+	return DuckTableEntry::AlterEntry(context, info);
 }
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::AlterEntry (CatalogTransaction)");
-
-	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in
-	// MotherduckSchemaCatalogEntry::Alter.
-	return duck_table_entry->AlterEntry(std::move(transaction), info);
+	return DuckTableEntry::AlterEntry(std::move(transaction), info);
 }
 
 void MotherduckTableCatalogEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::UndoAlter");
-	duck_table_entry->UndoAlter(context, info);
+	DuckTableEntry::UndoAlter(context, info);
 }
 
 void MotherduckTableCatalogEntry::Rollback(CatalogEntry &prev_entry) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::Rollback");
-	duck_table_entry->Rollback(prev_entry);
+	DuckTableEntry::Rollback(prev_entry);
 }
 
 void MotherduckTableCatalogEntry::OnDrop() {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::OnDrop");
-	duck_table_entry->OnDrop();
+	DuckTableEntry::OnDrop();
 }
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::Copy(ClientContext &context) const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::Copy");
-	return duck_table_entry->Copy(context);
+	return DuckTableEntry::Copy(context);
 }
 
 unique_ptr<CreateInfo> MotherduckTableCatalogEntry::GetInfo() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetInfo");
-	return duck_table_entry->GetInfo();
+	return DuckTableEntry::GetInfo();
 }
 
 void MotherduckTableCatalogEntry::SetAsRoot() {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::SetAsRoot");
-	duck_table_entry->SetAsRoot();
+	DuckTableEntry::SetAsRoot();
 }
 
 string MotherduckTableCatalogEntry::ToSQL() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ToSQL");
-	return duck_table_entry->ToSQL();
+	return DuckTableEntry::ToSQL();
 }
 
 Catalog &MotherduckTableCatalogEntry::ParentCatalog() {
@@ -92,22 +88,22 @@ const Catalog &MotherduckTableCatalogEntry::ParentCatalog() const {
 
 SchemaCatalogEntry &MotherduckTableCatalogEntry::ParentSchema() {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ParentSchema");
-	return duck_table_entry->ParentSchema();
+	return DuckTableEntry::ParentSchema();
 }
 
 const SchemaCatalogEntry &MotherduckTableCatalogEntry::ParentSchema() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::ParentSchema (const)");
-	return duck_table_entry->ParentSchema();
+	return DuckTableEntry::ParentSchema();
 }
 
 void MotherduckTableCatalogEntry::Verify(Catalog &catalog) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::Verify");
-	duck_table_entry->Verify(catalog);
+	DuckTableEntry::Verify(catalog);
 }
 
 unique_ptr<BaseStatistics> MotherduckTableCatalogEntry::GetStatistics(ClientContext &context, column_t column_id) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetStatistics");
-	return duck_table_entry->GetStatistics(context, std::move(column_id));
+	return DuckTableEntry::GetStatistics(context, std::move(column_id));
 }
 
 TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &context,
@@ -127,7 +123,7 @@ TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &contex
 
 	// Fallback to regular DuckDB scan for local tables.
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Table query %s is local.", name));
-	return duck_table_entry->GetScanFunction(context, bind_data);
+	return DuckTableEntry::GetScanFunction(context, bind_data);
 }
 
 TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
@@ -146,33 +142,32 @@ TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &contex
 	}
 
 	// Fallback to regular DuckDB scan for local tables.
-	return duck_table_entry->GetScanFunction(context, bind_data);
+	// Use the 2-parameter version which is inherited from DuckTableEntry
+	return DuckTableEntry::GetScanFunction(context, bind_data);
 }
 
 bool MotherduckTableCatalogEntry::IsDuckTable() const {
-	return duck_table_entry->IsDuckTable();
+	return DuckTableEntry::IsDuckTable();
 }
 
 TableStorageInfo MotherduckTableCatalogEntry::GetStorageInfo(ClientContext &context) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetStorageInfo");
-	return duck_table_entry->GetStorageInfo(context);
+	return DuckTableEntry::GetStorageInfo(context);
 }
 
 void MotherduckTableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, LogicalProjection &proj,
                                                         LogicalUpdate &update, ClientContext &context) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::BindUpdateConstraints");
-	return duck_table_entry->BindUpdateConstraints(binder, get, proj, update, context);
+	return DuckTableEntry::BindUpdateConstraints(binder, get, proj, update, context);
 }
 
 virtual_column_map_t MotherduckTableCatalogEntry::GetVirtualColumns() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetVirtualColumns");
-	// Don't use duck_table_entry as it may be stale after ALTER TABLE Use the parent class implementation instead.
 	return DuckTableEntry::GetVirtualColumns();
 }
 
 vector<column_t> MotherduckTableCatalogEntry::GetRowIdColumns() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetRowIdColumns");
-	// Don't use duck_table_entry as it may be stale after ALTER TABLE Use the parent class implementation instead.
 	return DuckTableEntry::GetRowIdColumns();
 }
 

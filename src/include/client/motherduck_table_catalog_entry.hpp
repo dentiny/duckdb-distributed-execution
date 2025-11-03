@@ -9,10 +9,6 @@ namespace duckdb {
 // Forward declaration.
 class BoundCreateTableInfo;
 class DatabaseInstance;
-class TableFunction;
-class TableStorageInfo;
-class MotherduckCatalog;
-class MotherduckSchemaCatalogEntry;
 
 class MotherduckTableCatalogEntry : public DuckTableEntry {
 public:
@@ -56,8 +52,8 @@ public:
 private:
 	DatabaseInstance &db_instance;
 	unique_ptr<BoundCreateTableInfo> bound_create_table_info;
-	DuckTableEntry *duck_table_entry;
-	Catalog &motherduck_catalog_ref; // Direct reference to MotherduckCatalog
+	// Direct reference to MotherduckCatalog.
+	Catalog &motherduck_catalog_ref;
 };
 
 } // namespace duckdb
