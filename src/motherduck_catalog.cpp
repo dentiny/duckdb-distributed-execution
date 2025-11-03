@@ -4,6 +4,7 @@
 #include "distributed_insert.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
+#include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/unique_ptr.hpp"
@@ -110,6 +111,10 @@ PhysicalOperator &MotherduckCatalog::PlanDelete(ClientContext &context, Physical
 	bool is_remote = IsRemoteTable(op.table.name);
 	if (is_remote) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote deletion from table %s", op.table.name));
+		
+		std::cerr << "[MotherduckCatalog::PlanDelete] Remote table: " << op.table.name << std::endl;
+		std::cerr << "[MotherduckCatalog::PlanDelete] Child plan type: " << EnumUtil::ToString(plan.type) << std::endl;
+		std::cerr << "[MotherduckCatalog::PlanDelete] Child plan estimated cardinality: " << plan.estimated_cardinality << std::endl;
 
 		auto &bound_ref = op.expressions[0]->Cast<BoundReferenceExpression>();
 		auto &distributed_delete = planner.Make<PhysicalDistributedDelete>(op.types, op.table, plan, bound_ref.index,

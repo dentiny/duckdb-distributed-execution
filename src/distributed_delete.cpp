@@ -48,6 +48,13 @@ SinkResultType PhysicalDistributedDelete::Sink(ExecutionContext &context, DataCh
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed deletion: received %llu rows for table %s",
 	                                                 chunk.size(), table.name));
 
+	std::cerr << "[PhysicalDistributedDelete::Sink] Received chunk with " << chunk.size() << " rows" << std::endl;
+	std::cerr << "[PhysicalDistributedDelete::Sink] Chunk has " << chunk.ColumnCount() << " columns" << std::endl;
+	if (chunk.size() > 0 && chunk.ColumnCount() > 0) {
+		std::cerr << "[PhysicalDistributedDelete::Sink] First row, first column value: " 
+		          << chunk.data[0].GetValue(0).ToString() << std::endl;
+	}
+
 	auto stored_chunk = make_uniq<DataChunk>();
 	stored_chunk->Initialize(Allocator::DefaultAllocator(), chunk.GetTypes());
 	chunk.Copy(*stored_chunk);
@@ -107,6 +114,10 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 		delete_sql += key_values[i].ToSQLString();
 	}
 	delete_sql += ")";
+
+	std::cerr << "[PhysicalDistributedDelete::Finalize] Generated DELETE SQL: " << delete_sql << std::endl;
+	std::cerr << "[PhysicalDistributedDelete::Finalize] Number of key values: " << key_values.size() << std::endl;
+	std::cerr << "[PhysicalDistributedDelete::Finalize] Key column: " << key_column << std::endl;
 
 	auto &client = DistributedClient::GetInstance();
 	auto result = client.ExecuteSQL(delete_sql);

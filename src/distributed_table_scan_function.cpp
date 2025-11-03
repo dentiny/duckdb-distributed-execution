@@ -35,7 +35,9 @@ bool DistributedTableScanBindData::Equals(const FunctionData &other_p) const {
 TableFunction DistributedTableScanFunction::GetFunction() {
 	TableFunction function("distributed_scan", {}, Execute, Bind, InitGlobal, InitLocal);
 	function.projection_pushdown = true;
-	function.filter_pushdown = true;
+	// TODO: Implement actual filter pushdown in Execute function
+	// For now, disable filter pushdown so DuckDB adds a filter operator in the plan
+	function.filter_pushdown = false;
 	return function;
 }
 
