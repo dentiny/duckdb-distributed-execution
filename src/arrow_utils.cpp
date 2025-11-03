@@ -1,6 +1,7 @@
 #include "arrow_utils.hpp"
 
 #include "duckdb/common/assert.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -9,13 +10,14 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
 #include <arrow/array.h>
+#include <arrow/extension_type.h>
 #include <arrow/type.h>
 #include <cstring>
 
 namespace duckdb {
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
-	// TODO(hjiang): Add support for complex nested types (LIST, STRUCT, MAP) and more temporal variants.
+	// TODO: Add support for complex nested types (LIST, STRUCT, MAP, UNION) and special types (ENUM, BIT, BIGNUM).
 	switch (arrow_type->id()) {
 	case arrow::Type::NA:
 		return LogicalType {LogicalTypeId::SQLNULL};
@@ -38,7 +40,7 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::UINT64:
 		return LogicalType {LogicalTypeId::UBIGINT};
 	// Half-precision floats convert to regular float.
-	case arrow::Type::HALF_FLOAT:		
+	case arrow::Type::HALF_FLOAT:
 	case arrow::Type::FLOAT:
 		return LogicalType {LogicalTypeId::FLOAT};
 	case arrow::Type::DOUBLE:
@@ -50,17 +52,58 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::LARGE_BINARY:
 	case arrow::Type::FIXED_SIZE_BINARY:
 		return LogicalType {LogicalTypeId::BLOB};
+	case arrow::Type::EXTENSION: {
+		auto ext_type = std::static_pointer_cast<arrow::ExtensionType>(arrow_type);
+		auto ext_name = ext_type->extension_name();
+
+		// Check for known canonical extension types.
+		if (ext_name == "arrow.uuid") {
+			return LogicalType {LogicalTypeId::UUID};
+		}
+
+		// Fallbacks to storage type for other extensions types.
+		return ArrowTypeToDuckDBType(ext_type->storage_type());
+	}
 	case arrow::Type::DATE32:
 	case arrow::Type::DATE64:
 		return LogicalType {LogicalTypeId::DATE};
 	case arrow::Type::TIME32:
-	case arrow::Type::TIME64:
+	case arrow::Type::TIME64: {
+		// Note: Arrow doesn't have a native TIME_TZ type, but we handle nanosecond precision.
+		auto time_type = std::static_pointer_cast<arrow::TimeType>(arrow_type);
+		if (time_type->unit() == arrow::TimeUnit::NANO) {
+			return LogicalType {LogicalTypeId::TIME_NS};
+		}
 		return LogicalType {LogicalTypeId::TIME};
-	case arrow::Type::TIMESTAMP:
-		return LogicalType {LogicalTypeId::TIMESTAMP};
+	}
+	case arrow::Type::TIMESTAMP: {
+		auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
+
+		// If timezone is present, use TIMESTAMP_TZ.
+		if (!ts_type->timezone().empty()) {
+			return LogicalType {LogicalTypeId::TIMESTAMP_TZ};
+		}
+
+		// Otherwise map based on time unit.
+		switch (ts_type->unit()) {
+		case arrow::TimeUnit::SECOND:
+			return LogicalType {LogicalTypeId::TIMESTAMP_SEC};
+		case arrow::TimeUnit::MILLI:
+			return LogicalType {LogicalTypeId::TIMESTAMP_MS};
+		case arrow::TimeUnit::MICRO:
+			// Duckdb timestamp defaults microseconds.
+			return LogicalType {LogicalTypeId::TIMESTAMP};
+		case arrow::TimeUnit::NANO:
+			return LogicalType {LogicalTypeId::TIMESTAMP_NS};
+		default:
+			return LogicalType {LogicalTypeId::TIMESTAMP};
+		}
+	}
 	case arrow::Type::INTERVAL_MONTHS:
 	case arrow::Type::INTERVAL_DAY_TIME:
 	case arrow::Type::INTERVAL_MONTH_DAY_NANO:
+		return LogicalType {LogicalTypeId::INTERVAL};
+	case arrow::Type::DURATION:
 		return LogicalType {LogicalTypeId::INTERVAL};
 	case arrow::Type::DECIMAL128:
 	case arrow::Type::DECIMAL256: {
@@ -152,6 +195,7 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<double>(duckdb_vector)[row_idx] = double_array->Value(row_idx);
 			break;
 		}
+		case LogicalTypeId::CHAR:
 		case LogicalTypeId::VARCHAR: {
 			if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
 				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
@@ -190,6 +234,30 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<string_t>(duckdb_vector)[row_idx] = blob_val;
 			break;
 		}
+		case LogicalTypeId::UUID: {
+			// UUID is stored as EXTENSION type with FIXED_SIZE_BINARY(16) storage
+			// When reading, we get the storage array directly
+			const uint8_t *data = nullptr;
+
+			if (arrow_array->type_id() == arrow::Type::EXTENSION) {
+				// Extension type - unwrap to get storage array
+				auto ext_array = std::static_pointer_cast<arrow::ExtensionArray>(arrow_array);
+				auto storage_array = ext_array->storage();
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(storage_array);
+				data = binary_array->GetValue(row_idx);
+			} else {
+				// Fallback toFIXED_SIZE_BINARY(16).
+				D_ASSERT(arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY);
+				auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(arrow_array);
+				data = binary_array->GetValue(row_idx);
+			}
+
+			// DuckDB stores UUID as hugeint_t (16 bytes).
+			hugeint_t uuid_val;
+			memcpy(&uuid_val, data, 16);
+			FlatVector::GetData<hugeint_t>(duckdb_vector)[row_idx] = uuid_val;
+			break;
+		}
 		case LogicalTypeId::DATE: {
 			// Arrow DATE32 is days since epoch, DATE64 is milliseconds since epoch.
 			date_t date_val;
@@ -206,8 +274,11 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<date_t>(duckdb_vector)[row_idx] = date_val;
 			break;
 		}
-		case LogicalTypeId::TIME: {
+		case LogicalTypeId::TIME:
+		case LogicalTypeId::TIME_NS:
+		case LogicalTypeId::TIME_TZ: {
 			dtime_t time_val;
+
 			if (arrow_array->type_id() == arrow::Type::TIME32) {
 				auto time_array = std::static_pointer_cast<arrow::Time32Array>(arrow_array);
 				auto time_type = std::static_pointer_cast<arrow::Time32Type>(arrow_array->type());
@@ -233,8 +304,12 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			FlatVector::GetData<dtime_t>(duckdb_vector)[row_idx] = time_val;
 			break;
 		}
-		case LogicalTypeId::TIMESTAMP: {
-			// Arrow TIMESTAMP can be in various units.
+		case LogicalTypeId::TIMESTAMP_SEC:
+		case LogicalTypeId::TIMESTAMP_MS:
+		case LogicalTypeId::TIMESTAMP:
+		case LogicalTypeId::TIMESTAMP_NS:
+		case LogicalTypeId::TIMESTAMP_TZ: {
+			// Arrow TIMESTAMP can be in various units, with or without timezone.
 			auto ts_array = std::static_pointer_cast<arrow::TimestampArray>(arrow_array);
 			auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_array->type());
 			int64_t value = ts_array->Value(row_idx);
@@ -258,7 +333,7 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 			break;
 		}
 		case LogicalTypeId::INTERVAL: {
-			// Arrow intervals map to DuckDB intervals.
+			// Arrow intervals and durations map to DuckDB intervals.
 			interval_t interval_val;
 			if (arrow_array->type_id() == arrow::Type::INTERVAL_MONTHS) {
 				auto interval_array = std::static_pointer_cast<arrow::MonthIntervalArray>(arrow_array);
@@ -271,16 +346,45 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 				interval_val.months = 0;
 				interval_val.days = day_time.days;
 				interval_val.micros = static_cast<int64_t>(day_time.milliseconds) * 1000;
-			} else {
-				D_ASSERT(arrow_array->type_id() == arrow::Type::INTERVAL_MONTH_DAY_NANO);
+			} else if (arrow_array->type_id() == arrow::Type::INTERVAL_MONTH_DAY_NANO) {
 				auto interval_array = std::static_pointer_cast<arrow::MonthDayNanoIntervalArray>(arrow_array);
 				auto month_day_nano = interval_array->Value(row_idx);
 				interval_val.months = month_day_nano.months;
 				interval_val.days = month_day_nano.days;
 				interval_val.micros = month_day_nano.nanoseconds / 1000;
+			} else if (arrow_array->type_id() == arrow::Type::DURATION) {
+				// Arrow DURATION represents elapsed time in various units
+				auto duration_array = std::static_pointer_cast<arrow::DurationArray>(arrow_array);
+				auto duration_type = std::static_pointer_cast<arrow::DurationType>(arrow_array->type());
+				int64_t value = duration_array->Value(row_idx);
+
+				interval_val.months = 0;
+				interval_val.days = 0;
+
+				// Convert duration to microseconds based on time unit.
+				switch (duration_type->unit()) {
+				case arrow::TimeUnit::SECOND:
+					interval_val.micros = value * 1000000;
+					break;
+				case arrow::TimeUnit::MILLI:
+					interval_val.micros = value * 1000;
+					break;
+				case arrow::TimeUnit::MICRO:
+					interval_val.micros = value;
+					break;
+				case arrow::TimeUnit::NANO:
+					interval_val.micros = value / 1000;
+					break;
+				}
 			}
 			FlatVector::GetData<interval_t>(duckdb_vector)[row_idx] = interval_val;
 			break;
+		}
+		case LogicalTypeId::HUGEINT:
+		case LogicalTypeId::UHUGEINT: {
+			// If we reach here, there's a type detection/conversion mismatch.
+			throw InternalException(
+			    "HUGEINT/UHUGEINT conversion not implemented - type should be detected as VARCHAR or BLOB");
 		}
 		case LogicalTypeId::DECIMAL: {
 			if (arrow_array->type_id() == arrow::Type::DECIMAL128) {
