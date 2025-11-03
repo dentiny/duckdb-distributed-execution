@@ -1,13 +1,13 @@
 #define CATCH_CONFIG_RUNNER
 
 #include "catch.hpp"
+#include "distributed.pb.h"
 #include "distributed_flight_server.hpp"
 #include "distributed_flight_client.hpp"
-#include "distributed_protocol.hpp"
 
-#include <thread>
 #include <chrono>
 #include <iostream>
+#include <thread>
 
 using namespace duckdb; // NOLINT
 

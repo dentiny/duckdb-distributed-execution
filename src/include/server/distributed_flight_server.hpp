@@ -1,6 +1,6 @@
 #pragma once
 
-#include "distributed_protocol.hpp"
+#include "distributed.pb.h"
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"

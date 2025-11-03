@@ -7,7 +7,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "no_destructor.hpp"
+#include "utils/no_destructor.hpp"
 
 #include <arrow/array.h>
 #include <arrow/type.h>

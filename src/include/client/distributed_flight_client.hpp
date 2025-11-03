@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "distributed_protocol.hpp"
+#include "distributed.pb.h"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/main/query_result.hpp"
