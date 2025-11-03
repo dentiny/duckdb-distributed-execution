@@ -12,6 +12,8 @@ enum RequestType {
   SCAN_TABLE = 5;
   DELETE_DATA = 6;
   TABLE_EXISTS = 7;
+  CREATE_INDEX = 8;
+  DROP_INDEX = 9;
 }
 
 // Execute SQL request.
@@ -50,6 +52,19 @@ message TableExistsRequest {
   string table_name = 1;
 }
 
+// Create index request.
+// If the index already exists, return error.
+message CreateIndexRequest {
+  // Index creation SQL statement.
+  string sql = 1;
+}
+
+// Drop index request.
+// If the index doesn't exist, nothing happens.
+message DropIndexRequest {
+  string index_name = 1;
+}
+
 // Request message for distributed operations.
 message DistributedRequest {
   // Request-specific parameters.
@@ -60,10 +75,9 @@ message DistributedRequest {
     ScanTableRequest scan_table = 4;
     DeleteDataRequest delete_data = 5;
     TableExistsRequest table_exists = 6;
+    CreateIndexRequest create_index = 7;
+    DropIndexRequest drop_index = 8;
   }
-
-  // Common metadata for all requests.
-  map<string, string> metadata = 10;
 }
 
 // Execute SQL response.
@@ -72,14 +86,10 @@ message ExecuteSQLResponse {
 }
 
 // Create table response.
-message CreateTableResponse {
-  // Empty - success indicated by parent
-}
+message CreateTableResponse {}
 
 // Drop table response.
-message DropTableResponse {
-  // Empty - success indicated by parent
-}
+message DropTableResponse {}
 
 // Scan table response, data returned via Arrow Flight.
 message ScanTableResponse {
@@ -96,6 +106,12 @@ message TableExistsResponse {
   bool exists = 1;
 }
 
+// Create index response.
+message CreateIndexResponse {}
+
+// Drop index response.
+message DropIndexResponse {}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -111,5 +127,7 @@ message DistributedResponse {
     ScanTableResponse scan_table = 6;
     DeleteDataResponse delete_data = 7;
     TableExistsResponse table_exists = 8;
+    CreateIndexResponse create_index = 9;
+    DropIndexResponse drop_index = 10;
   }
 }

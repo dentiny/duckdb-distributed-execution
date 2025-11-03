@@ -31,6 +31,14 @@ public:
 	// Return success status if the table doesn't exist.
 	unique_ptr<QueryResult> DropTable(const string &drop_sql);
 
+	// CREATE INDEX on server.
+	// Return error status if the index already exists.
+	unique_ptr<QueryResult> CreateIndex(const string &create_sql);
+
+	// DROP INDEX on server.
+	// Return success status if the index doesn't exist.
+	unique_ptr<QueryResult> DropIndex(const string &index_name);
+
 	// INSERT INTO on server.
 	// TODO(hjiang): Currently for implementation easy, directly execute SQL statements, should be use transfer rows and
 	// table name.

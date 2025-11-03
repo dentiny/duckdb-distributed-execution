@@ -8,6 +8,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
@@ -88,6 +89,11 @@ public:
 	bool IsRemoteTable(const string &table_name) const;
 	RemoteTableConfig GetRemoteTableConfig(const string &table_name) const;
 
+	// Remote index management.
+	void RegisterRemoteIndex(const string &index_name);
+	void UnregisterRemoteIndex(const string &index_name);
+	bool IsRemoteIndex(const string &index_name) const;
+
 private:
 	std::mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
@@ -99,6 +105,11 @@ private:
 	// TODO(hjiang): Currently remote tables lives in memory, should provide options to persist and load.
 	mutable std::mutex remote_tables_mu;
 	unordered_map<string, RemoteTableConfig> remote_tables;
+
+	// Remote index tracking.
+	// TODO(hjiang): Currently remote indexes live in memory, should provide options to persist and load.
+	mutable std::mutex remote_indexes_mu;
+	unordered_set<string> remote_indexes;
 };
 
 } // namespace duckdb

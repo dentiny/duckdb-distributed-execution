@@ -2,12 +2,16 @@
 
 #include "distributed_client.hpp"
 #include "distributed_protocol.hpp"
+#include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "motherduck_catalog.hpp"
+#include "motherduck_index_catalog_entry.hpp"
 #include "query_recorder_factory.hpp"
 
 namespace duckdb {
@@ -116,6 +120,46 @@ void MotherduckSchemaCatalogEntry::Scan(CatalogType type, const std::function<vo
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
                                                                      CreateIndexInfo &info, TableCatalogEntry &table) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateIndex");
+
+	string index_name = info.index_name;
+	string table_name = table.name;
+
+	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	const bool is_remote_table = md_catalog_ptr != nullptr && md_catalog_ptr->IsRemoteTable(table_name);
+
+	if (is_remote_table) {
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 StringUtil::Format("Creating remote index %s on table %s", index_name, table_name));
+
+		// For remote tables, create a stub catalog entry for DROP INDEX lookups.
+		// MotherduckIndexCatalogEntry inherits from DuckIndexEntry with dummy storage infrastructure,
+		// allowing CommitDrop() to be called safely as a no-op during transaction commit.
+		info.dependencies.AddDependency(table);
+
+		// Create a remote index catalog entry.
+		auto remote_index = make_uniq<MotherduckIndexCatalogEntry>(motherduck_catalog_ref, *this, info);
+		auto dependencies = remote_index->dependencies;
+		auto *result = remote_index.get();
+
+		// Add it to the catalog.
+		auto *duck_schema = dynamic_cast<DuckSchemaEntry *>(schema_catalog_entry);
+		if (duck_schema == nullptr) {
+			throw InternalException("Expected schema catalog entry to be DuckSchemaEntry");
+		}
+
+		if (!duck_schema->AddEntryInternal(std::move(transaction), std::move(remote_index), info.on_conflict,
+		                                   dependencies)) {
+			return nullptr;
+		}
+
+		// Register as remote index for DROP INDEX tracking.
+		md_catalog_ptr->RegisterRemoteIndex(index_name);
+
+		return result;
+	}
+
+	// Fallback to local tables handling.
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local index %s on table %s", index_name, table_name));
 	return schema_catalog_entry->CreateIndex(std::move(transaction), info, table);
 }
 
@@ -149,7 +193,6 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 		create_sql += ")";
 
 		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
-
 		auto &client = DistributedClient::GetInstance();
 		auto result = client.CreateTable(create_sql);
 		if (result->HasError()) {
@@ -231,14 +274,24 @@ CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 	return ret;
 }
 
+CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheIndexCatalogEntryWithLock(EntryLookupInfoKey key,
+                                                                                  CatalogEntry *catalog_entry) {
+	D_ASSERT(catalog_entry->type == CatalogType::INDEX_ENTRY);
+
+	// Cache index entries are not cached, because they're already managed by DuckDB's catalog set.
+	// TODO(hjiang): Check whether we could cache it as table catalog entries.
+	return catalog_entry;
+}
+
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
                                                                      const EntryLookupInfo &lookup_info) {
 	DUCKDB_LOG_DEBUG(db_instance,
 	                 StringUtil::Format("MotherduckSchemaCatalogEntry::LookupEntry lookup entry %s with type %s",
 	                                    lookup_info.GetEntryName(), CatalogTypeToString(lookup_info.GetCatalogType())));
-	D_ASSERT(lookup_info.GetCatalogType() == CatalogType::TABLE_ENTRY);
+
+	auto catalog_type = lookup_info.GetCatalogType();
 	EntryLookupInfoKey key {
-	    .type = lookup_info.GetCatalogType(),
+	    .type = catalog_type,
 	    .name = lookup_info.GetEntryName(),
 	};
 
@@ -251,11 +304,19 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTran
 
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntry cache miss");
 	auto catalog_entry = schema_catalog_entry->LookupEntry(std::move(transaction), lookup_info);
-	if (!catalog_entry) {
+	if (catalog_entry == nullptr) {
 		return catalog_entry;
 	}
 
-	return WrapAndCacheTableCatalogEntryWithLock(std::move(key), catalog_entry.get());
+	// Wrap and cache based on the type.
+	if (catalog_type == CatalogType::TABLE_ENTRY) {
+		return WrapAndCacheTableCatalogEntryWithLock(std::move(key), catalog_entry.get());
+	} else if (catalog_type == CatalogType::INDEX_ENTRY) {
+		return WrapAndCacheIndexCatalogEntryWithLock(std::move(key), catalog_entry.get());
+	}
+
+	// TODO(hjiang): Wrap and cache other catalog types.
+	return catalog_entry;
 }
 
 CatalogSet::EntryLookup MotherduckSchemaCatalogEntry::LookupEntryDetailed(CatalogTransaction transaction,
@@ -270,45 +331,78 @@ SimilarCatalogEntry MotherduckSchemaCatalogEntry::GetSimilarEntry(CatalogTransac
 	return schema_catalog_entry->GetSimilarEntry(std::move(transaction), lookup_info);
 }
 
-void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::DropEntry");
+void MotherduckSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropInfo &info,
+                                                   MotherduckCatalog &md_catalog) {
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote index: %s", info.name));
 
-	// Intercept remote table drop to propagate to the distributed server
-	if (info.type == CatalogType::TABLE_ENTRY) {
-		auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
-		if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(info.name)) {
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop remote table %s", info.name));
+	string drop_sql = "DROP INDEX ";
+	if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
+		drop_sql += "IF EXISTS ";
+	}
+	drop_sql += info.name;
 
-			string drop_sql = "DROP TABLE ";
-			if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
-				drop_sql += "IF EXISTS ";
-			}
-			drop_sql += info.name;
-			if (info.cascade) {
-				drop_sql += " CASCADE";
-			}
-
-			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
-			auto &client = DistributedClient::GetInstance();
-			auto result = client.ExecuteSQL(drop_sql);
-			if (result->HasError()) {
-				throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
-			}
-
-			// Unregister after successful remote drop.
-			md_catalog_ptr->UnregisterRemoteTable(info.name);
-		}
-		// Fallbacks to local table drop.
-		else {
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop local table %s", info.name));
-		}
+	const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
+	auto &client = DistributedClient::GetInstance();
+	auto result = client.ExecuteSQL(drop_sql);
+	if (result->HasError()) {
+		throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
 	}
 
-	// Local catalog entry is created for registered remote tables, which allows DuckDB to know the table existence and
-	// its schema. All actual operations (i.e., scan, insert) will be intercepted and sent to server.
-	//
-	// TODO(hjiang): Check whether we could fake a remote table entry, which doesn't do ay IO operations.
+	md_catalog.UnregisterRemoteIndex(info.name);
+}
+
+void MotherduckSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropInfo &info,
+                                                   MotherduckCatalog &md_catalog) {
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote table: %s", info.name));
+
+	string drop_sql = "DROP TABLE ";
+	if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
+		drop_sql += "IF EXISTS ";
+	}
+	drop_sql += info.name;
+	if (info.cascade) {
+		drop_sql += " CASCADE";
+	}
+
+	const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
+	auto &client = DistributedClient::GetInstance();
+	auto result = client.ExecuteSQL(drop_sql);
+	if (result->HasError()) {
+		throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
+	}
+
+	md_catalog.UnregisterRemoteTable(info.name);
+}
+
+void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("MotherduckSchemaCatalogEntry::DropEntry - type=%s name=%s",
+	                                                 CatalogTypeToString(info.type), info.name));
+
+	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+
+	// Handle remote index drops.
+	if (info.type == CatalogType::INDEX_ENTRY && md_catalog_ptr != nullptr &&
+	    md_catalog_ptr->IsRemoteIndex(info.name)) {
+		DropRemoteIndex(context, info, *md_catalog_ptr);
+	}
+
+	// Handle remote table drops.
+	else if (info.type == CatalogType::TABLE_ENTRY && md_catalog_ptr != nullptr &&
+	         md_catalog_ptr->IsRemoteTable(info.name)) {
+		DropRemoteTable(context, info, *md_catalog_ptr);
+	}
+
+	// For non-remote entries (or remote tables after remote drop), delegate to the underlying schema catalog.
 	schema_catalog_entry->DropEntry(context, info);
+
+	// Remove from cache after successful drop.
+	EntryLookupInfoKey key {
+	    .type = info.type,
+	    .name = info.name,
+	};
+	std::lock_guard<std::mutex> lck(mu);
+	// Here we don't check erase result since we haven't implemented all catalog entry types.
+	catalog_entries.erase(key);
 }
 
 void MotherduckSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {

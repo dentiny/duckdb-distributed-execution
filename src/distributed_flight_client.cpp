@@ -38,6 +38,21 @@ arrow::Status DistributedFlightClient::DropTable(const string &drop_sql, distrib
 	return SendAction(req, response);
 }
 
+arrow::Status DistributedFlightClient::CreateIndex(const string &create_sql,
+                                                   distributed::DistributedResponse &response) {
+	distributed::DistributedRequest req;
+	auto *create_req = req.mutable_create_index();
+	create_req->set_sql(create_sql);
+	return SendAction(req, response);
+}
+
+arrow::Status DistributedFlightClient::DropIndex(const string &index_name, distributed::DistributedResponse &response) {
+	distributed::DistributedRequest req;
+	auto *drop_req = req.mutable_drop_index();
+	drop_req->set_index_name(index_name);
+	return SendAction(req, response);
+}
+
 arrow::Status DistributedFlightClient::TableExists(const string &table_name, bool &exists) {
 	distributed::DistributedRequest req;
 	auto *exists_req = req.mutable_table_exists();

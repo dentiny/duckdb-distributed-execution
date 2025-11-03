@@ -9,13 +9,18 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
+#include "logical_remote_create_index.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
@@ -128,6 +133,18 @@ unique_ptr<LogicalOperator> MotherduckCatalog::BindCreateIndex(Binder &binder, C
                                                                TableCatalogEntry &table,
                                                                unique_ptr<LogicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::BindCreateIndex");
+
+	// Attempt remote table if applicable.
+	string table_name = table.name;
+	if (IsRemoteTable(table_name)) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Bind CREATE INDEX on remote table %s", table_name));
+		// For remote tables, we use a custom logical operator that doesn't require scanning the table locally.
+		// The index will be created on the remote server via MotherduckSchemaCatalogEntry::CreateIndex.
+		auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
+		return make_uniq<LogicalRemoteCreateIndexOperator>(std::move(create_index_info), table.schema, table);
+	}
+
+	// Fallback to local tables.
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }
 
@@ -218,6 +235,31 @@ RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_na
 	}
 	// Fallbacks to default, which is not distributed table.
 	return RemoteTableConfig();
+}
+
+void MotherduckCatalog::RegisterRemoteIndex(const string &index_name) {
+	std::lock_guard<std::mutex> lck(remote_indexes_mu);
+	const bool succ = remote_indexes.insert(index_name).second;
+	if (!succ) {
+		throw InvalidInputException(
+		    StringUtil::Format("Failed to register index %s because it's already registered!", index_name));
+	}
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote index %s", index_name));
+}
+
+void MotherduckCatalog::UnregisterRemoteIndex(const string &index_name) {
+	std::lock_guard<std::mutex> lck(remote_indexes_mu);
+	const size_t count = remote_indexes.erase(index_name);
+	if (count != 1) {
+		throw InvalidInputException(
+		    StringUtil::Format("Failed to unregister index %s because it hasn't been registered!", index_name));
+	}
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote index %s", index_name));
+}
+
+bool MotherduckCatalog::IsRemoteIndex(const string &index_name) const {
+	std::lock_guard<std::mutex> lck(remote_indexes_mu);
+	return remote_indexes.find(index_name) != remote_indexes.end();
 }
 
 } // namespace duckdb

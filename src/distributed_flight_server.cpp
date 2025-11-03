@@ -60,6 +60,12 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 	case distributed::DistributedRequest::kDropTable:
 		ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
 		break;
+	case distributed::DistributedRequest::kCreateIndex:
+		ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
+		break;
+	case distributed::DistributedRequest::kDropIndex:
+		ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
+		break;
 	case distributed::DistributedRequest::kTableExists:
 		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
 		break;
@@ -178,6 +184,38 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 
 	resp.set_success(true);
 	resp.mutable_drop_table();
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
+                                                         distributed::DistributedResponse &resp) {
+	auto result = conn->Query(req.sql());
+
+	if (result->HasError()) {
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
+		return arrow::Status::OK();
+	}
+
+	resp.set_success(true);
+	resp.mutable_create_index();
+
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIndexRequest &req,
+                                                       distributed::DistributedResponse &resp) {
+	auto sql = "DROP INDEX IF EXISTS " + req.index_name();
+	auto result = conn->Query(sql);
+
+	if (result->HasError()) {
+		resp.set_success(false);
+		resp.set_error_message(result->GetError());
+		return arrow::Status::OK();
+	}
+
+	resp.set_success(true);
+	resp.mutable_drop_index();
 	return arrow::Status::OK();
 }
 

@@ -11,7 +11,7 @@ statement ok
 ATTACH DATABASE 'md:' AS md;
 
 statement ok
-PRAGMA md_register_remote_table('type_test_table', 'http://localhost:8080', 'type_test_table');
+PRAGMA md_register_remote_table('type_test_table', 'http://localhost:8815', 'type_test_table');
 
 statement ok
 DROP TABLE IF EXISTS md.type_test_table;

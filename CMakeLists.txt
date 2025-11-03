@@ -28,6 +28,7 @@ set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
+    src/distributed_create_index.cpp
     src/distributed_delete.cpp
     src/distributed_flight_client.cpp
     src/distributed_flight_server.cpp
@@ -36,8 +37,10 @@ set(EXTENSION_SOURCES
     src/distributed_server_function.cpp
     src/distributed_table_scan_function.cpp
     src/entry_lookup_info_hash_utils.cpp
+    src/logical_remote_create_index.cpp
     src/motherduck_catalog.cpp
     src/motherduck_extension.cpp
+    src/motherduck_index_catalog_entry.cpp
     src/motherduck_pragmas.cpp
     src/motherduck_storage.cpp
     src/motherduck_schema_catalog_entry.cpp
