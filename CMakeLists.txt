@@ -38,6 +38,7 @@ set(EXTENSION_SOURCES
     src/entry_lookup_info_hash_utils.cpp
     src/motherduck_catalog.cpp
     src/motherduck_extension.cpp
+    src/motherduck_index_catalog_entry.cpp
     src/motherduck_pragmas.cpp
     src/motherduck_storage.cpp
     src/motherduck_schema_catalog_entry.cpp

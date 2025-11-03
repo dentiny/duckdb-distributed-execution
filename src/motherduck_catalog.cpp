@@ -133,9 +133,17 @@ unique_ptr<LogicalOperator> MotherduckCatalog::BindCreateIndex(Binder &binder, C
                                                                TableCatalogEntry &table,
                                                                unique_ptr<LogicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::BindCreateIndex");
-	// Let normal binding happen for all tables (local and remote)
-	// Remote tables have local storage, so local indexes can be created
-	// The CreateIndex at schema level will also send the request to the remote server
+
+	// Check if this is a remote table
+	string table_name = table.name;
+	if (IsRemoteTable(table_name)) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Binding CREATE INDEX on remote table %s", table_name));
+		// For remote tables, create a LogicalSimple operator that will execute
+		// the CREATE INDEX on the remote server via MotherduckSchemaCatalogEntry::CreateIndex
+		auto create_info = stmt.info->Copy();
+		return make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_CREATE_INDEX, std::move(create_info));
+	}
+
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }
 
