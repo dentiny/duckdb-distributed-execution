@@ -16,13 +16,28 @@ PhysicalRemoteCreateIndex::PhysicalRemoteCreateIndex(PhysicalPlan &physical_plan
                                                      idx_t estimated_cardinality)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, {LogicalType::BIGINT}, estimated_cardinality),
       info(std::move(info_p)), catalog_name(std::move(catalog_name_p)),
-      schema_name(std::move(schema_name_p)), table_name(std::move(table_name_p)), executed(false) {
+      schema_name(std::move(schema_name_p)), table_name(std::move(table_name_p)) {
+	std::cerr << "[PhysicalRemoteCreateIndex::Constructor] this=" << this 
+	          << " index_name=" << info->index_name << std::endl;
+}
+
+unique_ptr<GlobalSourceState> PhysicalRemoteCreateIndex::GetGlobalSourceState(ClientContext &context) const {
+	auto state = make_uniq<RemoteCreateIndexGlobalState>();
+	std::cerr << "[GetGlobalSourceState] this=" << this << " state=" << state.get() 
+	          << " index_name=" << info->index_name << std::endl;
+	return state;
 }
 
 SourceResultType PhysicalRemoteCreateIndex::GetData(ExecutionContext &context, DataChunk &chunk,
                                                     OperatorSourceInput &input) const {
+	auto &gstate = input.global_state.Cast<RemoteCreateIndexGlobalState>();
+	
+	std::cerr << "[PhysicalRemoteCreateIndex::GetData] Called - gstate ptr=" << &gstate 
+	          << " executed=" << gstate.executed << std::endl;
+	
 	// Execute the CREATE INDEX on the remote server and register it locally (only once)
-	if (!executed) {
+	lock_guard<mutex> lock(gstate.lock);
+	if (!gstate.executed) {
 		std::cerr << "[PhysicalRemoteCreateIndex::GetData] Starting execution..." << std::endl;
 		std::cerr << "[PhysicalRemoteCreateIndex::GetData] catalog_name=" << catalog_name << std::endl;
 		std::cerr << "[PhysicalRemoteCreateIndex::GetData] schema_name=" << schema_name << std::endl;
@@ -66,9 +81,10 @@ SourceResultType PhysicalRemoteCreateIndex::GetData(ExecutionContext &context, D
 			}
 			
 			std::cerr << "[SERVER] Remote execution succeeded!" << std::endl;
-			std::cerr << "[CLIENT] Creating catalog entry..." << std::endl;
+			std::cerr << "[CLIENT] Creating catalog entry and registering..." << std::endl;
 			
-			// Create the catalog entry for the index
+			// Create the catalog entry for tracking
+			// This will also register the index as remote
 			auto transaction = catalog.GetCatalogTransaction(context.client);
 			auto index_entry = schema.CreateIndex(transaction, *info, table);
 			
@@ -78,10 +94,11 @@ SourceResultType PhysicalRemoteCreateIndex::GetData(ExecutionContext &context, D
 			std::cerr << "[EXCEPTION] " << e.what() << std::endl;
 			throw;
 		}
-		
-		executed = true;
+
+		gstate.executed = true;
+		std::cerr << "[PhysicalRemoteCreateIndex::GetData] Execution complete, marked as executed" << std::endl;
 	}
-	
+
 	// Return finished - no data to return
 	return SourceResultType::FINISHED;
 }

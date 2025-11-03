@@ -7,6 +7,19 @@
 
 namespace duckdb {
 
+// Global source state for tracking remote CREATE INDEX execution
+class RemoteCreateIndexGlobalState : public GlobalSourceState {
+public:
+	RemoteCreateIndexGlobalState() : executed(false) {}
+	
+	bool executed;
+	mutex lock;
+	
+	idx_t MaxThreads() override {
+		return 1; // Single-threaded execution
+	}
+};
+
 // Physical operator for CREATE INDEX on remote tables.
 // This operator sends the CREATE INDEX statement to the remote server
 // without scanning the table locally.
@@ -20,10 +33,10 @@ public:
 	string catalog_name;
 	string schema_name;
 	string table_name;
-	mutable bool executed;
 
 public:
 	// Source interface - execute the remote CREATE INDEX and return immediately
+	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
 	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
