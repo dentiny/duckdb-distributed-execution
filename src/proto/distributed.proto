@@ -14,6 +14,7 @@ enum RequestType {
   TABLE_EXISTS = 7;
   CREATE_INDEX = 8;
   DROP_INDEX = 9;
+  ALTER_TABLE = 10;
 }
 
 // Execute SQL request.
@@ -65,6 +66,12 @@ message DropIndexRequest {
   string index_name = 1;
 }
 
+// Alter table request.
+message AlterTableRequest {
+  // ALTER TABLE SQL statement.
+  string sql = 1;
+}
+
 // Request message for distributed operations.
 message DistributedRequest {
   // Request-specific parameters.
@@ -77,6 +84,7 @@ message DistributedRequest {
     TableExistsRequest table_exists = 6;
     CreateIndexRequest create_index = 7;
     DropIndexRequest drop_index = 8;
+    AlterTableRequest alter_table = 9;
   }
 }
 
@@ -112,6 +120,9 @@ message CreateIndexResponse {}
 // Drop index response.
 message DropIndexResponse {}
 
+// Alter table response.
+message AlterTableResponse {}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -129,5 +140,6 @@ message DistributedResponse {
     TableExistsResponse table_exists = 8;
     CreateIndexResponse create_index = 9;
     DropIndexResponse drop_index = 10;
+    AlterTableResponse alter_table = 11;
   }
 }

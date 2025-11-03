@@ -1,17 +1,22 @@
 
 #include "motherduck_table_catalog_entry.hpp"
 
+#include "distributed_alter_table.hpp"
+#include "distributed_client.hpp"
 #include "distributed_table_scan_function.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "logical_remote_alter_table.hpp"
 #include "motherduck_catalog.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
@@ -26,11 +31,17 @@ MotherduckTableCatalogEntry::MotherduckTableCatalogEntry(Catalog &motherduck_cat
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::AlterEntry");
+
+	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in
+	// MotherduckSchemaCatalogEntry::Alter.
 	return duck_table_entry->AlterEntry(context, info);
 }
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::AlterEntry (CatalogTransaction)");
+
+	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in
+	// MotherduckSchemaCatalogEntry::Alter.
 	return duck_table_entry->AlterEntry(std::move(transaction), info);
 }
 
@@ -155,12 +166,14 @@ void MotherduckTableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalG
 
 virtual_column_map_t MotherduckTableCatalogEntry::GetVirtualColumns() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetVirtualColumns");
-	return duck_table_entry->GetVirtualColumns();
+	// Don't use duck_table_entry as it may be stale after ALTER TABLE Use the parent class implementation instead.
+	return DuckTableEntry::GetVirtualColumns();
 }
 
 vector<column_t> MotherduckTableCatalogEntry::GetRowIdColumns() const {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetRowIdColumns");
-	return duck_table_entry->GetRowIdColumns();
+	// Don't use duck_table_entry as it may be stale after ALTER TABLE Use the parent class implementation instead.
+	return DuckTableEntry::GetRowIdColumns();
 }
 
 } // namespace duckdb
