@@ -13,6 +13,7 @@
 #include "motherduck_index_catalog_entry.hpp"
 #include "query_recorder_factory.hpp"
 #include "utils/catalog_utils.hpp"
+
 namespace duckdb {
 
 namespace {
@@ -409,11 +410,10 @@ void MotherduckSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 	
 	// Check if this is an ALTER TABLE operation on a remote table
 	auto *md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
-	if (md_catalog_ptr && info.type == AlterType::ALTER_TABLE) {
+	if (md_catalog_ptr != nullptr && info.type == AlterType::ALTER_TABLE) {
 		auto &table_info = info.Cast<AlterTableInfo>();
 		
 		if (md_catalog_ptr->IsRemoteTable(info.name)) {
-			// For remote tables, execute the ALTER on the server first
 			string alter_sql = GenerateAlterTableSQL(table_info, info.name);
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 			
@@ -422,26 +422,20 @@ void MotherduckSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			if (result->HasError()) {
 				throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());
 			}
+
+			// Clear cache for remote tables since cache entry is already stale.
+			EntryLookupInfoKey key {
+				.type = CatalogType::TABLE_ENTRY,
+				.name = info.name,
+			};
+			std::lock_guard<std::mutex> lck(mu);
+			catalog_entries.erase(key);
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
 		}
 	}
 	
-	// For all tables (remote and local), update the local catalog
+	// Update local catalog whatever.
 	schema_catalog_entry->Alter(std::move(transaction), info);
-	
-	// Clear cache for remote tables so next lookup gets the updated entry
-	if (md_catalog_ptr && info.type == AlterType::ALTER_TABLE && md_catalog_ptr->IsRemoteTable(info.name)) {
-		EntryLookupInfoKey key {
-		    .type = CatalogType::TABLE_ENTRY,
-		    .name = info.name,
-		};
-		std::lock_guard<std::mutex> lck(mu);
-		catalog_entries.erase(key);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
-	}
 }
 
 } // namespace duckdb
-
-
-
-
