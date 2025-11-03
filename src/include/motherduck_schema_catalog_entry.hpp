@@ -82,7 +82,7 @@ private:
 	Catalog &motherduck_catalog_ref;
 
 	std::mutex mu;
-	// Cache for both table and index entries
+	// Cache for catalog entries, including table and index entries.
 	unordered_map<EntryLookupInfoKey, unique_ptr<CatalogEntry>, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries;
 };

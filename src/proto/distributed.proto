@@ -78,9 +78,6 @@ message DistributedRequest {
     CreateIndexRequest create_index = 7;
     DropIndexRequest drop_index = 8;
   }
-
-  // Common metadata for all requests.
-  map<string, string> metadata = 10;
 }
 
 // Execute SQL response.
@@ -89,14 +86,10 @@ message ExecuteSQLResponse {
 }
 
 // Create table response.
-message CreateTableResponse {
-  // Empty - success indicated by parent
-}
+message CreateTableResponse {}
 
 // Drop table response.
-message DropTableResponse {
-  // Empty - success indicated by parent
-}
+message DropTableResponse {}
 
 // Scan table response, data returned via Arrow Flight.
 message ScanTableResponse {
@@ -114,14 +107,10 @@ message TableExistsResponse {
 }
 
 // Create index response.
-message CreateIndexResponse {
-  // Empty - success indicated by parent
-}
+message CreateIndexResponse {}
 
 // Drop index response.
-message DropIndexResponse {
-  // Empty - success indicated by parent
-}
+message DropIndexResponse {}
 
 // Response message for distributed operations.
 message DistributedResponse {

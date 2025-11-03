@@ -46,6 +46,16 @@ SELECT * FROM md.idx_test ORDER BY id;
 2	Bob
 3	Charlie
 
+# Verify both indexes are listed in duckdb_indexes().
+query IIII
+SELECT database_name, schema_name, index_name, table_name 
+FROM duckdb_indexes() 
+WHERE database_name = 'md' AND table_name = 'idx_test'
+ORDER BY index_name;
+----
+md	main	idx_test_id	idx_test
+md	main	idx_test_name	idx_test
+
 # DROP INDEX should succeed.
 statement ok
 DROP INDEX md.idx_test_id;
@@ -67,11 +77,27 @@ SELECT * FROM md.idx_test ORDER BY id;
 2	Bob
 3	Charlie
 
+# Verify only the remaining index is listed after dropping idx_test_id.
+query IIII
+SELECT database_name, schema_name, index_name, table_name 
+FROM duckdb_indexes() 
+WHERE database_name = 'md' AND table_name = 'idx_test'
+ORDER BY index_name;
+----
+md	main	idx_test_name	idx_test
+
 # Drop the remaining index.
 statement ok
 DROP INDEX md.idx_test_name;
 
+# Verify no indexes remain after dropping all indexes.
+query IIII
+SELECT database_name, schema_name, index_name, table_name 
+FROM duckdb_indexes() 
+WHERE database_name = 'md' AND table_name = 'idx_test'
+ORDER BY index_name;
+----
+
 # Clean up the table.
 statement ok
 DROP TABLE md.idx_test;
-
