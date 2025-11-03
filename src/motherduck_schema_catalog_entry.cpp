@@ -2,6 +2,8 @@
 
 #include "distributed_client.hpp"
 #include "distributed_protocol.hpp"
+#include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -126,28 +128,41 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTran
 	const bool is_remote_table = md_catalog_ptr && md_catalog_ptr->IsRemoteTable(table_name);
 
 	if (is_remote_table) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote index %s on table %s", index_name, table_name));
-		string create_sql = info.ToString();
-
-		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
-
-		auto &client = DistributedClient::GetInstance();
-		auto result = client.ExecuteSQL(create_sql);
-		if (result->HasError()) {
-			throw Exception(ExceptionType::CATALOG, "Failed to create index on server: " + result->GetError());
+		std::cerr << "[CreateIndex] Creating remote index " << index_name << " on table " << table_name << std::endl;
+		
+		// Note: The actual remote execution is handled by PhysicalRemoteCreateIndex
+		// Here we just need to create a catalog entry for tracking
+		
+		// Create a remote index catalog entry (without storage)
+		info.dependencies.AddDependency(table);
+		auto remote_index = make_uniq<MotherduckIndexCatalogEntry>(motherduck_catalog_ref, db_instance, *this, info);
+		auto dependencies = remote_index->dependencies;
+		
+		std::cerr << "[CreateIndex] Created MotherduckIndexCatalogEntry, adding to catalog..." << std::endl;
+		
+		// Add it to the catalog using DuckSchemaEntry's AddEntryInternal method
+		auto *duck_schema = dynamic_cast<DuckSchemaEntry *>(schema_catalog_entry);
+		if (!duck_schema) {
+			throw InternalException("Expected DuckSchemaEntry");
 		}
-
-		// Register the index as remote
-		md_catalog_ptr->RegisterRemoteIndex(index_name);
-
-		// For remote tables, we don't create a local index since the actual index is on the server
-		// Return nullptr to indicate success without creating a local catalog entry
-		return nullptr;
-	} else {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local index %s on table %s", index_name, table_name));
+		auto result = duck_schema->AddEntryInternal(std::move(transaction), std::move(remote_index), 
+		                                             info.on_conflict, dependencies);
+		
+		std::cerr << "[CreateIndex] AddEntryInternal result: " << (result ? "SUCCESS" : "FAILED") << std::endl;
+		
+		// Register the index as remote so we know to handle DROP differently
+		if (result) {
+			md_catalog_ptr->RegisterRemoteIndex(index_name);
+			std::cerr << "[CreateIndex] Registered remote index: " << index_name << std::endl;
+		}
+		
+		return result;
 	}
 
-	// Create local catalog entry for local tables only
+	// For local tables, create a local index catalog entry
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local index %s on table %s", index_name, table_name));
+	
+	// Let the underlying schema create the index
 	return schema_catalog_entry->CreateIndex(std::move(transaction), info, table);
 }
 
@@ -266,17 +281,11 @@ CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheIndexCatalogEntryWithLock(EntryLookupInfoKey key,
                                                                                   CatalogEntry *catalog_entry) {
 	D_ASSERT(catalog_entry->type == CatalogType::INDEX_ENTRY);
-	IndexCatalogEntry *index_catalog_entry = dynamic_cast<IndexCatalogEntry *>(catalog_entry);
-	D_ASSERT(index_catalog_entry != nullptr);
-
-	auto create_index_info = dynamic_cast<CreateIndexInfo *>(index_catalog_entry->GetInfo().get());
-	D_ASSERT(create_index_info != nullptr);
-
-	auto motherduck_index_catalog_entry =
-	    make_uniq<MotherduckIndexCatalogEntry>(catalog, db_instance, index_catalog_entry, *create_index_info);
-	auto *ret = motherduck_index_catalog_entry.get();
-	catalog_entries.emplace(std::move(key), std::move(motherduck_index_catalog_entry));
-	return ret;
+	
+	// Since MotherduckIndexCatalogEntry now inherits from DuckIndexEntry,
+	// we can just cache the entry directly without wrapping
+	catalog_entries.emplace(std::move(key), catalog_entry);
+	return catalog_entry;
 }
 
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
@@ -328,11 +337,67 @@ SimilarCatalogEntry MotherduckSchemaCatalogEntry::GetSimilarEntry(CatalogTransac
 }
 
 void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
+	std::cerr << "[DropEntry] ENTER - type=" << CatalogTypeToString(info.type) << " name=" << info.name << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::DropEntry");
 
+	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	
+	// Intercept remote index drop to propagate to the distributed server
+	if (info.type == CatalogType::INDEX_ENTRY) {
+		std::cerr << "[DropEntry] Attempting to drop index: " << info.name << std::endl;
+		std::cerr << "[DropEntry] IsRemoteIndex check: " << (md_catalog_ptr ? (md_catalog_ptr->IsRemoteIndex(info.name) ? "TRUE" : "FALSE") : "NO_CATALOG") << std::endl;
+		
+		if (md_catalog_ptr && md_catalog_ptr->IsRemoteIndex(info.name)) {
+			std::cerr << "[DropEntry] Dropping remote index: " << info.name << std::endl;
+
+			string drop_sql = "DROP INDEX ";
+			if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
+				drop_sql += "IF EXISTS ";
+			}
+			drop_sql += info.name;
+
+			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
+			auto &client = DistributedClient::GetInstance();
+			auto result = client.ExecuteSQL(drop_sql);
+			if (result->HasError()) {
+				throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
+			}
+
+			std::cerr << "[DropEntry] Step 1: About to drop local catalog entry..." << std::endl;
+			
+			// Drop the local catalog entry too
+			try {
+				std::cerr << "[DropEntry] Step 1a: Calling schema_catalog_entry->DropEntry..." << std::endl;
+				schema_catalog_entry->DropEntry(context, info);
+				std::cerr << "[DropEntry] Step 1b: Local catalog entry dropped successfully" << std::endl;
+			} catch (std::exception &e) {
+				std::cerr << "[DropEntry] ERROR in Step 1: " << e.what() << std::endl;
+				throw;
+			}
+			
+			std::cerr << "[DropEntry] Step 2: Unregistering remote index..." << std::endl;
+			// Unregister after successful remote drop
+			md_catalog_ptr->UnregisterRemoteIndex(info.name);
+			std::cerr << "[DropEntry] Step 2: Unregistered remote index: " << info.name << std::endl;
+			
+			std::cerr << "[DropEntry] Step 3: Removing from cache..." << std::endl;
+			// Remove from cache
+			EntryLookupInfoKey key {
+			    .type = info.type,
+			    .name = info.name,
+			};
+			std::lock_guard<std::mutex> lck(mu);
+			catalog_entries.erase(key);
+			std::cerr << "[DropEntry] Step 3: Removed from cache" << std::endl;
+			
+			std::cerr << "[DropEntry] Step 4: Returning early..." << std::endl;
+			// Return early - we've handled the remote index completely
+			return;
+		}
+	}
+	
 	// Intercept remote table drop to propagate to the distributed server
 	if (info.type == CatalogType::TABLE_ENTRY) {
-		auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
 		if (md_catalog_ptr && md_catalog_ptr->IsRemoteTable(info.name)) {
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop remote table %s", info.name));
 
@@ -360,43 +425,15 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop local table %s", info.name));
 		}
 	}
-	// Intercept remote index drop to propagate to the distributed server
-	else if (info.type == CatalogType::INDEX_ENTRY) {
-		auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
-		if (md_catalog_ptr && md_catalog_ptr->IsRemoteIndex(info.name)) {
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop remote index %s", info.name));
 
-			string drop_sql = "DROP INDEX ";
-			if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
-				drop_sql += "IF EXISTS ";
-			}
-			drop_sql += info.name;
-			if (info.cascade) {
-				drop_sql += " CASCADE";
-			}
-
-			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
-			auto &client = DistributedClient::GetInstance();
-			auto result = client.DropIndex(info.name);
-			if (result->HasError()) {
-				throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
-			}
-
-			// Unregister after successful remote drop.
-			md_catalog_ptr->UnregisterRemoteIndex(info.name);
-		}
-		// Fallbacks to local index drop.
-		else {
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop local index %s", info.name));
-		}
-	}
-
-	// Local catalog entry is created for registered remote tables/indexes, which allows DuckDB to know the table/index
-	// existence and its schema. All actual operations (i.e., scan, insert) will be intercepted and sent to server.
-	//
-	// TODO(hjiang): Check whether we could fake a remote table entry, which doesn't do ay IO operations.
+	std::cerr << "[DropEntry] Step 5: Delegating to underlying schema for non-remote entries..." << std::endl;
+	
+	// For non-remote entries, delegate to the underlying schema catalog
+	// Remote indexes are already handled above and return early
 	schema_catalog_entry->DropEntry(context, info);
-
+	
+	std::cerr << "[DropEntry] Step 6: Removing from cache..." << std::endl;
+	
 	// Remove from cache after successful drop
 	EntryLookupInfoKey key {
 	    .type = info.type,
@@ -404,6 +441,8 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 	};
 	std::lock_guard<std::mutex> lck(mu);
 	catalog_entries.erase(key);
+	
+	std::cerr << "[DropEntry] EXIT - Successfully completed" << std::endl;
 }
 
 void MotherduckSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {

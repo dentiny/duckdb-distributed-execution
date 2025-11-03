@@ -11,7 +11,7 @@ statement ok
 ATTACH DATABASE 'md:' AS md;
 
 statement ok
-PRAGMA md_register_remote_table('idx_test', 'http://localhost:8080', 'idx_test');
+PRAGMA md_register_remote_table('idx_test', 'http://localhost:8815', 'idx_test');
 
 # DROP INDEX on non-existent index should succeed (idempotent).
 statement ok

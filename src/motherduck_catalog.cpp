@@ -20,7 +20,7 @@
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
-#include "duckdb/planner/operator/logical_simple.hpp"
+#include "logical_remote_create_index.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "motherduck_schema_catalog_entry.hpp"
 #include "motherduck_transaction.hpp"
@@ -134,16 +134,17 @@ unique_ptr<LogicalOperator> MotherduckCatalog::BindCreateIndex(Binder &binder, C
                                                                unique_ptr<LogicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::BindCreateIndex");
 
-	// Check if this is a remote table
+	// Check if this is a remote table.
 	string table_name = table.name;
 	if (IsRemoteTable(table_name)) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Binding CREATE INDEX on remote table %s", table_name));
-		// For remote tables, create a LogicalSimple operator that will execute
-		// the CREATE INDEX on the remote server via MotherduckSchemaCatalogEntry::CreateIndex
-		auto create_info = stmt.info->Copy();
-		return make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_CREATE_INDEX, std::move(create_info));
+		// For remote tables, we use a custom logical operator that doesn't require scanning the table locally.
+		// The index will be created on the remote server via MotherduckSchemaCatalogEntry::CreateIndex.
+		auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
+		return make_uniq<LogicalRemoteCreateIndex>(std::move(create_index_info), table.schema, table);
 	}
 
+	// For local tables, use the standard DuckDB binding flow.
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }
 
