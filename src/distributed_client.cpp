@@ -152,6 +152,42 @@ unique_ptr<QueryResult> DistributedClient::DropTable(const string &drop_sql) {
 	                                          std::move(collection), ClientProperties());
 }
 
+unique_ptr<QueryResult> DistributedClient::CreateIndex(const string &create_sql) {
+	distributed::DistributedResponse response;
+	auto status = client->CreateIndex(create_sql, response);
+
+	if (!status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+	}
+	if (!response.success()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+	}
+
+	vector<string> names;
+	vector<LogicalType> types;
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	return make_uniq<MaterializedQueryResult>(StatementType::CREATE_STATEMENT, StatementProperties(), names,
+	                                          std::move(collection), ClientProperties());
+}
+
+unique_ptr<QueryResult> DistributedClient::DropIndex(const string &index_name) {
+	distributed::DistributedResponse response;
+	auto status = client->DropIndex(index_name, response);
+
+	if (!status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+	}
+	if (!response.success()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+	}
+
+	vector<string> names;
+	vector<LogicalType> types;
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	return make_uniq<MaterializedQueryResult>(StatementType::DROP_STATEMENT, StatementProperties(), names,
+	                                          std::move(collection), ClientProperties());
+}
+
 unique_ptr<QueryResult> DistributedClient::InsertInto(const string &insert_sql) {
 	return ExecuteSQL(insert_sql);
 }

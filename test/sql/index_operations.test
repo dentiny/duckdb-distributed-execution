@@ -1,0 +1,77 @@
+# name: test/sql/index_operations.test
+# description: Test index creation and drop cases
+# group: [sql]
+
+require motherduck
+
+statement ok
+SELECT start_distributed_server(8815);
+
+statement ok
+ATTACH DATABASE 'md:' AS md;
+
+statement ok
+PRAGMA md_register_remote_table('idx_test', 'http://localhost:8080', 'idx_test');
+
+# DROP INDEX on non-existent index should succeed (idempotent).
+statement ok
+DROP INDEX IF EXISTS md.idx_test_id;
+
+# Create a table successfully.
+statement ok
+CREATE TABLE md.idx_test (id INTEGER, name VARCHAR);
+
+# Insert some test data.
+statement ok
+INSERT INTO md.idx_test VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');
+
+# Create an index successfully.
+statement ok
+CREATE INDEX idx_test_id ON md.idx_test(id);
+
+# Attempt to create the same index again should fail.
+statement error
+CREATE INDEX idx_test_id ON md.idx_test(id);
+----
+
+# Create another index successfully.
+statement ok
+CREATE INDEX idx_test_name ON md.idx_test(name);
+
+# Verify data is still accessible after index creation.
+query II
+SELECT * FROM md.idx_test ORDER BY id;
+----
+1	Alice
+2	Bob
+3	Charlie
+
+# DROP INDEX should succeed.
+statement ok
+DROP INDEX md.idx_test_id;
+
+# DROP INDEX on already dropped index with IF EXISTS should succeed.
+statement ok
+DROP INDEX IF EXISTS md.idx_test_id;
+
+# DROP INDEX on already dropped index without IF EXISTS should fail.
+statement error
+DROP INDEX md.idx_test_id;
+----
+
+# Verify data is still accessible after index drop.
+query II
+SELECT * FROM md.idx_test ORDER BY id;
+----
+1	Alice
+2	Bob
+3	Charlie
+
+# Drop the remaining index.
+statement ok
+DROP INDEX md.idx_test_name;
+
+# Clean up the table.
+statement ok
+DROP TABLE md.idx_test;
+

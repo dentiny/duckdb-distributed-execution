@@ -3,6 +3,7 @@
 #include "distributed_client.hpp"
 #include "distributed_protocol.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -116,6 +117,36 @@ void MotherduckSchemaCatalogEntry::Scan(CatalogType type, const std::function<vo
 optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
                                                                      CreateIndexInfo &info, TableCatalogEntry &table) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateIndex");
+
+	string index_name = info.index_name;
+	string table_name = table.name;
+
+	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	const bool is_remote_table = md_catalog_ptr && md_catalog_ptr->IsRemoteTable(table_name);
+
+	if (is_remote_table) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote index %s on table %s", index_name, table_name));
+
+		// Use info.ToString() to generate the full CREATE INDEX SQL
+		// This handles all cases properly (UNIQUE, column lists, etc.)
+		string create_sql = info.ToString();
+
+		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
+
+		auto &client = DistributedClient::GetInstance();
+		auto result = client.ExecuteSQL(create_sql);
+		if (result->HasError()) {
+			throw Exception(ExceptionType::CATALOG, "Failed to create index on server: " + result->GetError());
+		}
+
+		// Register the index as remote
+		md_catalog_ptr->RegisterRemoteIndex(index_name);
+	} else {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local index %s on table %s", index_name, table_name));
+	}
+
+	// Create local catalog entry for both local and remote indexes
+	// Remote tables have local storage, so local indexes can exist alongside remote ones
 	return schema_catalog_entry->CreateIndex(std::move(transaction), info, table);
 }
 
@@ -303,9 +334,39 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop local table %s", info.name));
 		}
 	}
+	// Intercept remote index drop to propagate to the distributed server
+	else if (info.type == CatalogType::INDEX_ENTRY) {
+		auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+		if (md_catalog_ptr && md_catalog_ptr->IsRemoteIndex(info.name)) {
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop remote index %s", info.name));
 
-	// Local catalog entry is created for registered remote tables, which allows DuckDB to know the table existence and
-	// its schema. All actual operations (i.e., scan, insert) will be intercepted and sent to server.
+			string drop_sql = "DROP INDEX ";
+			if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
+				drop_sql += "IF EXISTS ";
+			}
+			drop_sql += info.name;
+			if (info.cascade) {
+				drop_sql += " CASCADE";
+			}
+
+			const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
+			auto &client = DistributedClient::GetInstance();
+			auto result = client.DropIndex(info.name);
+			if (result->HasError()) {
+				throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
+			}
+
+			// Unregister after successful remote drop.
+			md_catalog_ptr->UnregisterRemoteIndex(info.name);
+		}
+		// Fallbacks to local index drop.
+		else {
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Drop local index %s", info.name));
+		}
+	}
+
+	// Local catalog entry is created for registered remote tables/indexes, which allows DuckDB to know the table/index
+	// existence and its schema. All actual operations (i.e., scan, insert) will be intercepted and sent to server.
 	//
 	// TODO(hjiang): Check whether we could fake a remote table entry, which doesn't do ay IO operations.
 	schema_catalog_entry->DropEntry(context, info);

@@ -32,10 +32,16 @@ bool DistributedTableScanBindData::Equals(const FunctionData &other_p) const {
 	return &other.table == &table && other.server_url == server_url && other.remote_table_name == remote_table_name;
 }
 
+static BindInfo DistributedTableScanGetBindInfo(const optional_ptr<FunctionData> bind_data_p) {
+	auto &bind_data = bind_data_p->Cast<DistributedTableScanBindData>();
+	return BindInfo(bind_data.table);
+}
+
 TableFunction DistributedTableScanFunction::GetFunction() {
 	TableFunction function("distributed_scan", {}, Execute, Bind, InitGlobal, InitLocal);
 	function.projection_pushdown = true;
 	function.filter_pushdown = false;
+	function.get_bind_info = DistributedTableScanGetBindInfo;
 	return function;
 }
 

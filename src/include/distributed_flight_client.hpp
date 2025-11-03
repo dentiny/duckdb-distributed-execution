@@ -30,6 +30,12 @@ public:
 	// Drop table.
 	arrow::Status DropTable(const string &drop_sql, distributed::DistributedResponse &response);
 
+	// Create index.
+	arrow::Status CreateIndex(const string &create_sql, distributed::DistributedResponse &response);
+
+	// Drop index.
+	arrow::Status DropIndex(const string &index_name, distributed::DistributedResponse &response);
+
 	// Check if table exists.
 	arrow::Status TableExists(const string &table_name, bool &exists);
 

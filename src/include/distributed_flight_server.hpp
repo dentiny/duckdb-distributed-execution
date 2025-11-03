@@ -49,6 +49,14 @@ private:
 	// Return OK status if the table doesn't exist.
 	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, distributed::DistributedResponse &resp);
 
+	// Handle CREATE INDEX request.
+	// Return error status if the index already exists.
+	arrow::Status HandleCreateIndex(const distributed::CreateIndexRequest &req, distributed::DistributedResponse &resp);
+
+	// Handle DROP INDEX request.
+	// Return OK status if the index doesn't exist.
+	arrow::Status HandleDropIndex(const distributed::DropIndexRequest &req, distributed::DistributedResponse &resp);
+
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
