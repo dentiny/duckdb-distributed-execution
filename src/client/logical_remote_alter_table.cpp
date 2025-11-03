@@ -11,8 +11,7 @@ LogicalRemoteAlterTableOperator::LogicalRemoteAlterTableOperator(unique_ptr<Alte
     : LogicalExtensionOperator(), info(std::move(info_p)), schema(schema_p), table(table_p) {
 }
 
-PhysicalOperator &LogicalRemoteAlterTableOperator::CreatePlan(ClientContext &context,
-                                                              PhysicalPlanGenerator &planner) {
+PhysicalOperator &LogicalRemoteAlterTableOperator::CreatePlan(ClientContext &context, PhysicalPlanGenerator &planner) {
 	// Create the physical operator for remote ALTER TABLE.
 	// Make a copy of the info since the system might need to access the logical operator later.
 	auto info_copy = unique_ptr_cast<AlterInfo, AlterTableInfo>(info->Copy());
@@ -28,4 +27,3 @@ PhysicalOperator &LogicalRemoteAlterTableOperator::CreatePlan(ClientContext &con
 }
 
 } // namespace duckdb
-

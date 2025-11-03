@@ -17,7 +17,7 @@ string SanitizeQuery(const string &sql, const string &catalog_name) {
 
 string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 	string sql = "ALTER TABLE " + table_name + " ";
-	
+
 	switch (info.alter_table_type) {
 	case AlterTableType::ADD_COLUMN: {
 		auto &add_info = info.Cast<AddColumnInfo>();
@@ -57,7 +57,8 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 	}
 	case AlterTableType::SET_DEFAULT: {
 		auto &set_default_info = info.Cast<SetDefaultInfo>();
-		sql += "ALTER COLUMN " + set_default_info.column_name + " SET DEFAULT " + set_default_info.expression->ToString();
+		sql +=
+		    "ALTER COLUMN " + set_default_info.column_name + " SET DEFAULT " + set_default_info.expression->ToString();
 		break;
 	}
 	case AlterTableType::SET_NOT_NULL: {
@@ -73,8 +74,8 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 	default:
 		throw NotImplementedException("Unsupported ALTER TABLE type for remote execution");
 	}
-	
+
 	return sql;
 }
 
-}  // namespace duckdb
+} // namespace duckdb

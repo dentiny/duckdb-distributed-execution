@@ -31,15 +31,17 @@ MotherduckTableCatalogEntry::MotherduckTableCatalogEntry(Catalog &motherduck_cat
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::AlterEntry");
-	
-	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in MotherduckSchemaCatalogEntry::Alter.
+
+	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in
+	// MotherduckSchemaCatalogEntry::Alter.
 	return duck_table_entry->AlterEntry(context, info);
 }
 
 unique_ptr<CatalogEntry> MotherduckTableCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::AlterEntry (CatalogTransaction)");
-	
-	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in MotherduckSchemaCatalogEntry::Alter.
+
+	// AlterEntry is not called for remote tables - ALTER operations are intercepted at the schema level in
+	// MotherduckSchemaCatalogEntry::Alter.
 	return duck_table_entry->AlterEntry(std::move(transaction), info);
 }
 
@@ -129,7 +131,7 @@ TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &contex
 }
 
 TableFunction MotherduckTableCatalogEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
-                                                          const EntryLookupInfo &lookup_info) {
+                                                           const EntryLookupInfo &lookup_info) {
 	DUCKDB_LOG_DEBUG(db_instance, "MotherduckTableCatalogEntry::GetScanFunction");
 
 	// Attempt distributed execution for registered remote table.

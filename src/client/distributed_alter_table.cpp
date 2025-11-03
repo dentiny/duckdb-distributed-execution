@@ -76,4 +76,3 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetData(ExecutionContext &con
 }
 
 } // namespace duckdb
-

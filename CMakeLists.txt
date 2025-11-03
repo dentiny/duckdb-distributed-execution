@@ -26,10 +26,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
 # Add directory for generated protobuf headers.
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-set(UTIL_SOURCES 
-  src/utils/catalog_utils.cpp
-  src/utils/time_utils.cpp
-)
+set(UTIL_SOURCES src/utils/catalog_utils.cpp src/utils/time_utils.cpp)
 
 set(CLIENT_SOURCES
     src/client/distributed_alter_table.cpp

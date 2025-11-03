@@ -13,4 +13,4 @@ string SanitizeQuery(const string &sql, const string &catalog_name);
 // Generate SQL statement to alter table.
 string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name);
 
-}  // namespace duckdb
+} // namespace duckdb
