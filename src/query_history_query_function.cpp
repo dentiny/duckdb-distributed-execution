@@ -4,7 +4,7 @@
 #include "duckdb/common/vector.hpp"
 #include "query_recorder_factory.hpp"
 #include "query_recorder.hpp"
-#include "time_utils.hpp"
+#include "utils/time_utils.hpp"
 
 namespace duckdb {
 

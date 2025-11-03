@@ -1,6 +1,6 @@
 #include "base_query_recorder.hpp"
 
-#include "time_utils.hpp"
+#include "utils/time_utils.hpp"
 
 namespace duckdb {
 
