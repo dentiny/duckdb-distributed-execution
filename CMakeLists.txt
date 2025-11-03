@@ -69,8 +69,6 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
   ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
   protobuf::libprotobuf
@@ -79,8 +77,6 @@ target_link_libraries(
 
 target_link_libraries(
   ${LOADABLE_EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
   protobuf::libprotobuf
@@ -98,8 +94,6 @@ add_executable(distributed_server src/server/distributed_server_main.cpp)
 target_link_libraries(
   distributed_server
   ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
   protobuf::libprotobuf
@@ -112,8 +106,6 @@ add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
 target_link_libraries(
   test_distributed_flight
   ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
   protobuf::libprotobuf
