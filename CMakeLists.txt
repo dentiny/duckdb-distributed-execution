@@ -5,7 +5,6 @@ set(TARGET_NAME motherduck)
 
 set(CMAKE_CXX_STANDARD 20)
 
-find_package(OpenSSL REQUIRED)
 find_package(Arrow REQUIRED CONFIG)
 find_package(ArrowFlight REQUIRED CONFIG)
 find_package(Protobuf REQUIRED)
@@ -69,23 +68,15 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
   ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
+  protobuf::libprotobuf)
 
 target_link_libraries(
   ${LOADABLE_EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
+  protobuf::libprotobuf)
 
 install(
   TARGETS ${EXTENSION_NAME}
@@ -98,13 +89,9 @@ add_executable(distributed_server src/server/distributed_server_main.cpp)
 target_link_libraries(
   distributed_server
   ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
+  protobuf::libprotobuf)
 
 # Unit tests.
 include_directories(duckdb/third_party/catch)
@@ -112,10 +99,6 @@ add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
 target_link_libraries(
   test_distributed_flight
   ${EXTENSION_NAME}
-  OpenSSL::SSL
-  OpenSSL::Crypto
   Arrow::arrow_static
   ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
+  protobuf::libprotobuf)

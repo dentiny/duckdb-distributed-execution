@@ -21,6 +21,7 @@ namespace duckdb {
 // Forward declaration.
 class CreateSchemaInfo;
 class DatabaseInstance;
+class MotherduckCatalog;
 
 class MotherduckSchemaCatalogEntry : public DuckSchemaEntry {
 public:
