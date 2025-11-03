@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
-#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -23,8 +22,9 @@ private:
 };
 
 // Remote index catalog entry - represents an index on a remote table
-// Does NOT inherit from DuckIndexEntry to avoid CommitDrop() being called during transaction commit
-class RemoteIndexCatalogEntry : public IndexCatalogEntry {
+// Inherits from DuckIndexEntry to satisfy transaction commit code,
+// but provides dummy storage infrastructure that safely no-ops
+class RemoteIndexCatalogEntry : public DuckIndexEntry {
 public:
 	RemoteIndexCatalogEntry(Catalog &motherduck_catalog_p, SchemaCatalogEntry &schema, CreateIndexInfo &info);
 
@@ -35,6 +35,9 @@ public:
 	string GetTableName() const override;
 	void Rollback(CatalogEntry &prev_entry) override;
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+
+	// Get the dummy data table info for remote indexes
+	static shared_ptr<DataTableInfo> GetDummyDataTableInfo(Catalog &catalog);
 
 private:
 	Catalog &motherduck_catalog_ref;

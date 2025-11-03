@@ -3,8 +3,10 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/storage/table/data_table_info.hpp"
 #include "motherduck_catalog.hpp"
 #include <iostream>
 
@@ -31,9 +33,18 @@ MotherduckIndexCatalogEntry::~MotherduckIndexCatalogEntry() {
 // RemoteIndexCatalogEntry (Remote Indexes)
 //===--------------------------------------------------------------------===//
 
+shared_ptr<DataTableInfo> RemoteIndexCatalogEntry::GetDummyDataTableInfo(Catalog &catalog) {
+	// Create a dummy DataTableInfo that can safely handle CommitDrop() and RemoveIndex() calls
+	// The TableIndexList inside will be empty, so all operations will safely no-op
+	auto &db = catalog.GetAttached();
+	return make_shared_ptr<DataTableInfo>(db, nullptr, "remote_dummy_schema", "remote_dummy_table");
+}
+
 RemoteIndexCatalogEntry::RemoteIndexCatalogEntry(Catalog &motherduck_catalog_p, SchemaCatalogEntry &schema,
                                                  CreateIndexInfo &info)
-    : IndexCatalogEntry(motherduck_catalog_p, schema, info), motherduck_catalog_ref(motherduck_catalog_p),
+    : DuckIndexEntry(motherduck_catalog_p, schema, info, 
+                     make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(motherduck_catalog_p), info.index_name)),
+      motherduck_catalog_ref(motherduck_catalog_p),
       remote_schema_name(info.schema), remote_table_name(info.table) {
 	std::cerr << "[RemoteIndexCatalogEntry] Creating REMOTE index - name=" << info.index_name << std::endl;
 }
@@ -53,8 +64,9 @@ string RemoteIndexCatalogEntry::GetTableName() const {
 void RemoteIndexCatalogEntry::Rollback(CatalogEntry &prev_entry) {
 	std::cerr << "[RemoteIndexCatalogEntry::Rollback] ENTER - name=" << name << std::endl;
 	// Remote indexes don't have local storage to rollback
-	// This is intentionally empty
-	std::cerr << "[RemoteIndexCatalogEntry::Rollback] EXIT - nothing to rollback for remote index" << std::endl;
+	// The base DuckIndexEntry::Rollback handles null info->info safely
+	DuckIndexEntry::Rollback(prev_entry);
+	std::cerr << "[RemoteIndexCatalogEntry::Rollback] EXIT" << std::endl;
 }
 
 unique_ptr<CatalogEntry> RemoteIndexCatalogEntry::Copy(ClientContext &context) const {
