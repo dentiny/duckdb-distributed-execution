@@ -5,17 +5,18 @@
 
 namespace duckdb {
 
-LogicalRemoteCreateIndex::LogicalRemoteCreateIndex(unique_ptr<CreateIndexInfo> info_p, SchemaCatalogEntry &schema_p,
-                                                   TableCatalogEntry &table_p)
+LogicalRemoteCreateIndexOperator::LogicalRemoteCreateIndexOperator(unique_ptr<CreateIndexInfo> info_p,
+                                                                   SchemaCatalogEntry &schema_p,
+                                                                   TableCatalogEntry &table_p)
     : LogicalExtensionOperator(), info(std::move(info_p)), schema(schema_p), table(table_p) {
 }
 
-PhysicalOperator &LogicalRemoteCreateIndex::CreatePlan(ClientContext &context, PhysicalPlanGenerator &planner) {
-	// Create the physical operator for remote CREATE INDEX
-	// Make a copy of the info since the system might need to access the logical operator later
+PhysicalOperator &LogicalRemoteCreateIndexOperator::CreatePlan(ClientContext &context, PhysicalPlanGenerator &planner) {
+	// Create the physical operator for remote CREATE INDEX.
+	// Make a copy of the info since the system might need to access the logical operator later.
 	auto info_copy = unique_ptr_cast<CreateInfo, CreateIndexInfo>(info->Copy());
 
-	// Pass the catalog, schema, and table names instead of references to avoid dangling reference issues
+	// Pass the catalog, schema, and table names instead of references to avoid dangling reference issues.
 	string catalog_name = schema.catalog.GetName();
 	string schema_name = schema.name;
 	string table_name = table.name;
