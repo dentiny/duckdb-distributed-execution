@@ -1,0 +1,62 @@
+# name: test/sql/table_operations.test
+# description: Test table creation and drop cases
+# group: [sql]
+
+require motherduck
+
+statement ok
+SELECT start_distributed_server(8815);
+
+statement ok
+ATTACH DATABASE 'md:' AS md;
+
+statement ok
+PRAGMA md_register_remote_table('table_ops_test', 'http://localhost:8080', 'table_ops_test');
+
+# DROP TABLE on non-existent table should succeed (idempotent).
+statement ok
+DROP TABLE IF EXISTS md.table_ops_test;
+
+# Verify table doesn't exist.
+query I
+SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'table_ops_test';
+----
+0
+
+# Create a table successfully.
+statement ok
+CREATE TABLE md.table_ops_test (id INTEGER, name VARCHAR);
+
+# Verify table exists.
+query I
+SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'table_ops_test';
+----
+1
+
+# Creating same table again without IF NOT EXISTS should fail.
+statement error
+CREATE TABLE md.table_ops_test (id INTEGER, name VARCHAR);
+
+# Insert some data.
+statement ok
+INSERT INTO md.table_ops_test VALUES (1, 'Alice'), (2, 'Bob');
+
+query II
+SELECT * FROM md.table_ops_test ORDER BY id;
+----
+1	Alice
+2	Bob
+
+# DROP TABLE should succeed.
+statement ok
+DROP TABLE md.table_ops_test;
+
+# Verify table is gone.
+query I
+SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'table_ops_test';
+----
+0
+
+# DROP TABLE again should still succeed (idempotent - IF EXISTS is automatic).
+statement ok
+DROP TABLE md.table_ops_test;

@@ -1,5 +1,3 @@
-// TODO(hjiang): Document table creation and drop behavior. For example, behavior on whether table exists or not.
-
 syntax = "proto3";
 
 package duckdb.distributed;
@@ -22,11 +20,15 @@ message ExecuteSQLRequest {
 }
 
 // Create table request.
+// If the table already exists, return error.
 message CreateTableRequest {
+  // Table creation SQL statement.
   string sql = 1;
 }
 
 // Drop table request.
+//
+// If the table doesn't exist, nothing happens.
 message DropTableRequest {
   string table_name = 1;
 }
