@@ -1,6 +1,7 @@
 #include "arrow_utils.hpp"
 
 #include "duckdb/common/assert.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -52,7 +53,6 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::FIXED_SIZE_BINARY:
 		return LogicalType {LogicalTypeId::BLOB};
 	case arrow::Type::EXTENSION: {
-		// Handle Arrow extension types (UUID, custom types, etc.)
 		auto ext_type = std::static_pointer_cast<arrow::ExtensionType>(arrow_type);
 		auto ext_name = ext_type->extension_name();
 
@@ -61,7 +61,7 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 			return LogicalType {LogicalTypeId::UUID};
 		}
 
-		// For other extensions (including DuckDB-specific types), use the storage type.
+		// Fallbacks to storage type for other extensions types.
 		return ArrowTypeToDuckDBType(ext_type->storage_type());
 	}
 	case arrow::Type::DATE32:
@@ -108,7 +108,6 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	case arrow::Type::DECIMAL128:
 	case arrow::Type::DECIMAL256: {
 		// Extract precision and scale from Arrow decimal type.
-		// Note: HUGEINT/UHUGEINT should be sent as extension types, not as DECIMAL.
 		auto decimal_type = std::static_pointer_cast<arrow::DecimalType>(arrow_type);
 		return LogicalType::DECIMAL(decimal_type->precision(), decimal_type->scale());
 	}
@@ -198,7 +197,6 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 		}
 		case LogicalTypeId::CHAR:
 		case LogicalTypeId::VARCHAR: {
-			// CHAR and VARCHAR both map to Arrow STRING types
 			if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
 				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
 				auto str_val = str_array->GetString(row_idx);
@@ -363,7 +361,7 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 				interval_val.months = 0;
 				interval_val.days = 0;
 
-				// Convert duration to microseconds based on time unit
+				// Convert duration to microseconds based on time unit.
 				switch (duration_type->unit()) {
 				case arrow::TimeUnit::SECOND:
 					interval_val.micros = value * 1000000;
@@ -384,11 +382,9 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 		}
 		case LogicalTypeId::HUGEINT:
 		case LogicalTypeId::UHUGEINT: {
-			// In practice, HUGEINT/UHUGEINT are not sent as extension types.
-			// They would appear in the type system but conversion happens elsewhere.
-			// This case should not be reached in normal operation.
-			FlatVector::SetNull(duckdb_vector, row_idx, true);
-			break;
+			// If we reach here, there's a type detection/conversion mismatch.
+			throw InternalException(
+			    "HUGEINT/UHUGEINT conversion not implemented - type should be detected as VARCHAR or BLOB");
 		}
 		case LogicalTypeId::DECIMAL: {
 			if (arrow_array->type_id() == arrow::Type::DECIMAL128) {
