@@ -20,9 +20,9 @@ PhysicalOperator &LogicalRemoteCreateIndex::CreatePlan(ClientContext &context, P
 	string schema_name = schema.name;
 	string table_name = table.name;
 
-	return planner.Make<PhysicalRemoteCreateIndex>(std::move(info_copy), std::move(catalog_name),
-	                                               std::move(schema_name), std::move(table_name),
-	                                               estimated_cardinality);
+	return planner.Make<PhysicalRemoteCreateIndexOperator>(std::move(info_copy), std::move(catalog_name),
+	                                                       std::move(schema_name), std::move(table_name),
+	                                                       estimated_cardinality);
 }
 
 } // namespace duckdb

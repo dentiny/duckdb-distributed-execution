@@ -107,7 +107,6 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 		delete_sql += key_values[i].ToSQLString();
 	}
 	delete_sql += ")";
-
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing DELETE on remote server: %s", delete_sql));
 
 	auto &client = DistributedClient::GetInstance();

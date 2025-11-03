@@ -152,7 +152,7 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTran
 			return nullptr;
 		}
 
-		// Register as remote index for DROP INDEX tracking
+		// Register as remote index for DROP INDEX tracking.
 		md_catalog_ptr->RegisterRemoteIndex(index_name);
 
 		return result;

@@ -35,6 +35,8 @@ CREATE INDEX idx_test_id ON md.idx_test(id);
 ----
 
 # Create another index successfully.
+# Note: The table name md.idx_test appears once in the CREATE INDEX statement,
+# testing that RemoveCatalogPrefix correctly strips the catalog prefix.
 statement ok
 CREATE INDEX idx_test_name ON md.idx_test(name);
 
