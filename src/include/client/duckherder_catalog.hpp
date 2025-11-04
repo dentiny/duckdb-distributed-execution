@@ -10,6 +10,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/load_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
 namespace duckdb {

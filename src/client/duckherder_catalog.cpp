@@ -265,7 +265,7 @@ bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
 }
 
 string DuckherderCatalog::GetServerUrl() const {
-	return StringUtil::Format("http://%s:%d", server_host, server_port);
+	return StringUtil::Format("grpc://%s:%d", server_host, server_port);
 }
 
 } // namespace duckdb

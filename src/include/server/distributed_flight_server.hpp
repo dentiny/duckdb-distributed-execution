@@ -61,6 +61,11 @@ private:
 	// Return error status if the table doesn't exist or if the alteration fails.
 	arrow::Status HandleAlterTable(const distributed::AlterTableRequest &req, distributed::DistributedResponse &resp);
 
+	// Handle LOAD EXTENSION request.
+	// Return error status if the extension fails to load.
+	arrow::Status HandleLoadExtension(const distributed::LoadExtensionRequest &req,
+	                                  distributed::DistributedResponse &resp);
+
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);

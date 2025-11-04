@@ -53,6 +53,21 @@ arrow::Status DistributedFlightClient::DropIndex(const string &index_name, distr
 	return SendAction(req, response);
 }
 
+arrow::Status DistributedFlightClient::LoadExtension(const string &extension_name, const string &repository,
+                                                     const string &version,
+                                                     distributed::DistributedResponse &response) {
+	distributed::DistributedRequest req;
+	auto *load_req = req.mutable_load_extension();
+	load_req->set_extension_name(extension_name);
+	if (!repository.empty()) {
+		load_req->set_repository(repository);
+	}
+	if (!version.empty()) {
+		load_req->set_version(version);
+	}
+	return SendAction(req, response);
+}
+
 arrow::Status DistributedFlightClient::TableExists(const string &table_name, bool &exists) {
 	distributed::DistributedRequest req;
 	auto *exists_req = req.mutable_table_exists();

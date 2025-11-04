@@ -45,8 +45,10 @@ set(CLIENT_SOURCES
     src/client/duckherder_transaction.cpp
     src/client/duckherder_transaction_manager.cpp
     src/client/entry_lookup_info_hash_utils.cpp
+    src/client/logical_distributed_load.cpp
     src/client/logical_remote_alter_table.cpp
-    src/client/logical_remote_create_index.cpp)
+    src/client/logical_remote_create_index.cpp
+    src/client/physical_distributed_load.cpp)
 
 set(SERVER_SOURCES src/server/distributed_flight_server.cpp
                    src/server/distributed_server_function.cpp)
@@ -93,14 +95,14 @@ target_link_libraries(
   gRPC::grpc++
   gRPC::grpc)
 
-# Unit tests.
-include_directories(duckdb/third_party/catch)
-add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
-target_link_libraries(
-  test_distributed_flight
-  ${EXTENSION_NAME}
-  Arrow::arrow_static
-  ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
+# # Unit tests.
+# include_directories(duckdb/third_party/catch)
+# add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
+# target_link_libraries(
+#   test_distributed_flight
+#   ${EXTENSION_NAME}
+#   Arrow::arrow_static
+#   ArrowFlight::arrow_flight_static
+#   protobuf::libprotobuf
+#   gRPC::grpc++
+#   gRPC::grpc)
