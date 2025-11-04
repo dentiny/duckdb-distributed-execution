@@ -68,19 +68,12 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
-  ${EXTENSION_NAME}
-  Arrow::arrow_static
-  ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
-  gRPC::grpc)
+  ${EXTENSION_NAME} Arrow::arrow_static ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf gRPC::grpc++ gRPC::grpc)
 
 target_link_libraries(
-  ${LOADABLE_EXTENSION_NAME}
-  Arrow::arrow_static
-  ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++
+  ${LOADABLE_EXTENSION_NAME} Arrow::arrow_static
+  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++
   gRPC::grpc)
 
 install(

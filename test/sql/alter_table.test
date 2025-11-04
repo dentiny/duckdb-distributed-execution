@@ -5,7 +5,7 @@
 require duckherder
 
 statement ok
-SELECT start_distributed_server(8815);
+SELECT duckherder_start_local_server(8815);
 
 statement ok
 ATTACH DATABASE 'dh' (TYPE duckherder);

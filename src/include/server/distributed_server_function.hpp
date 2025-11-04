@@ -4,8 +4,8 @@
 
 namespace duckdb {
 
-// Create scalar functions for starting/stopping distributed server
-ScalarFunction GetStartDistributedServerFunction();
-ScalarFunction GetStopDistributedServerFunction();
+// Create scalar functions for starting and stopping a local server.
+ScalarFunction GetStartLocalServerFunction();
+ScalarFunction GetStopLocalServerFunction();
 
 } // namespace duckdb
