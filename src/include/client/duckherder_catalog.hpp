@@ -31,16 +31,16 @@ struct RemoteTableConfig {
 	}
 };
 
-class MotherduckCatalog : public DuckCatalog {
+class DuckherderCatalog : public DuckCatalog {
 public:
-	explicit MotherduckCatalog(AttachedDatabase &db);
+	explicit DuckherderCatalog(AttachedDatabase &db);
 
-	~MotherduckCatalog() override;
+	~DuckherderCatalog() override;
 
 	void Initialize(bool load_builtin) override;
 
 	string GetCatalogType() override {
-		return "motherduck";
+		return "duckherder";
 	}
 
 	optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;

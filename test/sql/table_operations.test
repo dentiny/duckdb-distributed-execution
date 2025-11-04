@@ -2,45 +2,45 @@
 # description: Test table creation and drop cases
 # group: [sql]
 
-require motherduck
+require duckherder
 
 statement ok
-SELECT start_distributed_server(8815);
+SELECT duckherder_start_local_server(8815);
 
 statement ok
-ATTACH DATABASE 'md:' AS md;
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA md_register_remote_table('ops_test', 'http://localhost:8080', 'ops_test');
+PRAGMA duckherder_register_remote_table('ops_test', 'http://localhost:8080', 'ops_test');
 
 # DROP TABLE on non-existent table should succeed (idempotent).
 statement ok
-DROP TABLE IF EXISTS md.ops_test;
+DROP TABLE IF EXISTS dh.ops_test;
 
 # Create a table successfully.
 statement ok
-CREATE TABLE md.ops_test (id INTEGER, name VARCHAR);
+CREATE TABLE dh.ops_test (id INTEGER, name VARCHAR);
 
 # Attempt to create the same table again should fail.
 statement error
-CREATE TABLE md.ops_test (id INTEGER, name VARCHAR);
+CREATE TABLE dh.ops_test (id INTEGER, name VARCHAR);
 ----
 
 # Attempt to create again with different schema should fail.
 statement error
-CREATE TABLE md.ops_test (id INTEGER, name VARCHAR, age INTEGER);
+CREATE TABLE dh.ops_test (id INTEGER, name VARCHAR, age INTEGER);
 ----
 
 # Table should still exist and be usable after failed creation attempts.
 statement ok
-INSERT INTO md.ops_test VALUES (1, 'Alice'), (2, 'Bob');
+INSERT INTO dh.ops_test VALUES (1, 'Alice'), (2, 'Bob');
 
 query II
-SELECT * FROM md.ops_test ORDER BY id;
+SELECT * FROM dh.ops_test ORDER BY id;
 ----
 1	Alice
 2	Bob
 
 # DROP TABLE should succeed.
 statement ok
-DROP TABLE md.ops_test;
+DROP TABLE dh.ops_test;

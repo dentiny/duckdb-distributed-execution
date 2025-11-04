@@ -9,7 +9,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
-#include "motherduck_catalog.hpp"
+#include "duckherder_catalog.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {

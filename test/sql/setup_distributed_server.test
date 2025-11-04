@@ -5,9 +5,8 @@
 # This starts the Flight server in a background thread
 # Include this at the beginning of tests that need distributed execution
 
-require motherduck
+require duckherder
 
 # Start the distributed server on port 8815
 statement ok
-SELECT start_distributed_server(8815);
-
+SELECT duckherder_start_local_server(8815);

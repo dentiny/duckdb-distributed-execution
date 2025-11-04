@@ -2,47 +2,47 @@
 # description: Test index creation and drop cases
 # group: [sql]
 
-require motherduck
+require duckherder
 
 statement ok
-SELECT start_distributed_server(8815);
+SELECT duckherder_start_local_server(8815);
 
 statement ok
-ATTACH DATABASE 'md:' AS md;
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA md_register_remote_table('idx_test', 'http://localhost:8815', 'idx_test');
+PRAGMA duckherder_register_remote_table('idx_test', 'http://localhost:8815', 'idx_test');
 
 # DROP INDEX on non-existent index should succeed (idempotent).
 statement ok
-DROP INDEX IF EXISTS md.idx_test_id;
+DROP INDEX IF EXISTS dh.idx_test_id;
 
 # Create a table successfully.
 statement ok
-CREATE TABLE md.idx_test (id INTEGER, name VARCHAR);
+CREATE TABLE dh.idx_test (id INTEGER, name VARCHAR);
 
 # Insert some test data.
 statement ok
-INSERT INTO md.idx_test VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');
+INSERT INTO dh.idx_test VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');
 
 # Create an index successfully.
 statement ok
-CREATE INDEX idx_test_id ON md.idx_test(id);
+CREATE INDEX idx_test_id ON dh.idx_test(id);
 
 # Attempt to create the same index again should fail.
 statement error
-CREATE INDEX idx_test_id ON md.idx_test(id);
+CREATE INDEX idx_test_id ON dh.idx_test(id);
 ----
 
 # Create another index successfully.
-# Note: The table name md.idx_test appears once in the CREATE INDEX statement,
+# Note: The table name dh.idx_test appears once in the CREATE INDEX statement,
 # testing that RemoveCatalogPrefix correctly strips the catalog prefix.
 statement ok
-CREATE INDEX idx_test_name ON md.idx_test(name);
+CREATE INDEX idx_test_name ON dh.idx_test(name);
 
 # Verify data is still accessible after index creation.
 query II
-SELECT * FROM md.idx_test ORDER BY id;
+SELECT * FROM dh.idx_test ORDER BY id;
 ----
 1	Alice
 2	Bob
@@ -52,28 +52,28 @@ SELECT * FROM md.idx_test ORDER BY id;
 query IIII
 SELECT database_name, schema_name, index_name, table_name 
 FROM duckdb_indexes() 
-WHERE database_name = 'md' AND table_name = 'idx_test'
+WHERE database_name = 'dh' AND table_name = 'idx_test'
 ORDER BY index_name;
 ----
-md	main	idx_test_id	idx_test
-md	main	idx_test_name	idx_test
+dh	main	idx_test_id	idx_test
+dh	main	idx_test_name	idx_test
 
 # DROP INDEX should succeed.
 statement ok
-DROP INDEX md.idx_test_id;
+DROP INDEX dh.idx_test_id;
 
 # DROP INDEX on already dropped index with IF EXISTS should succeed.
 statement ok
-DROP INDEX IF EXISTS md.idx_test_id;
+DROP INDEX IF EXISTS dh.idx_test_id;
 
 # DROP INDEX on already dropped index without IF EXISTS should fail.
 statement error
-DROP INDEX md.idx_test_id;
+DROP INDEX dh.idx_test_id;
 ----
 
 # Verify data is still accessible after index drop.
 query II
-SELECT * FROM md.idx_test ORDER BY id;
+SELECT * FROM dh.idx_test ORDER BY id;
 ----
 1	Alice
 2	Bob
@@ -83,23 +83,23 @@ SELECT * FROM md.idx_test ORDER BY id;
 query IIII
 SELECT database_name, schema_name, index_name, table_name 
 FROM duckdb_indexes() 
-WHERE database_name = 'md' AND table_name = 'idx_test'
+WHERE database_name = 'dh' AND table_name = 'idx_test'
 ORDER BY index_name;
 ----
-md	main	idx_test_name	idx_test
+dh	main	idx_test_name	idx_test
 
 # Drop the remaining index.
 statement ok
-DROP INDEX md.idx_test_name;
+DROP INDEX dh.idx_test_name;
 
 # Verify no indexes remain after dropping all indexes.
 query IIII
 SELECT database_name, schema_name, index_name, table_name 
 FROM duckdb_indexes() 
-WHERE database_name = 'md' AND table_name = 'idx_test'
+WHERE database_name = 'dh' AND table_name = 'idx_test'
 ORDER BY index_name;
 ----
 
 # Clean up the table.
 statement ok
-DROP TABLE md.idx_test;
+DROP TABLE dh.idx_test;

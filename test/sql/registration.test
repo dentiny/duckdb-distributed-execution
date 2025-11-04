@@ -1,35 +1,35 @@
 # name: test/sql/registration.test
-# description: test motherduck extension to register and unregister table
+# description: test duckherder extension to register and unregister table
 # group: [sql]
 
-require motherduck
+require duckherder
 
 # Start distributed server in background thread
 statement ok
-SELECT start_distributed_server(8815);
+SELECT duckherder_start_local_server(8815);
 
 statement ok
-ATTACH DATABASE 'md' (TYPE motherduck);
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA md_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
+PRAGMA duckherder_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
 
 # Double registration.
 statement error
-PRAGMA md_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
+PRAGMA duckherder_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
 ----
 Invalid Input Error: Failed to register table registration_test_table because it's already registered!
 
 statement ok
-PRAGMA md_unregister_remote_table('registration_test_table');
+PRAGMA duckherder_unregister_remote_table('registration_test_table');
 
 statement error
-PRAGMA md_unregister_remote_table('non_existent_table_xyz');
+PRAGMA duckherder_unregister_remote_table('non_existent_table_xyz');
 ----
 Invalid Input Error: Failed to unregister table non_existent_table_xyz because it hasn't been registered!
 
 # Double unregistration.
 statement error
-PRAGMA md_unregister_remote_table('registration_test_table');
+PRAGMA duckherder_unregister_remote_table('registration_test_table');
 ----
 Invalid Input Error: Failed to unregister table registration_test_table because it hasn't been registered!

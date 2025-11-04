@@ -2,50 +2,50 @@
 # description: Test ALTER TABLE operations on remote tables
 # group: [sql]
 
-require motherduck
+require duckherder
 
 statement ok
-SELECT start_distributed_server(8815);
+SELECT duckherder_start_local_server(8815);
 
 statement ok
-ATTACH DATABASE 'md' (TYPE motherduck);
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA md_register_remote_table('test_alter_table', 'http://localhost:8815', 'test_alter_table');
+PRAGMA duckherder_register_remote_table('test_alter_table', 'http://localhost:8815', 'test_alter_table');
 
 statement ok
-DROP TABLE IF EXISTS md.test_alter_table;
+DROP TABLE IF EXISTS dh.test_alter_table;
 
 statement ok
-CREATE TABLE md.test_alter_table (id INTEGER, name VARCHAR);
+CREATE TABLE dh.test_alter_table (id INTEGER, name VARCHAR);
 
 statement ok
-INSERT INTO md.test_alter_table VALUES (1, 'Alice'), (2, 'Bob');
+INSERT INTO dh.test_alter_table VALUES (1, 'Alice'), (2, 'Bob');
 
 query II
-SELECT * FROM md.test_alter_table ORDER BY id;
+SELECT * FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice
 2	Bob
 
 # 
 statement ok
-ALTER TABLE md.test_alter_table ADD COLUMN age INTEGER;
+ALTER TABLE dh.test_alter_table ADD COLUMN age INTEGER;
 
 # Verify the schema was updated  
 query III
-SELECT * FROM md.test_alter_table ORDER BY id;
+SELECT * FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice	NULL
 2	Bob	NULL
 
 # Insert data with the new column
 statement ok
-INSERT INTO md.test_alter_table VALUES (3, 'Charlie', 30);
+INSERT INTO dh.test_alter_table VALUES (3, 'Charlie', 30);
 
 # Verify data after adding column
 query III
-SELECT * FROM md.test_alter_table ORDER BY id;
+SELECT * FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice	NULL
 2	Bob	NULL
@@ -53,11 +53,11 @@ SELECT * FROM md.test_alter_table ORDER BY id;
 
 # Rename a column
 statement ok
-ALTER TABLE md.test_alter_table RENAME COLUMN name TO full_name;
+ALTER TABLE dh.test_alter_table RENAME COLUMN name TO full_name;
 
 # Verify renamed column
 query III
-SELECT id, full_name, age FROM md.test_alter_table ORDER BY id;
+SELECT id, full_name, age FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice	NULL
 2	Bob	NULL
@@ -65,11 +65,11 @@ SELECT id, full_name, age FROM md.test_alter_table ORDER BY id;
 
 # Drop a column
 statement ok
-ALTER TABLE md.test_alter_table DROP COLUMN age;
+ALTER TABLE dh.test_alter_table DROP COLUMN age;
 
 # Verify column dropped
 query II
-SELECT * FROM md.test_alter_table ORDER BY id;
+SELECT * FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice
 2	Bob
@@ -77,11 +77,11 @@ SELECT * FROM md.test_alter_table ORDER BY id;
 
 # Add column with DEFAULT value
 statement ok
-ALTER TABLE md.test_alter_table ADD COLUMN status VARCHAR DEFAULT 'active';
+ALTER TABLE dh.test_alter_table ADD COLUMN status VARCHAR DEFAULT 'active';
 
 # Verify default value is applied
 query III
-SELECT * FROM md.test_alter_table ORDER BY id;
+SELECT * FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice	active
 2	Bob	active
@@ -89,21 +89,21 @@ SELECT * FROM md.test_alter_table ORDER BY id;
 
 # Insert with explicit columns including status
 statement ok
-INSERT INTO md.test_alter_table (id, full_name, status) VALUES (4, 'David', 'pending');
+INSERT INTO dh.test_alter_table (id, full_name, status) VALUES (4, 'David', 'pending');
 
 # Verify the insert
 query III
-SELECT * FROM md.test_alter_table WHERE id = 4;
+SELECT * FROM dh.test_alter_table WHERE id = 4;
 ----
 4	David	pending
 
 # Add column without default
 statement ok
-ALTER TABLE md.test_alter_table ADD COLUMN score INTEGER;
+ALTER TABLE dh.test_alter_table ADD COLUMN score INTEGER;
 
 # Verify NULL for existing rows
 query IIII
-SELECT * FROM md.test_alter_table ORDER BY id;
+SELECT * FROM dh.test_alter_table ORDER BY id;
 ----
 1	Alice	active	NULL
 2	Bob	active	NULL
@@ -112,58 +112,54 @@ SELECT * FROM md.test_alter_table ORDER BY id;
 
 # Insert with all columns
 statement ok
-INSERT INTO md.test_alter_table VALUES (5, 'Eve', 'inactive', 95);
+INSERT INTO dh.test_alter_table VALUES (5, 'Eve', 'inactive', 95);
 
 # Verify full row
 query IIII
-SELECT * FROM md.test_alter_table WHERE id = 5;
+SELECT * FROM dh.test_alter_table WHERE id = 5;
 ----
 5	Eve	inactive	95
 
 # Drop column with IF EXISTS
 statement ok
-ALTER TABLE md.test_alter_table DROP COLUMN IF EXISTS score;
+ALTER TABLE dh.test_alter_table DROP COLUMN IF EXISTS score;
 
 # Verify column dropped
 query III
-SELECT * FROM md.test_alter_table ORDER BY id LIMIT 2;
+SELECT * FROM dh.test_alter_table ORDER BY id LIMIT 2;
 ----
 1	Alice	active
 2	Bob	active
 
 # Try to drop non-existent column with IF EXISTS (should succeed silently)
 statement ok
-ALTER TABLE md.test_alter_table DROP COLUMN IF EXISTS nonexistent_col;
+ALTER TABLE dh.test_alter_table DROP COLUMN IF EXISTS nonexistent_col;
 
 # Add column with IF NOT EXISTS
 statement ok
-ALTER TABLE md.test_alter_table ADD COLUMN IF NOT EXISTS email VARCHAR;
+ALTER TABLE dh.test_alter_table ADD COLUMN IF NOT EXISTS email VARCHAR;
 
 # Try to add same column again with IF NOT EXISTS (should succeed silently)
 statement ok
-ALTER TABLE md.test_alter_table ADD COLUMN IF NOT EXISTS email VARCHAR;
+ALTER TABLE dh.test_alter_table ADD COLUMN IF NOT EXISTS email VARCHAR;
 
 # Verify only one email column exists
 query IIII
-SELECT * FROM md.test_alter_table WHERE id = 1;
+SELECT * FROM dh.test_alter_table WHERE id = 1;
 ----
 1	Alice	active	NULL
 
 # Test ALTER on non-existent table, which should fail.
 statement error
-ALTER TABLE md.nonexistent_table DROP COLUMN some_column;
+ALTER TABLE dh.nonexistent_table DROP COLUMN some_column;
 ----
 Catalog Error: Table with name nonexistent_table does not exist
 
 # Test ALTER with IF EXISTS on non-existent table, which should fail.
 statement error
-ALTER TABLE md.nonexistent_table DROP COLUMN IF EXISTS some_column;
+ALTER TABLE dh.nonexistent_table DROP COLUMN IF EXISTS some_column;
 ----
 Catalog Error: Table with name nonexistent_table does not exist
 
-# Clean up
 statement ok
-PRAGMA md_unregister_remote_table('test_alter_table');
-
-statement ok
-DROP TABLE md.test_alter_table;
+DROP TABLE dh.test_alter_table;
