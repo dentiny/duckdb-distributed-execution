@@ -1,4 +1,4 @@
-#include "motherduck_schema_catalog_entry.hpp"
+#include "duckherder_schema_catalog_entry.hpp"
 
 #include "distributed_client.hpp"
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
@@ -9,8 +9,8 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
-#include "motherduck_catalog.hpp"
-#include "motherduck_index_catalog_entry.hpp"
+#include "duckherder_catalog.hpp"
+#include "duckherder_index_catalog_entry.hpp"
 #include "query_recorder_factory.hpp"
 #include "utils/catalog_utils.hpp"
 
@@ -27,117 +27,117 @@ vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constrain
 }
 } // namespace
 
-MotherduckSchemaCatalogEntry::MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p,
+DuckherderSchemaCatalogEntry::DuckherderSchemaCatalogEntry(Catalog &duckherder_catalog_p,
                                                            DatabaseInstance &db_instance_p,
                                                            SchemaCatalogEntry *schema_catalog_entry_p,
                                                            unique_ptr<CreateSchemaInfo> create_schema_info_p)
-    : DuckSchemaEntry(motherduck_catalog_p, *create_schema_info_p), db_instance(db_instance_p),
+    : DuckSchemaEntry(duckherder_catalog_p, *create_schema_info_p), db_instance(db_instance_p),
       create_schema_info(std::move(create_schema_info_p)), schema_catalog_entry(schema_catalog_entry_p),
-      motherduck_catalog_ref(motherduck_catalog_p) {
+      duckherder_catalog_ref(duckherder_catalog_p) {
 }
 
-unique_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::AlterEntry");
+unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::AlterEntry");
 	return schema_catalog_entry->AlterEntry(context, info);
 }
 
-unique_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::AlterEntry (CatalogTransaction)");
+unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::AlterEntry (CatalogTransaction)");
 	return schema_catalog_entry->AlterEntry(std::move(transaction), info);
 }
 
-void MotherduckSchemaCatalogEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::UndoAlter");
+void DuckherderSchemaCatalogEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::UndoAlter");
 	schema_catalog_entry->UndoAlter(context, info);
 }
 
-void MotherduckSchemaCatalogEntry::Rollback(CatalogEntry &prev_entry) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Rollback");
+void DuckherderSchemaCatalogEntry::Rollback(CatalogEntry &prev_entry) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Rollback");
 	schema_catalog_entry->Rollback(prev_entry);
 }
 
-void MotherduckSchemaCatalogEntry::OnDrop() {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::OnDrop");
+void DuckherderSchemaCatalogEntry::OnDrop() {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::OnDrop");
 	schema_catalog_entry->OnDrop();
 }
 
-unique_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::Copy(ClientContext &context) const {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Copy");
+unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::Copy(ClientContext &context) const {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Copy");
 	return schema_catalog_entry->Copy(context);
 }
 
-unique_ptr<CreateInfo> MotherduckSchemaCatalogEntry::GetInfo() const {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::GetInfo");
+unique_ptr<CreateInfo> DuckherderSchemaCatalogEntry::GetInfo() const {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::GetInfo");
 	return schema_catalog_entry->GetInfo();
 }
 
-void MotherduckSchemaCatalogEntry::SetAsRoot() {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::SetAsRoot");
+void DuckherderSchemaCatalogEntry::SetAsRoot() {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::SetAsRoot");
 	schema_catalog_entry->SetAsRoot();
 }
 
-string MotherduckSchemaCatalogEntry::ToSQL() const {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::ToSQL");
+string DuckherderSchemaCatalogEntry::ToSQL() const {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::ToSQL");
 	return schema_catalog_entry->ToSQL();
 }
 
-Catalog &MotherduckSchemaCatalogEntry::ParentCatalog() {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::ParentCatalog");
+Catalog &DuckherderSchemaCatalogEntry::ParentCatalog() {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::ParentCatalog");
 	return schema_catalog_entry->ParentCatalog();
 }
 
-const Catalog &MotherduckSchemaCatalogEntry::ParentCatalog() const {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::ParentCatalog (const)");
+const Catalog &DuckherderSchemaCatalogEntry::ParentCatalog() const {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::ParentCatalog (const)");
 	return schema_catalog_entry->ParentCatalog();
 }
 
-SchemaCatalogEntry &MotherduckSchemaCatalogEntry::ParentSchema() {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::ParentSchema");
+SchemaCatalogEntry &DuckherderSchemaCatalogEntry::ParentSchema() {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::ParentSchema");
 	return schema_catalog_entry->ParentSchema();
 }
 
-const SchemaCatalogEntry &MotherduckSchemaCatalogEntry::ParentSchema() const {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::ParentSchema (const)");
+const SchemaCatalogEntry &DuckherderSchemaCatalogEntry::ParentSchema() const {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::ParentSchema (const)");
 	return schema_catalog_entry->ParentSchema();
 }
 
-void MotherduckSchemaCatalogEntry::Verify(Catalog &catalog) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Verify");
+void DuckherderSchemaCatalogEntry::Verify(Catalog &catalog) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Verify");
 	schema_catalog_entry->Verify(catalog);
 }
 
-void MotherduckSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type,
+void DuckherderSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type,
                                         const std::function<void(CatalogEntry &)> &callback) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Scan (with ClientContext)");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Scan (with ClientContext)");
 	schema_catalog_entry->Scan(context, type, callback);
 }
 
-void MotherduckSchemaCatalogEntry::Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Scan");
+void DuckherderSchemaCatalogEntry::Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Scan");
 	schema_catalog_entry->Scan(type, callback);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
                                                                      CreateIndexInfo &info, TableCatalogEntry &table) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateIndex");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateIndex");
 
 	string index_name = info.index_name;
 	string table_name = table.name;
 
-	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
-	const bool is_remote_table = md_catalog_ptr != nullptr && md_catalog_ptr->IsRemoteTable(table_name);
+	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
+	const bool is_remote_table = dh_catalog_ptr != nullptr && dh_catalog_ptr->IsRemoteTable(table_name);
 
 	if (is_remote_table) {
 		DUCKDB_LOG_DEBUG(db_instance,
 		                 StringUtil::Format("Creating remote index %s on table %s", index_name, table_name));
 
 		// For remote tables, create a stub catalog entry for DROP INDEX lookups.
-		// MotherduckIndexCatalogEntry inherits from DuckIndexEntry with dummy storage infrastructure,
+		// DuckherderIndexCatalogEntry inherits from DuckIndexEntry with dummy storage infrastructure,
 		// allowing CommitDrop() to be called safely as a no-op during transaction commit.
 		info.dependencies.AddDependency(table);
 
 		// Create a remote index catalog entry.
-		auto remote_index = make_uniq<MotherduckIndexCatalogEntry>(motherduck_catalog_ref, *this, info);
+		auto remote_index = make_uniq<DuckherderIndexCatalogEntry>(duckherder_catalog_ref, *this, info);
 		auto dependencies = remote_index->dependencies;
 		auto *result = remote_index.get();
 
@@ -153,7 +153,7 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTran
 		}
 
 		// Register as remote index for DROP INDEX tracking.
-		md_catalog_ptr->RegisterRemoteIndex(index_name);
+		dh_catalog_ptr->RegisterRemoteIndex(index_name);
 
 		return result;
 	}
@@ -163,21 +163,21 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateIndex(CatalogTran
 	return schema_catalog_entry->CreateIndex(std::move(transaction), info, table);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateFunction(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateFunction(CatalogTransaction transaction,
                                                                         CreateFunctionInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateFunction");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateFunction");
 	return schema_catalog_entry->CreateFunction(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTransaction transaction,
                                                                      BoundCreateTableInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateTable");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateTable");
 
 	auto &create_info = info.Base();
 	string table_name = create_info.table;
 
-	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
-	const bool is_remote = md_catalog_ptr && md_catalog_ptr->IsRemoteTable(table_name);
+	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
+	const bool is_remote = dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(table_name);
 	if (is_remote) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote table %s", table_name));
 
@@ -209,49 +209,49 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTable(CatalogTran
 	return schema_catalog_entry->CreateTable(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateView(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateView(CatalogTransaction transaction,
                                                                     CreateViewInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateView");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateView");
 	return schema_catalog_entry->CreateView(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateSequence(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateSequence(CatalogTransaction transaction,
                                                                         CreateSequenceInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateSequence");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateSequence");
 	return schema_catalog_entry->CreateSequence(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateTableFunction(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTableFunction(CatalogTransaction transaction,
                                                                              CreateTableFunctionInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateTableFunction");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateTableFunction");
 	return schema_catalog_entry->CreateTableFunction(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateCopyFunction(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateCopyFunction(CatalogTransaction transaction,
                                                                             CreateCopyFunctionInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateCopyFunction");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateCopyFunction");
 	return schema_catalog_entry->CreateCopyFunction(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreatePragmaFunction(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreatePragmaFunction(CatalogTransaction transaction,
                                                                               CreatePragmaFunctionInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreatePragmaFunction");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreatePragmaFunction");
 	return schema_catalog_entry->CreatePragmaFunction(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateCollation(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateCollation(CatalogTransaction transaction,
                                                                          CreateCollationInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateCollation");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateCollation");
 	return schema_catalog_entry->CreateCollation(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::CreateType(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateType(CatalogTransaction transaction,
                                                                     CreateTypeInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::CreateType");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateType");
 	return schema_catalog_entry->CreateType(std::move(transaction), info);
 }
 
-CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key,
+CatalogEntry *DuckherderSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key,
                                                                                   CatalogEntry *catalog_entry) {
 	D_ASSERT(catalog_entry->type == CatalogType::TABLE_ENTRY);
 	DuckTableEntry *table_catalog_entry = dynamic_cast<DuckTableEntry *>(catalog_entry);
@@ -267,14 +267,14 @@ CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 	create_table_info->tags = table_catalog_entry->tags;
 
 	auto bound_create_table_info = make_uniq<BoundCreateTableInfo>(*this, std::move(create_table_info));
-	auto motherduck_table_catalog_entry = make_uniq<MotherduckTableCatalogEntry>(
+	auto duckherder_table_catalog_entry = make_uniq<DuckherderTableCatalogEntry>(
 	    catalog, db_instance, table_catalog_entry, std::move(bound_create_table_info));
-	auto *ret = motherduck_table_catalog_entry.get();
-	catalog_entries.emplace(std::move(key), std::move(motherduck_table_catalog_entry));
+	auto *ret = duckherder_table_catalog_entry.get();
+	catalog_entries.emplace(std::move(key), std::move(duckherder_table_catalog_entry));
 	return ret;
 }
 
-CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheIndexCatalogEntryWithLock(EntryLookupInfoKey key,
+CatalogEntry *DuckherderSchemaCatalogEntry::WrapAndCacheIndexCatalogEntryWithLock(EntryLookupInfoKey key,
                                                                                   CatalogEntry *catalog_entry) {
 	D_ASSERT(catalog_entry->type == CatalogType::INDEX_ENTRY);
 
@@ -283,10 +283,10 @@ CatalogEntry *MotherduckSchemaCatalogEntry::WrapAndCacheIndexCatalogEntryWithLoc
 	return catalog_entry;
 }
 
-optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
                                                                      const EntryLookupInfo &lookup_info) {
 	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("MotherduckSchemaCatalogEntry::LookupEntry lookup entry %s with type %s",
+	                 StringUtil::Format("DuckherderSchemaCatalogEntry::LookupEntry lookup entry %s with type %s",
 	                                    lookup_info.GetEntryName(), CatalogTypeToString(lookup_info.GetCatalogType())));
 
 	auto catalog_type = lookup_info.GetCatalogType();
@@ -298,11 +298,11 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTran
 	std::lock_guard<std::mutex> lck(mu);
 	auto iter = catalog_entries.find(key);
 	if (iter != catalog_entries.end()) {
-		DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntry cache hit");
+		DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::LookupEntry cache hit");
 		return iter->second.get();
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntry cache miss");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::LookupEntry cache miss");
 	auto catalog_entry = schema_catalog_entry->LookupEntry(std::move(transaction), lookup_info);
 	if (catalog_entry == nullptr) {
 		return catalog_entry;
@@ -319,20 +319,20 @@ optional_ptr<CatalogEntry> MotherduckSchemaCatalogEntry::LookupEntry(CatalogTran
 	return catalog_entry;
 }
 
-CatalogSet::EntryLookup MotherduckSchemaCatalogEntry::LookupEntryDetailed(CatalogTransaction transaction,
+CatalogSet::EntryLookup DuckherderSchemaCatalogEntry::LookupEntryDetailed(CatalogTransaction transaction,
                                                                           const EntryLookupInfo &lookup_info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::LookupEntryDetailed");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::LookupEntryDetailed");
 	return schema_catalog_entry->LookupEntryDetailed(std::move(transaction), lookup_info);
 }
 
-SimilarCatalogEntry MotherduckSchemaCatalogEntry::GetSimilarEntry(CatalogTransaction transaction,
+SimilarCatalogEntry DuckherderSchemaCatalogEntry::GetSimilarEntry(CatalogTransaction transaction,
                                                                   const EntryLookupInfo &lookup_info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::GetSimilarEntry");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::GetSimilarEntry");
 	return schema_catalog_entry->GetSimilarEntry(std::move(transaction), lookup_info);
 }
 
-void MotherduckSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropInfo &info,
-                                                   MotherduckCatalog &md_catalog) {
+void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropInfo &info,
+                                                   DuckherderCatalog &md_catalog) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote index: %s", info.name));
 
 	string drop_sql = "DROP INDEX ";
@@ -351,8 +351,8 @@ void MotherduckSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 	md_catalog.UnregisterRemoteIndex(info.name);
 }
 
-void MotherduckSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropInfo &info,
-                                                   MotherduckCatalog &md_catalog) {
+void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropInfo &info,
+                                                   DuckherderCatalog &md_catalog) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote table: %s", info.name));
 
 	string drop_sql = "DROP TABLE ";
@@ -374,22 +374,22 @@ void MotherduckSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 	md_catalog.UnregisterRemoteTable(info.name);
 }
 
-void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("MotherduckSchemaCatalogEntry::DropEntry - type=%s name=%s",
+void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderSchemaCatalogEntry::DropEntry - type=%s name=%s",
 	                                                 CatalogTypeToString(info.type), info.name));
 
-	auto md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
+	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
 
 	// Handle remote index drops.
-	if (info.type == CatalogType::INDEX_ENTRY && md_catalog_ptr != nullptr &&
-	    md_catalog_ptr->IsRemoteIndex(info.name)) {
-		DropRemoteIndex(context, info, *md_catalog_ptr);
+	if (info.type == CatalogType::INDEX_ENTRY && dh_catalog_ptr != nullptr &&
+	    dh_catalog_ptr->IsRemoteIndex(info.name)) {
+		DropRemoteIndex(context, info, *dh_catalog_ptr);
 	}
 
 	// Handle remote table drops.
-	else if (info.type == CatalogType::TABLE_ENTRY && md_catalog_ptr != nullptr &&
-	         md_catalog_ptr->IsRemoteTable(info.name)) {
-		DropRemoteTable(context, info, *md_catalog_ptr);
+	else if (info.type == CatalogType::TABLE_ENTRY && dh_catalog_ptr != nullptr &&
+	         dh_catalog_ptr->IsRemoteTable(info.name)) {
+		DropRemoteTable(context, info, *dh_catalog_ptr);
 	}
 
 	// For non-remote entries (or remote tables after remote drop), delegate to the underlying schema catalog.
@@ -405,15 +405,15 @@ void MotherduckSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 	catalog_entries.erase(key);
 }
 
-void MotherduckSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckSchemaCatalogEntry::Alter");
+void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Alter");
 
 	// Check if this is an ALTER TABLE operation on a remote table
-	auto *md_catalog_ptr = dynamic_cast<MotherduckCatalog *>(&motherduck_catalog_ref);
-	if (md_catalog_ptr != nullptr && info.type == AlterType::ALTER_TABLE) {
+	auto *dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
+	if (dh_catalog_ptr != nullptr && info.type == AlterType::ALTER_TABLE) {
 		auto &table_info = info.Cast<AlterTableInfo>();
 
-		if (md_catalog_ptr->IsRemoteTable(info.name)) {
+		if (dh_catalog_ptr->IsRemoteTable(info.name)) {
 			string alter_sql = GenerateAlterTableSQL(table_info, info.name);
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 

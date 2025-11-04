@@ -9,7 +9,7 @@ class ClientContext;
 class FunctionParameters;
 
 // TODO(hjiang): Current implementation assumes hard-coded database and catalog type, remove.
-class MotherduckPragmas {
+class DuckherderPragmas {
 public:
 	static void RegisterPragmas(ExtensionLoader &loader);
 

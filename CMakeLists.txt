@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 # Set extension name here
-set(TARGET_NAME motherduck)
+set(TARGET_NAME duckherder)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -39,14 +39,14 @@ set(CLIENT_SOURCES
     src/client/entry_lookup_info_hash_utils.cpp
     src/client/logical_remote_alter_table.cpp
     src/client/logical_remote_create_index.cpp
-    src/client/motherduck_catalog.cpp
-    src/client/motherduck_index_catalog_entry.cpp
-    src/client/motherduck_pragmas.cpp
-    src/client/motherduck_storage.cpp
-    src/client/motherduck_schema_catalog_entry.cpp
-    src/client/motherduck_table_catalog_entry.cpp
-    src/client/motherduck_transaction.cpp
-    src/client/motherduck_transaction_manager.cpp)
+    src/client/duckherder_catalog.cpp
+    src/client/duckherder_index_catalog_entry.cpp
+    src/client/duckherder_pragmas.cpp
+    src/client/duckherder_storage.cpp
+    src/client/duckherder_schema_catalog_entry.cpp
+    src/client/duckherder_table_catalog_entry.cpp
+    src/client/duckherder_transaction.cpp
+    src/client/duckherder_transaction_manager.cpp)
 
 set(SERVER_SOURCES src/server/distributed_flight_server.cpp
                    src/server/distributed_server_function.cpp)
@@ -61,7 +61,7 @@ set(EXTENSION_SOURCES
     src/query_history_query_function.cpp
     src/query_recorder.cpp
     src/query_recorder_factory.cpp
-    src/motherduck_extension.cpp)
+    src/duckherder_extension.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

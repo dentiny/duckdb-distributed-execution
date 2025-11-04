@@ -23,7 +23,7 @@ public:
 	PhysicalOperator &CreatePlan(ClientContext &context, PhysicalPlanGenerator &planner) override;
 
 	string GetExtensionName() const override {
-		return "motherduck_remote_alter_table";
+		return "duckherder_remote_alter_table";
 	}
 
 protected:

@@ -8,12 +8,12 @@ namespace duckdb {
 class Transaction;
 class DuckTransactionManager;
 
-class MotherduckTransaction : public Transaction {
+class DuckherderTransaction : public Transaction {
 public:
-	MotherduckTransaction(DuckTransactionManager &manager, ClientContext &context, transaction_t start_time,
+	DuckherderTransaction(DuckTransactionManager &manager, ClientContext &context, transaction_t start_time,
 	                      transaction_t transaction_id, idx_t catalog_version);
 
-	~MotherduckTransaction() override;
+	~DuckherderTransaction() override;
 
 private:
 	unique_ptr<DuckTransaction> duckdb_transaction;

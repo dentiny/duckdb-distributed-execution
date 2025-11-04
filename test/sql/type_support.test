@@ -2,22 +2,22 @@
 # description: Test distributed execution with various data types
 # group: [sql]
 
-require motherduck
+require duckherder
 
 statement ok
 SELECT start_distributed_server(8815);
 
 statement ok
-ATTACH DATABASE 'md:' AS md;
+ATTACH DATABASE 'dh:' AS dh;
 
 statement ok
-PRAGMA md_register_remote_table('type_test_table', 'http://localhost:8815', 'type_test_table');
+PRAGMA dh_register_remote_table('type_test_table', 'http://localhost:8815', 'type_test_table');
 
 statement ok
-DROP TABLE IF EXISTS md.type_test_table;
+DROP TABLE IF EXISTS dh.type_test_table;
 
 statement ok
-CREATE TABLE md.type_test_table (
+CREATE TABLE dh.type_test_table (
     col_tinyint TINYINT,
     col_smallint SMALLINT,
     col_integer INTEGER,
@@ -38,13 +38,13 @@ CREATE TABLE md.type_test_table (
 );
 
 statement ok
-INSERT INTO md.type_test_table VALUES 
+INSERT INTO dh.type_test_table VALUES 
     (-128, -32768, -2147483648, -9223372036854775808, 0, 0, 0, 0, -1.5, -2.5, true, 'negative', '2023-01-15', '08:30:00', '2023-01-15 08:30:00', '\xDE\xAD\xBE\xEF'::BLOB, -123.45),
     (0, 0, 0, 0, 128, 32768, 2147483648, 9223372036854775808, 0.0, 0.0, false, 'zero', '1970-01-01', '00:00:00', '1970-01-01 00:00:00', '\x00\x00'::BLOB, 0.00),
     (127, 32767, 2147483647, 9223372036854775807, 255, 65535, 4294967295, 18446744073709551615, 1.5, 2.5, true, 'positive', '2025-12-31', '23:59:59', '2025-12-31 23:59:59.999999', '\xFF\xFF\xFF\xFF'::BLOB, 999.99);
 
 query IIIIIIIIRRITTTTTR
-SELECT * FROM md.type_test_table ORDER BY col_integer;
+SELECT * FROM dh.type_test_table ORDER BY col_integer;
 ----
 -128	-32768	-2147483648	-9223372036854775808	0	0	0	0	-1.5	-2.5	1	negative	2023-01-15	08:30:00	2023-01-15 08:30:00	\xDE\xAD\xBE\xEF	-123.45
 0	0	0	0	128	32768	2147483648	9223372036854775808	0.0	0.0	0	zero	1970-01-01	00:00:00	1970-01-01 00:00:00	\x00\x00	0.00
@@ -52,89 +52,89 @@ SELECT * FROM md.type_test_table ORDER BY col_integer;
 
 # Test filtering on different types.
 query I
-SELECT col_integer FROM md.type_test_table WHERE col_boolean = true ORDER BY col_integer;
+SELECT col_integer FROM dh.type_test_table WHERE col_boolean = true ORDER BY col_integer;
 ----
 -2147483648
 2147483647
 
 query T
-SELECT col_varchar FROM md.type_test_table WHERE col_float > 0 ORDER BY col_varchar;
+SELECT col_varchar FROM dh.type_test_table WHERE col_float > 0 ORDER BY col_varchar;
 ----
 positive
 
 query I
-SELECT col_tinyint FROM md.type_test_table WHERE col_double = 0.0;
+SELECT col_tinyint FROM dh.type_test_table WHERE col_double = 0.0;
 ----
 0
 
 # Test aggregations on numeric types.
 query I
-SELECT COUNT(*) FROM md.type_test_table;
+SELECT COUNT(*) FROM dh.type_test_table;
 ----
 3
 
 query I
-SELECT SUM(col_integer) FROM md.type_test_table;
+SELECT SUM(col_integer) FROM dh.type_test_table;
 ----
 -1
 
 query R
-SELECT AVG(col_float) FROM md.type_test_table;
+SELECT AVG(col_float) FROM dh.type_test_table;
 ----
 0.0
 
 # Test MIN/MAX on various types.
 query I
-SELECT MIN(col_tinyint) FROM md.type_test_table;
+SELECT MIN(col_tinyint) FROM dh.type_test_table;
 ----
 -128
 
 query I
-SELECT MAX(col_ubigint) FROM md.type_test_table;
+SELECT MAX(col_ubigint) FROM dh.type_test_table;
 ----
 18446744073709551615
 
 # Test DATE type operations.
 query T
-SELECT MIN(col_date) FROM md.type_test_table;
+SELECT MIN(col_date) FROM dh.type_test_table;
 ----
 1970-01-01
 
 query T
-SELECT MAX(col_date) FROM md.type_test_table;
+SELECT MAX(col_date) FROM dh.type_test_table;
 ----
 2025-12-31
 
 query I
-SELECT COUNT(*) FROM md.type_test_table WHERE col_date >= '2023-01-01';
+SELECT COUNT(*) FROM dh.type_test_table WHERE col_date >= '2023-01-01';
 ----
 2
 
 # Test TIME type operations.
 query T
-SELECT MIN(col_time) FROM md.type_test_table;
+SELECT MIN(col_time) FROM dh.type_test_table;
 ----
 00:00:00
 
 query T
-SELECT MAX(col_time) FROM md.type_test_table;
+SELECT MAX(col_time) FROM dh.type_test_table;
 ----
 23:59:59
 
 # Test TIMESTAMP type operations.
 query T
-SELECT col_timestamp FROM md.type_test_table WHERE col_integer = 0;
+SELECT col_timestamp FROM dh.type_test_table WHERE col_integer = 0;
 ----
 1970-01-01 00:00:00
 
 query I
-SELECT COUNT(*) FROM md.type_test_table WHERE col_timestamp > '2000-01-01';
+SELECT COUNT(*) FROM dh.type_test_table WHERE col_timestamp > '2000-01-01';
 ----
 2
 
 # Test BLOB type.
 query I
-SELECT OCTET_LENGTH(col_blob) FROM md.type_test_table ORDER BY col_integer;
+SELECT OCTET_LENGTH(col_blob) FROM dh.type_test_table ORDER BY col_integer;
 ----
 4
 2
@@ -142,130 +142,130 @@ SELECT OCTET_LENGTH(col_blob) FROM md.type_test_table ORDER BY col_integer;
 
 # Test DECIMAL type operations.
 query R
-SELECT SUM(col_decimal) FROM md.type_test_table;
+SELECT SUM(col_decimal) FROM dh.type_test_table;
 ----
 876.54
 
 query R
-SELECT AVG(col_decimal) FROM md.type_test_table;
+SELECT AVG(col_decimal) FROM dh.type_test_table;
 ----
 292.18
 
 query R
-SELECT MIN(col_decimal) FROM md.type_test_table;
+SELECT MIN(col_decimal) FROM dh.type_test_table;
 ----
 -123.45
 
 query R
-SELECT MAX(col_decimal) FROM md.type_test_table;
+SELECT MAX(col_decimal) FROM dh.type_test_table;
 ----
 999.99
 
 # Test filtering on DATE, TIME, and TIMESTAMP.
 query T
-SELECT col_varchar FROM md.type_test_table WHERE col_date BETWEEN '2023-01-01' AND '2024-12-31';
+SELECT col_varchar FROM dh.type_test_table WHERE col_date BETWEEN '2023-01-01' AND '2024-12-31';
 ----
 negative
 
 query I
-SELECT col_integer FROM md.type_test_table WHERE col_time > '12:00:00';
+SELECT col_integer FROM dh.type_test_table WHERE col_time > '12:00:00';
 ----
 2147483647
 
 # Test NULL handling with all types.
 statement ok
-INSERT INTO md.type_test_table VALUES 
+INSERT INTO dh.type_test_table VALUES 
     (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 query I
-SELECT COUNT(*) FROM md.type_test_table WHERE col_date IS NULL;
+SELECT COUNT(*) FROM dh.type_test_table WHERE col_date IS NULL;
 ----
 1
 
 query I
-SELECT COUNT(*) FROM md.type_test_table WHERE col_timestamp IS NULL;
+SELECT COUNT(*) FROM dh.type_test_table WHERE col_timestamp IS NULL;
 ----
 1
 
 query I
-SELECT COUNT(*) FROM md.type_test_table WHERE col_decimal IS NULL;
+SELECT COUNT(*) FROM dh.type_test_table WHERE col_decimal IS NULL;
 ----
 1
 
 query I
-SELECT COUNT(*) FROM md.type_test_table WHERE col_blob IS NULL;
+SELECT COUNT(*) FROM dh.type_test_table WHERE col_blob IS NULL;
 ----
 1
 
 # Test UUID type support
 statement ok
-DROP TABLE IF EXISTS md.uuid_test_table;
+DROP TABLE IF EXISTS dh.uuid_test_table;
 
 statement ok
-CREATE TABLE md.uuid_test_table (
+CREATE TABLE dh.uuid_test_table (
     id INTEGER,
     user_uuid UUID,
     session_uuid UUID
 );
 
 statement ok
-INSERT INTO md.uuid_test_table VALUES 
+INSERT INTO dh.uuid_test_table VALUES 
     (1, '550e8400-e29b-41d4-a716-446655440000'::UUID, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID),
     (2, '6ba7b810-9dad-11d1-80b4-00c04fd430c8'::UUID, '6ba7b811-9dad-11d1-80b4-00c04fd430c8'::UUID),
     (3, NULL, '00000000-0000-0000-0000-000000000000'::UUID);
 
 query ITT
-SELECT * FROM md.uuid_test_table ORDER BY id;
+SELECT * FROM dh.uuid_test_table ORDER BY id;
 ----
 1	550e8400-e29b-41d4-a716-446655440000	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
 2	6ba7b810-9dad-11d1-80b4-00c04fd430c8	6ba7b811-9dad-11d1-80b4-00c04fd430c8
 3	NULL	00000000-0000-0000-0000-000000000000
 
 query I
-SELECT COUNT(*) FROM md.uuid_test_table WHERE user_uuid IS NOT NULL;
+SELECT COUNT(*) FROM dh.uuid_test_table WHERE user_uuid IS NOT NULL;
 ----
 2
 
 # Test HUGEINT type support.
 statement ok
-DROP TABLE IF EXISTS md.hugeint_test_table;
+DROP TABLE IF EXISTS dh.hugeint_test_table;
 
 statement ok
-CREATE TABLE md.hugeint_test_table (
+CREATE TABLE dh.hugeint_test_table (
     id INTEGER,
     huge_value HUGEINT,
     uhuge_value UHUGEINT
 );
 
 statement ok
-INSERT INTO md.hugeint_test_table VALUES 
+INSERT INTO dh.hugeint_test_table VALUES 
     (1, 170141183460469231731687303715884105727, 340282366920938463463374607431768211455),
     (2, -170141183460469231731687303715884105728, 0),
     (3, 0, 170141183460469231731687303715884105727);
 
 query III
-SELECT * FROM md.hugeint_test_table ORDER BY id;
+SELECT * FROM dh.hugeint_test_table ORDER BY id;
 ----
 1	170141183460469231731687303715884105727	340282366920938463463374607431768211455
 2	-170141183460469231731687303715884105728	0
 3	0	170141183460469231731687303715884105727
 
 query I
-SELECT MIN(huge_value) FROM md.hugeint_test_table;
+SELECT MIN(huge_value) FROM dh.hugeint_test_table;
 ----
 -170141183460469231731687303715884105728
 
 query I
-SELECT MAX(uhuge_value) FROM md.hugeint_test_table;
+SELECT MAX(uhuge_value) FROM dh.hugeint_test_table;
 ----
 340282366920938463463374607431768211455
 
 # Test TIMESTAMP precision variants.
 statement ok
-DROP TABLE IF EXISTS md.timestamp_precision_test;
+DROP TABLE IF EXISTS dh.timestamp_precision_test;
 
 statement ok
-CREATE TABLE md.timestamp_precision_test (
+CREATE TABLE dh.timestamp_precision_test (
     id INTEGER,
     ts_sec TIMESTAMP_S,
     ts_ms TIMESTAMP_MS,
@@ -274,47 +274,47 @@ CREATE TABLE md.timestamp_precision_test (
 );
 
 statement ok
-INSERT INTO md.timestamp_precision_test VALUES 
+INSERT INTO dh.timestamp_precision_test VALUES 
     (1, '2023-06-15 12:30:45', '2023-06-15 12:30:45.123', '2023-06-15 12:30:45.123456', '2023-06-15 12:30:45.123456789'),
     (2, '1970-01-01 00:00:00', '1970-01-01 00:00:00.000', '1970-01-01 00:00:00.000000', '1970-01-01 00:00:00.000000000'),
     (3, '2025-12-31 23:59:59', '2025-12-31 23:59:59.999', '2025-12-31 23:59:59.999999', '2025-12-31 23:59:59.999999999');
 
 query ITTTT
-SELECT * FROM md.timestamp_precision_test ORDER BY id;
+SELECT * FROM dh.timestamp_precision_test ORDER BY id;
 ----
 1	2023-06-15 12:30:45	2023-06-15 12:30:45.123	2023-06-15 12:30:45.123456	2023-06-15 12:30:45.123456789
 2	1970-01-01 00:00:00	1970-01-01 00:00:00	1970-01-01 00:00:00	1970-01-01 00:00:00
 3	2025-12-31 23:59:59	2025-12-31 23:59:59.999	2025-12-31 23:59:59.999999	2025-12-31 23:59:59.999999999
 
 query I
-SELECT COUNT(*) FROM md.timestamp_precision_test WHERE ts_sec > '2020-01-01';
+SELECT COUNT(*) FROM dh.timestamp_precision_test WHERE ts_sec > '2020-01-01';
 ----
 2
 
 # Test INTERVAL type.
 statement ok
-DROP TABLE IF EXISTS md.interval_test_table;
+DROP TABLE IF EXISTS dh.interval_test_table;
 
 statement ok
-CREATE TABLE md.interval_test_table (
+CREATE TABLE dh.interval_test_table (
     id INTEGER,
     duration INTERVAL
 );
 
 statement ok
-INSERT INTO md.interval_test_table VALUES 
+INSERT INTO dh.interval_test_table VALUES 
     (1, INTERVAL '2 years 3 months'),
     (2, INTERVAL '5 days 6 hours'),
     (3, INTERVAL '100 microseconds');
 
 query IT
-SELECT * FROM md.interval_test_table ORDER BY id;
+SELECT * FROM dh.interval_test_table ORDER BY id;
 ----
 1	2 years 3 months
 2	5 days 06:00:00
 3	00:00:00.0001
 
 query I
-SELECT COUNT(*) FROM md.interval_test_table WHERE duration > INTERVAL '1 day';
+SELECT COUNT(*) FROM dh.interval_test_table WHERE duration > INTERVAL '1 day';
 ----
 2

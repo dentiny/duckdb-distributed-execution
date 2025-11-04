@@ -7,11 +7,11 @@
 
 namespace duckdb {
 
-class MotherduckTransactionManager : public DuckTransactionManager {
+class DuckherderTransactionManager : public DuckTransactionManager {
 public:
-	explicit MotherduckTransactionManager(AttachedDatabase &db);
+	explicit DuckherderTransactionManager(AttachedDatabase &db);
 
-	~MotherduckTransactionManager();
+	~DuckherderTransactionManager();
 
 	Transaction &StartTransaction(ClientContext &context) override;
 

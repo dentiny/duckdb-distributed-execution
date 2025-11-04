@@ -1,28 +1,28 @@
 # name: test/sql/extension.test
-# description: test motherduck extension
+# description: test duckherder extension
 # group: [sql]
 
-require motherduck
+require duckherder
 
 # Start distributed server in background thread
 statement ok
 SELECT start_distributed_server(8815);
 
 statement ok
-ATTACH DATABASE 'md' (TYPE motherduck);
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-DROP TABLE IF EXISTS md.extension_test_table;
+DROP TABLE IF EXISTS dh.extension_test_table;
 
 statement ok
-CREATE TABLE md.extension_test_table (id INTEGER, name TEXT, age INTEGER);
+CREATE TABLE dh.extension_test_table (id INTEGER, name TEXT, age INTEGER);
 
 # Validate row insertions.
 statement ok
-INSERT INTO md.extension_test_table VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 40);
+INSERT INTO dh.extension_test_table VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 40);
 
 query III
-SELECT * FROM md.extension_test_table;
+SELECT * FROM dh.extension_test_table;
 ----
 1	Alice	30
 2	Bob	25
@@ -30,30 +30,30 @@ SELECT * FROM md.extension_test_table;
 
 # Validation row deletions.
 statement ok
-DELETE FROM md.extension_test_table WHERE id=1;
+DELETE FROM dh.extension_test_table WHERE id=1;
 
 query III
-SELECT * FROM md.extension_test_table;
+SELECT * FROM dh.extension_test_table;
 ----
 2	Bob	25
 3	Charlie	40
 
 # Validate all rows deletion.
 statement ok
-DELETE FROM md.extension_test_table WHERE id=2 OR id=3;
+DELETE FROM dh.extension_test_table WHERE id=2 OR id=3;
 
 query III
-SELECT * FROM md.extension_test_table;
+SELECT * FROM dh.extension_test_table;
 ----
 
 # Validate table schema, creation and drop.
 query II
 SELECT database_name, table_name FROM duckdb_tables();
 ----
-md	extension_test_table
+dh	extension_test_table
 
 statement ok
-DROP TABLE md.extension_test_table;
+DROP TABLE dh.extension_test_table;
 
 query II
 SELECT database_name, table_name FROM duckdb_tables();

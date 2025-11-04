@@ -14,21 +14,21 @@
 #include "entry_lookup_info_hash_utils.hpp"
 
 // TODO(hjiang): Likely will switch to forward declaration.
-#include "motherduck_table_catalog_entry.hpp"
+#include "duckherder_table_catalog_entry.hpp"
 
 namespace duckdb {
 
 // Forward declaration.
 class CreateSchemaInfo;
 class DatabaseInstance;
-class MotherduckCatalog;
+class DuckherderCatalog;
 
-class MotherduckSchemaCatalogEntry : public DuckSchemaEntry {
+class DuckherderSchemaCatalogEntry : public DuckSchemaEntry {
 public:
-	MotherduckSchemaCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
+	DuckherderSchemaCatalogEntry(Catalog &duckherder_catalog_p, DatabaseInstance &db_instance_p,
 	                             SchemaCatalogEntry *table_catalog_entry_p,
 	                             unique_ptr<CreateSchemaInfo> create_schema_info_p);
-	~MotherduckSchemaCatalogEntry() override = default;
+	~DuckherderSchemaCatalogEntry() override = default;
 
 	//===--------------------------------------------------------------------===//
 	// CatalogEntry-specific functions
@@ -76,14 +76,14 @@ private:
 	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
 	CatalogEntry *WrapAndCacheIndexCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
 
-	void DropRemoteIndex(ClientContext &context, DropInfo &info, MotherduckCatalog &md_catalog);
-	void DropRemoteTable(ClientContext &context, DropInfo &info, MotherduckCatalog &md_catalog);
+	void DropRemoteIndex(ClientContext &context, DropInfo &info, DuckherderCatalog &md_catalog);
+	void DropRemoteTable(ClientContext &context, DropInfo &info, DuckherderCatalog &md_catalog);
 
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
-	// Direct reference to MotherduckCatalog.
-	Catalog &motherduck_catalog_ref;
+	// Direct reference to DuckherderCatalog.
+	Catalog &duckherder_catalog_ref;
 
 	std::mutex mu;
 	// Cache for catalog entries, including table entries.

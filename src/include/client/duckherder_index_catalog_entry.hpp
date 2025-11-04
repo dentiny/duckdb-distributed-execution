@@ -6,16 +6,16 @@ namespace duckdb {
 
 // Forward declaration.
 class DatabaseInstance;
-class MotherduckCatalog;
+class DuckherderCatalog;
 
-// Motherduck index catalog entry, which represents an index on a remote table.
+// Duckherder index catalog entry, which represents an index on a remote table.
 // It inherits from DuckIndexEntry to satisfy transaction commit code, but provides dummy storage infrastructure that
 // safely no-ops.
-class MotherduckIndexCatalogEntry : public DuckIndexEntry {
+class DuckherderIndexCatalogEntry : public DuckIndexEntry {
 public:
-	MotherduckIndexCatalogEntry(Catalog &motherduck_catalog_p, SchemaCatalogEntry &schema, CreateIndexInfo &info);
+	DuckherderIndexCatalogEntry(Catalog &duckherder_catalog_p, SchemaCatalogEntry &schema, CreateIndexInfo &info);
 
-	~MotherduckIndexCatalogEntry() override;
+	~DuckherderIndexCatalogEntry() override;
 
 	string GetSchemaName() const override;
 	string GetTableName() const override;
@@ -26,7 +26,7 @@ public:
 	static shared_ptr<DataTableInfo> GetDummyDataTableInfo(Catalog &catalog);
 
 private:
-	Catalog &motherduck_catalog_ref;
+	Catalog &duckherder_catalog_ref;
 	// For remote indexes, store schema and table names directly.
 	string remote_schema_name;
 	string remote_table_name;

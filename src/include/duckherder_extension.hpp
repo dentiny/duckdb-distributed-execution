@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-class MotherduckExtension : public Extension {
+class DuckherderExtension : public Extension {
 public:
 	void Load(ExtensionLoader &db) override;
 	std::string Name() override;

@@ -10,12 +10,12 @@ namespace duckdb {
 class BoundCreateTableInfo;
 class DatabaseInstance;
 
-class MotherduckTableCatalogEntry : public DuckTableEntry {
+class DuckherderTableCatalogEntry : public DuckTableEntry {
 public:
-	MotherduckTableCatalogEntry(Catalog &motherduck_catalog_p, DatabaseInstance &db_instance_p,
+	DuckherderTableCatalogEntry(Catalog &duckherder_catalog_p, DatabaseInstance &db_instance_p,
 	                            DuckTableEntry *duck_table_entry_p,
 	                            unique_ptr<BoundCreateTableInfo> create_table_info_p);
-	~MotherduckTableCatalogEntry() override = default;
+	~DuckherderTableCatalogEntry() override = default;
 
 	// CatalogEntry-specific functions.
 	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
@@ -52,8 +52,8 @@ public:
 private:
 	DatabaseInstance &db_instance;
 	unique_ptr<BoundCreateTableInfo> bound_create_table_info;
-	// Direct reference to MotherduckCatalog.
-	Catalog &motherduck_catalog_ref;
+	// Direct reference to DuckherderCatalog.
+	Catalog &duckherder_catalog_ref;
 };
 
 } // namespace duckdb

@@ -1,4 +1,4 @@
-#include "motherduck_catalog.hpp"
+#include "duckherder_catalog.hpp"
 
 #include "distributed_delete.hpp"
 #include "distributed_insert.hpp"
@@ -22,31 +22,31 @@
 #include "duckdb/planner/operator/logical_insert.hpp"
 #include "logical_remote_create_index.hpp"
 #include "duckdb/storage/database_size.hpp"
-#include "motherduck_schema_catalog_entry.hpp"
-#include "motherduck_transaction.hpp"
+#include "duckherder_schema_catalog_entry.hpp"
+#include "duckherder_transaction.hpp"
 
 namespace duckdb {
 
-MotherduckCatalog::MotherduckCatalog(AttachedDatabase &db)
+DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()) {
 }
 
-MotherduckCatalog::~MotherduckCatalog() = default;
+DuckherderCatalog::~DuckherderCatalog() = default;
 
-void MotherduckCatalog::Initialize(bool load_builtin) {
+void DuckherderCatalog::Initialize(bool load_builtin) {
 	duckdb_catalog->Initialize(load_builtin);
 }
 
-optional_ptr<CatalogEntry> MotherduckCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::CreateSchema");
+optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::CreateSchema");
 	return duckdb_catalog->CreateSchema(std::move(transaction), info);
 }
 
-optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransaction transaction,
+optional_ptr<SchemaCatalogEntry> DuckherderCatalog::LookupSchema(CatalogTransaction transaction,
                                                                  const EntryLookupInfo &schema_lookup,
                                                                  OnEntryNotFound if_not_found) {
 	auto entry_lookup_str = schema_lookup.GetEntryName();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("MotherduckCatalog::LookupSchema %s", entry_lookup_str));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderCatalog::LookupSchema %s", entry_lookup_str));
 
 	std::lock_guard<std::mutex> lck(mu);
 	auto iter = schema_catalog_entries.find(entry_lookup_str);
@@ -63,28 +63,28 @@ optional_ptr<SchemaCatalogEntry> MotherduckCatalog::LookupSchema(CatalogTransact
 
 		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
 		D_ASSERT(schema_catalog_entry != nullptr);
-		auto motherduck_schema_entry = make_uniq<MotherduckSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
+		auto duckherder_schema_entry = make_uniq<DuckherderSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
 		                                                                       std::move(create_schema_info));
-		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(motherduck_schema_entry)).first;
+		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(duckherder_schema_entry)).first;
 	}
 
 	return iter->second.get();
 }
 
-void MotherduckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::ScanSchemas");
+void DuckherderCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::ScanSchemas");
 	duckdb_catalog->ScanSchemas(context, std::move(callback));
 }
 
-PhysicalOperator &MotherduckCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
+PhysicalOperator &DuckherderCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                        LogicalCreateTable &op, PhysicalOperator &plan) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanCreateTableAs");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanCreateTableAs");
 	return duckdb_catalog->PlanCreateTableAs(context, planner, op, plan);
 }
 
-PhysicalOperator &MotherduckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
+PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanInsert");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanInsert");
 
 	// Attempt insertion into remote table if registered.
 	bool is_remote = IsRemoteTable(op.table.name);
@@ -102,9 +102,9 @@ PhysicalOperator &MotherduckCatalog::PlanInsert(ClientContext &context, Physical
 	return duckdb_catalog->PlanInsert(context, planner, op, plan);
 }
 
-PhysicalOperator &MotherduckCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner,
+PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalDelete &op, PhysicalOperator &plan) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanDelete");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanDelete");
 
 	// Attempt deletion from remote table if registered.
 	bool is_remote = IsRemoteTable(op.table.name);
@@ -123,23 +123,23 @@ PhysicalOperator &MotherduckCatalog::PlanDelete(ClientContext &context, Physical
 	return duckdb_catalog->PlanDelete(context, planner, op, plan);
 }
 
-PhysicalOperator &MotherduckCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner,
+PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalUpdate &op, PhysicalOperator &plan) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::PlanUpdate");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanUpdate");
 	return duckdb_catalog->PlanUpdate(context, planner, op, plan);
 }
 
-unique_ptr<LogicalOperator> MotherduckCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
+unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
                                                                TableCatalogEntry &table,
                                                                unique_ptr<LogicalOperator> plan) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::BindCreateIndex");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::BindCreateIndex");
 
 	// Attempt remote table if applicable.
 	string table_name = table.name;
 	if (IsRemoteTable(table_name)) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Bind CREATE INDEX on remote table %s", table_name));
 		// For remote tables, we use a custom logical operator that doesn't require scanning the table locally.
-		// The index will be created on the remote server via MotherduckSchemaCatalogEntry::CreateIndex.
+		// The index will be created on the remote server via DuckherderSchemaCatalogEntry::CreateIndex.
 		auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
 		return make_uniq<LogicalRemoteCreateIndexOperator>(std::move(create_index_info), table.schema, table);
 	}
@@ -148,56 +148,56 @@ unique_ptr<LogicalOperator> MotherduckCatalog::BindCreateIndex(Binder &binder, C
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }
 
-unique_ptr<LogicalOperator> MotherduckCatalog::BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
+unique_ptr<LogicalOperator> DuckherderCatalog::BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
                                                                  unique_ptr<LogicalOperator> plan,
                                                                  unique_ptr<CreateIndexInfo> create_info,
                                                                  unique_ptr<AlterTableInfo> alter_info) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::BindAlterAddIndex");
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::BindAlterAddIndex");
 	return duckdb_catalog->BindAlterAddIndex(binder, table_entry, std::move(plan), std::move(create_info),
 	                                         std::move(alter_info));
 }
 
-DatabaseSize MotherduckCatalog::GetDatabaseSize(ClientContext &context) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::GetDatabaseSize");
+DatabaseSize DuckherderCatalog::GetDatabaseSize(ClientContext &context) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::GetDatabaseSize");
 	return duckdb_catalog->GetDatabaseSize(context);
 }
 
-vector<MetadataBlockInfo> MotherduckCatalog::GetMetadataInfo(ClientContext &context) {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::GetMetadataInfo");
+vector<MetadataBlockInfo> DuckherderCatalog::GetMetadataInfo(ClientContext &context) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::GetMetadataInfo");
 	return duckdb_catalog->GetMetadataInfo(context);
 }
 
-bool MotherduckCatalog::InMemory() {
+bool DuckherderCatalog::InMemory() {
 	return duckdb_catalog->InMemory();
 }
 
-string MotherduckCatalog::GetDBPath() {
-	DUCKDB_LOG_DEBUG(db_instance, "MotherduckCatalog::GetDBPath", duckdb_catalog->GetDBPath());
+string DuckherderCatalog::GetDBPath() {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::GetDBPath", duckdb_catalog->GetDBPath());
 	return duckdb_catalog->GetDBPath();
 }
 
-bool MotherduckCatalog::IsEncrypted() const {
+bool DuckherderCatalog::IsEncrypted() const {
 	return duckdb_catalog->IsEncrypted();
 }
 
-string MotherduckCatalog::GetEncryptionCipher() const {
+string DuckherderCatalog::GetEncryptionCipher() const {
 	return duckdb_catalog->GetEncryptionCipher();
 }
 
-optional_idx MotherduckCatalog::GetCatalogVersion(ClientContext &context) {
+optional_idx DuckherderCatalog::GetCatalogVersion(ClientContext &context) {
 	return duckdb_catalog->GetCatalogVersion(context);
 }
 
-optional_ptr<DependencyManager> MotherduckCatalog::GetDependencyManager() {
+optional_ptr<DependencyManager> DuckherderCatalog::GetDependencyManager() {
 	return duckdb_catalog->GetDependencyManager();
 }
 
-void MotherduckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
+void DuckherderCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	// TODO(hjiang): Implement drop feature.
 	throw NotImplementedException("DropSchema not implemented");
 }
 
-void MotherduckCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
+void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
                                             const string &remote_table_name) {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
 	auto remote_table_config = RemoteTableConfig(server_url, remote_table_name);
@@ -210,7 +210,7 @@ void MotherduckCatalog::RegisterRemoteTable(const string &table_name, const stri
 	                                                 remote_table_name));
 }
 
-void MotherduckCatalog::UnregisterRemoteTable(const string &table_name) {
+void DuckherderCatalog::UnregisterRemoteTable(const string &table_name) {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
 	const size_t count = remote_tables.erase(table_name);
 	if (count != 1) {
@@ -220,14 +220,14 @@ void MotherduckCatalog::UnregisterRemoteTable(const string &table_name) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote table %s", table_name));
 }
 
-bool MotherduckCatalog::IsRemoteTable(const string &table_name) const {
+bool DuckherderCatalog::IsRemoteTable(const string &table_name) const {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
 	auto it = remote_tables.find(table_name);
 	bool found = it != remote_tables.end() && it->second.is_distributed;
 	return found;
 }
 
-RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_name) const {
+RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &table_name) const {
 	std::lock_guard<std::mutex> lck(remote_tables_mu);
 	auto it = remote_tables.find(table_name);
 	if (it != remote_tables.end()) {
@@ -237,7 +237,7 @@ RemoteTableConfig MotherduckCatalog::GetRemoteTableConfig(const string &table_na
 	return RemoteTableConfig();
 }
 
-void MotherduckCatalog::RegisterRemoteIndex(const string &index_name) {
+void DuckherderCatalog::RegisterRemoteIndex(const string &index_name) {
 	std::lock_guard<std::mutex> lck(remote_indexes_mu);
 	const bool succ = remote_indexes.insert(index_name).second;
 	if (!succ) {
@@ -247,7 +247,7 @@ void MotherduckCatalog::RegisterRemoteIndex(const string &index_name) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote index %s", index_name));
 }
 
-void MotherduckCatalog::UnregisterRemoteIndex(const string &index_name) {
+void DuckherderCatalog::UnregisterRemoteIndex(const string &index_name) {
 	std::lock_guard<std::mutex> lck(remote_indexes_mu);
 	const size_t count = remote_indexes.erase(index_name);
 	if (count != 1) {
@@ -257,7 +257,7 @@ void MotherduckCatalog::UnregisterRemoteIndex(const string &index_name) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote index %s", index_name));
 }
 
-bool MotherduckCatalog::IsRemoteIndex(const string &index_name) const {
+bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
 	std::lock_guard<std::mutex> lck(remote_indexes_mu);
 	return remote_indexes.find(index_name) != remote_indexes.end();
 }

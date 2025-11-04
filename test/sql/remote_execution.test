@@ -1,31 +1,31 @@
 # name: test/sql/remote_execution.test
-# description: test motherduck extension to perform remote execution
+# description: test duckherder extension to perform remote execution
 # group: [sql]
 
-require motherduck
+require duckherder
 
 # Start distributed server in background thread
 statement ok
 SELECT start_distributed_server(8815);
 
 statement ok
-ATTACH DATABASE 'md' (TYPE motherduck);
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA md_register_remote_table('remote_exec_table', 'http://localhost:8815', 'remote_exec_table');
+PRAGMA dh_register_remote_table('remote_exec_table', 'http://localhost:8815', 'remote_exec_table');
 
 statement ok
-DROP TABLE IF EXISTS md.remote_exec_table;
+DROP TABLE IF EXISTS dh.remote_exec_table;
 
 statement ok
-CREATE TABLE md.remote_exec_table (id INTEGER, name TEXT, age INTEGER);
+CREATE TABLE dh.remote_exec_table (id INTEGER, name TEXT, age INTEGER);
 
 # Validate row insertions.
 statement ok
-INSERT INTO md.remote_exec_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300);
+INSERT INTO dh.remote_exec_table VALUES (1, 'Server_Alice', 100), (2, 'Server_Bob', 200), (3, 'Server_Charlie', 300);
 
 query III
-SELECT * FROM md.remote_exec_table;
+SELECT * FROM dh.remote_exec_table;
 ----
 1	Server_Alice	100
 2	Server_Bob	200
@@ -33,25 +33,25 @@ SELECT * FROM md.remote_exec_table;
 
 # Validation row deletions.
 statement ok
-DELETE FROM md.remote_exec_table WHERE id=1;
+DELETE FROM dh.remote_exec_table WHERE id=1;
 
 query III
-SELECT * FROM md.remote_exec_table;
+SELECT * FROM dh.remote_exec_table;
 ----
 2	Server_Bob	200
 3	Server_Charlie	300
 
 # Validate all rows deletion.
 statement ok
-DELETE FROM md.remote_exec_table WHERE id=2 OR id=3;
+DELETE FROM dh.remote_exec_table WHERE id=2 OR id=3;
 
 query III
-SELECT * FROM md.remote_exec_table;
+SELECT * FROM dh.remote_exec_table;
 ----
 
 # Validate table schema, creation and drop.
 statement ok
-DROP TABLE md.remote_exec_table;
+DROP TABLE dh.remote_exec_table;
 
 query II
 SELECT database_name, table_name FROM duckdb_tables();
