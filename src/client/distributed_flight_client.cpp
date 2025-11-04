@@ -7,7 +7,8 @@
 
 namespace duckdb {
 
-DistributedFlightClient::DistributedFlightClient(string server_url_p) : server_url(std::move(server_url_p)) {
+DistributedFlightClient::DistributedFlightClient(string server_url_p, string db_path_p)
+    : server_url(std::move(server_url_p)), db_path(std::move(db_path_p)) {
 }
 
 arrow::Status DistributedFlightClient::Connect() {
@@ -18,6 +19,7 @@ arrow::Status DistributedFlightClient::Connect() {
 
 arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *exec_req = req.mutable_execute_sql();
 	exec_req->set_sql(sql);
 	return SendAction(req, response);
@@ -26,6 +28,7 @@ arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, distributed
 arrow::Status DistributedFlightClient::CreateTable(const string &create_sql,
                                                    distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *create_req = req.mutable_create_table();
 	create_req->set_sql(create_sql);
 	return SendAction(req, response);
@@ -33,6 +36,7 @@ arrow::Status DistributedFlightClient::CreateTable(const string &create_sql,
 
 arrow::Status DistributedFlightClient::DropTable(const string &drop_sql, distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *drop_req = req.mutable_drop_table();
 	drop_req->set_table_name(drop_sql);
 	return SendAction(req, response);
@@ -41,6 +45,7 @@ arrow::Status DistributedFlightClient::DropTable(const string &drop_sql, distrib
 arrow::Status DistributedFlightClient::CreateIndex(const string &create_sql,
                                                    distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *create_req = req.mutable_create_index();
 	create_req->set_sql(create_sql);
 	return SendAction(req, response);
@@ -48,6 +53,7 @@ arrow::Status DistributedFlightClient::CreateIndex(const string &create_sql,
 
 arrow::Status DistributedFlightClient::DropIndex(const string &index_name, distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *drop_req = req.mutable_drop_index();
 	drop_req->set_index_name(index_name);
 	return SendAction(req, response);
@@ -55,6 +61,7 @@ arrow::Status DistributedFlightClient::DropIndex(const string &index_name, distr
 
 arrow::Status DistributedFlightClient::TableExists(const string &table_name, bool &exists) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *exists_req = req.mutable_table_exists();
 	exists_req->set_table_name(table_name);
 
@@ -68,9 +75,26 @@ arrow::Status DistributedFlightClient::TableExists(const string &table_name, boo
 	return arrow::Status::OK();
 }
 
+arrow::Status DistributedFlightClient::GetCatalogInfo(distributed::GetCatalogInfoResponse &response) {
+	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
+	auto *catalog_req = req.mutable_get_catalog_info();
+	// Empty request - gets all catalog info
+
+	distributed::DistributedResponse resp;
+	ARROW_RETURN_NOT_OK(SendAction(req, resp));
+	if (!resp.success()) {
+		return arrow::Status::Invalid(resp.error_message());
+	}
+
+	response = resp.get_catalog_info();
+	return arrow::Status::OK();
+}
+
 arrow::Status DistributedFlightClient::InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
                                                   distributed::DistributedResponse &response) {
-	arrow::flight::FlightDescriptor descriptor = arrow::flight::FlightDescriptor::Path({table_name});
+	// Encode db_path and table_name in the FlightDescriptor path
+	arrow::flight::FlightDescriptor descriptor = arrow::flight::FlightDescriptor::Path({db_path, table_name});
 
 	std::unique_ptr<arrow::flight::FlightStreamWriter> writer;
 	std::unique_ptr<arrow::flight::FlightMetadataReader> metadata_reader;
@@ -102,6 +126,7 @@ arrow::Status DistributedFlightClient::InsertData(const string &table_name, std:
 arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
                                                  std::unique_ptr<arrow::flight::FlightStreamReader> &stream) {
 	distributed::DistributedRequest req;
+	req.set_db_path(db_path);
 	auto *scan_req = req.mutable_scan_table();
 	scan_req->set_table_name(table_name);
 	scan_req->set_limit(limit);

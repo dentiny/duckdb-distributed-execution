@@ -1,0 +1,58 @@
+# name: test/sql/server_db_path.test
+# description: Test server_db_path parameter to connect to an existing database file
+# group: [sql]
+
+require duckherder
+
+# Start distributed server on port 8820
+statement ok
+SELECT duckherder_start_local_server(8820);
+
+# Attach with server_db_path pointing to the pre-existing database file
+# The server will open test/data/sample_employees.duckdb which contains the employees table
+statement ok
+ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8820, server_db_path 'test/data/sample_employees.duckdb');
+
+# Create the table structure LOCALLY first (before registering as remote)
+# This teaches the local catalog about the schema without touching the server
+statement ok
+CREATE TABLE dh.employees (id INTEGER, name VARCHAR, salary DOUBLE, department VARCHAR);
+
+# Now register it as remote - queries will go to the server
+statement ok
+PRAGMA duckherder_register_remote_table('employees', 'employees');
+
+# Query the data from the server - should get the 5 employees we pre-populated
+query IIRR
+SELECT id, name, salary, department FROM dh.employees ORDER BY id;
+----
+1	Alice Johnson	75000.0	Engineering
+2	Bob Smith	82000.0	Engineering
+3	Charlie Davis	68000.0	Marketing
+4	Diana Prince	95000.0	Management
+5	Eve Martinez	71000.0	Sales
+
+# Verify count
+query I
+SELECT COUNT(*) FROM dh.employees;
+----
+5
+
+# Test adding more data through duckherder - it should persist to the file
+statement ok
+INSERT INTO dh.employees VALUES (6, 'Frank Wilson', 78000.0, 'Engineering');
+
+query I
+SELECT COUNT(*) FROM dh.employees;
+----
+6
+
+# Test querying the new row
+query IIRR
+SELECT id, name, salary, department FROM dh.employees WHERE id = 6;
+----
+6	Frank Wilson	78000.0	Engineering
+
+# Clean up - detach
+statement ok
+DETACH dh;

@@ -4,6 +4,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -15,8 +16,6 @@
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
-	db = make_uniq<DuckDB>();
-	conn = make_uniq<Connection>(*db);
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -38,6 +37,36 @@ string DistributedFlightServer::GetLocation() const {
 	return StringUtil::Format("grpc://%s:%d", host, port);
 }
 
+Connection &DistributedFlightServer::GetConnection(const string &db_path) {
+	std::lock_guard<std::mutex> lock(connections_mutex);
+	
+	std::cerr << "[DistributedFlightServer::GetConnection] Called with db_path='" << db_path << "'" << std::endl;
+
+	auto it = connections.find(db_path);
+	if (it != connections.end()) {
+		std::cerr << "[DistributedFlightServer::GetConnection] Reusing existing connection for db_path='" << db_path << "'" << std::endl;
+		return *it->second->conn;
+	}
+
+	// Create new database connection.
+	std::cerr << "[DistributedFlightServer::GetConnection] Creating new connection for db_path='" << db_path << "'" << std::endl;
+	auto db_conn = make_uniq<DatabaseConnection>();
+	if (db_path.empty()) {
+		// In-memory database.
+		std::cerr << "[DistributedFlightServer::GetConnection] Opening in-memory database" << std::endl;
+		db_conn->db = make_uniq<DuckDB>();
+	} else {
+		// File-based database.
+		std::cerr << "[DistributedFlightServer::GetConnection] Opening file-based database: " << db_path << std::endl;
+		db_conn->db = make_uniq<DuckDB>(db_path);
+	}
+	db_conn->conn = make_uniq<Connection>(*db_conn->db);
+
+	auto *conn_ptr = db_conn->conn.get();
+	connections[db_path] = std::move(db_conn);
+	return *conn_ptr;
+}
+
 arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallContext &context,
                                                 const arrow::flight::Action &action,
                                                 std::unique_ptr<arrow::flight::ResultStream> *result) {
@@ -49,27 +78,32 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 	distributed::DistributedResponse response;
 	response.set_success(true);
 
+	const string &db_path = request.db_path();
+
 	switch (request.request_case()) {
 	case distributed::DistributedRequest::kExecuteSql:
-		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
+		ARROW_RETURN_NOT_OK(HandleExecuteSQL(db_path, request.execute_sql(), response));
 		break;
 	case distributed::DistributedRequest::kCreateTable:
-		ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
+		ARROW_RETURN_NOT_OK(HandleCreateTable(db_path, request.create_table(), response));
 		break;
 	case distributed::DistributedRequest::kDropTable:
-		ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
+		ARROW_RETURN_NOT_OK(HandleDropTable(db_path, request.drop_table(), response));
 		break;
 	case distributed::DistributedRequest::kCreateIndex:
-		ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
+		ARROW_RETURN_NOT_OK(HandleCreateIndex(db_path, request.create_index(), response));
 		break;
 	case distributed::DistributedRequest::kDropIndex:
-		ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
+		ARROW_RETURN_NOT_OK(HandleDropIndex(db_path, request.drop_index(), response));
 		break;
 	case distributed::DistributedRequest::kAlterTable:
-		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		ARROW_RETURN_NOT_OK(HandleAlterTable(db_path, request.alter_table(), response));
 		break;
 	case distributed::DistributedRequest::kTableExists:
-		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
+		ARROW_RETURN_NOT_OK(HandleTableExists(db_path, request.table_exists(), response));
+		break;
+	case distributed::DistributedRequest::kGetCatalogInfo:
+		ARROW_RETURN_NOT_OK(HandleGetCatalogInfo(db_path, request.get_catalog_info(), response));
 		break;
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
 		return arrow::Status::Invalid("Request type not set");
@@ -99,8 +133,9 @@ arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallCont
 		return arrow::Status::Invalid("DoGet only supports SCAN_TABLE requests");
 	}
 
+	const string &db_path = request.db_path();
 	std::unique_ptr<arrow::flight::FlightDataStream> data_stream;
-	ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), data_stream));
+	ARROW_RETURN_NOT_OK(HandleScanTable(db_path, request.scan_table(), data_stream));
 
 	*stream = std::move(data_stream);
 	return arrow::Status::OK();
@@ -110,8 +145,16 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
                                              std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                              std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 	auto descriptor = reader->descriptor();
+	
+	// Extract db_path and table_name from the FlightDescriptor path
+	// Path format: [db_path, table_name]
+	string db_path = "";
 	std::string table_name;
-	if (!descriptor.path.empty()) {
+	if (descriptor.path.size() >= 2) {
+		db_path = descriptor.path[0];
+		table_name = descriptor.path[1];
+	} else if (descriptor.path.size() == 1) {
+		// Fallback for backward compatibility: just table_name, empty db_path
 		table_name = descriptor.path[0];
 	}
 
@@ -130,7 +173,7 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 		batch = next.data;
 
 		// Process each batch
-		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, resp));
+		ARROW_RETURN_NOT_OK(HandleInsertData(db_path, table_name, batch, resp));
 	}
 
 	// Write response metadata.
@@ -141,9 +184,11 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
+arrow::Status DistributedFlightServer::HandleExecuteSQL(const string &db_path,
+                                                        const distributed::ExecuteSQLRequest &req,
                                                         distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto &conn = GetConnection(db_path);
+	auto result = conn.Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -157,9 +202,11 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
+arrow::Status DistributedFlightServer::HandleCreateTable(const string &db_path,
+                                                         const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto &conn = GetConnection(db_path);
+	auto result = conn.Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -173,10 +220,12 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTableRequest &req,
+arrow::Status DistributedFlightServer::HandleDropTable(const string &db_path,
+                                                       const distributed::DropTableRequest &req,
                                                        distributed::DistributedResponse &resp) {
+	auto &conn = GetConnection(db_path);
 	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
-	auto result = conn->Query(sql);
+	auto result = conn.Query(sql);
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -189,9 +238,11 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
+arrow::Status DistributedFlightServer::HandleCreateIndex(const string &db_path,
+                                                         const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto &conn = GetConnection(db_path);
+	auto result = conn.Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -205,10 +256,12 @@ arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::Crea
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIndexRequest &req,
+arrow::Status DistributedFlightServer::HandleDropIndex(const string &db_path,
+                                                       const distributed::DropIndexRequest &req,
                                                        distributed::DistributedResponse &resp) {
+	auto &conn = GetConnection(db_path);
 	auto sql = "DROP INDEX IF EXISTS " + req.index_name();
-	auto result = conn->Query(sql);
+	auto result = conn.Query(sql);
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -221,9 +274,11 @@ arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIn
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::AlterTableRequest &req,
+arrow::Status DistributedFlightServer::HandleAlterTable(const string &db_path,
+                                                        const distributed::AlterTableRequest &req,
                                                         distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto &conn = GetConnection(db_path);
+	auto result = conn.Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -236,12 +291,14 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
+arrow::Status DistributedFlightServer::HandleTableExists(const string &db_path,
+                                                         const distributed::TableExistsRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	auto &conn = GetConnection(db_path);
 	string sql =
 	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
 
-	auto result = conn->Query(sql);
+	auto result = conn.Query(sql);
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -260,11 +317,96 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
+arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_path,
+                                                            const distributed::GetCatalogInfoRequest &req,
+                                                            distributed::DistributedResponse &resp) {
+	auto &conn = GetConnection(db_path);
+	std::cerr << "[DistributedFlightServer::HandleGetCatalogInfo] Getting catalog info for db_path='" << db_path << "'" << std::endl;
+
+	auto *catalog_resp = resp.mutable_get_catalog_info();
+
+	// Query all tables and their columns
+	string tables_sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable "
+	                   "FROM information_schema.columns "
+	                   "WHERE table_schema NOT IN ('information_schema', 'pg_catalog') "
+	                   "ORDER BY table_schema, table_name, ordinal_position";
+
+	auto result = conn.Query(tables_sql);
+	if (result->HasError()) {
+		resp.set_success(false);
+		resp.set_error_message("Failed to query catalog: " + result->GetError());
+		return arrow::Status::OK();
+	}
+
+	// Build table info map
+	std::unordered_map<string, distributed::TableInfo *> table_map;
+	idx_t row_count = 0;
+	
+	// Materialize the result to iterate properly
+	auto materialized = unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(result));
+	std::cerr << "[HandleGetCatalogInfo] Query returned " << materialized->RowCount() << " rows" << std::endl;
+	
+	// Iterate through all rows using the Rows() iterator
+	for (auto &row : materialized->Collection().Rows()) {
+		string schema_name = row.GetValue(0).ToString();
+		string table_name = row.GetValue(1).ToString();
+		string column_name = row.GetValue(2).ToString();
+		string data_type = row.GetValue(3).ToString();
+		string is_nullable = row.GetValue(4).ToString();
+
+		std::cerr << "[HandleGetCatalogInfo] Row " << row_count++ << ": schema=" << schema_name << ", table=" << table_name 
+		          << ", column=" << column_name << ", type=" << data_type << ", nullable=" << is_nullable << std::endl;
+
+		string full_table_name = schema_name + "." + table_name;
+
+		// Get or create table info
+		if (table_map.find(full_table_name) == table_map.end()) {
+			auto *table_info = catalog_resp->add_tables();
+			table_info->set_schema_name(schema_name);
+			table_info->set_table_name(table_name);
+			table_map[full_table_name] = table_info;
+			std::cerr << "[HandleGetCatalogInfo] Created new table entry for: " << full_table_name << std::endl;
+		}
+
+		// Add column info
+		auto *col_info = table_map[full_table_name]->add_columns();
+		col_info->set_name(column_name);
+		col_info->set_type(data_type);
+		col_info->set_nullable(is_nullable == "YES");
+	}
+	
+	std::cerr << "[HandleGetCatalogInfo] Processed " << row_count << " total rows" << std::endl;
+
+	// Query indexes
+	string indexes_sql = "SELECT table_schema, table_name, index_name, sql "
+	                    "FROM duckdb_indexes() "
+	                    "WHERE table_schema NOT IN ('information_schema', 'pg_catalog')";
+
+	auto idx_result = conn.Query(indexes_sql);
+	if (!idx_result->HasError()) {
+		while (idx_result->Fetch()) {
+			auto *index_info = catalog_resp->add_indexes();
+			index_info->set_schema_name(idx_result->GetValue(0, 0).ToString());
+			index_info->set_table_name(idx_result->GetValue(1, 0).ToString());
+			index_info->set_index_name(idx_result->GetValue(2, 0).ToString());
+			// Note: We don't parse column_names from SQL for simplicity
+			index_info->set_is_unique(false); // Would need to parse from SQL
+		}
+	}
+
+	std::cerr << "[DistributedFlightServer::HandleGetCatalogInfo] Found " << catalog_resp->tables_size() 
+	          << " tables, " << catalog_resp->indexes_size() << " indexes" << std::endl;
+
+	resp.set_success(true);
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleScanTable(const string &db_path, const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 	string sql =
 	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
-	auto result = conn->Query(sql);
+	auto &conn = GetConnection(db_path);
+	auto result = conn.Query(sql);
 
 	if (result->HasError()) {
 		return arrow::Status::Invalid("Query error: " + result->GetError());
@@ -277,7 +419,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table_name,
+arrow::Status DistributedFlightServer::HandleInsertData(const string &db_path, const std::string &table_name,
                                                         std::shared_ptr<arrow::RecordBatch> batch,
                                                         distributed::DistributedResponse &resp) {
 	// TODO(hjiang): Current implementation is pretty insufficient, which directly executes insertion statement.
@@ -308,7 +450,8 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 		insert_sql += ")";
 	}
 
-	auto result = conn->Query(insert_sql);
+	auto &conn = GetConnection(db_path);
+	auto result = conn.Query(insert_sql);
 	if (result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());

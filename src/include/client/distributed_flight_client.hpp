@@ -15,7 +15,7 @@ namespace duckdb {
 
 class DistributedFlightClient {
 public:
-	explicit DistributedFlightClient(string server_url);
+	explicit DistributedFlightClient(string server_url, string db_path = "");
 	~DistributedFlightClient() = default;
 
 	// Connect to server.
@@ -39,6 +39,9 @@ public:
 	// Check if table exists.
 	arrow::Status TableExists(const string &table_name, bool &exists);
 
+	// Get catalog information (tables, columns, indexes).
+	arrow::Status GetCatalogInfo(distributed::GetCatalogInfoResponse &response);
+
 	// Insert data using Arrow RecordBatch.
 	arrow::Status InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
 	                         distributed::DistributedResponse &response);
@@ -53,6 +56,7 @@ private:
 
 private:
 	string server_url;
+	string db_path;
 	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;
 };

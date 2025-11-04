@@ -11,10 +11,13 @@ namespace duckdb {
 
 class DistributedClient {
 public:
-	explicit DistributedClient(string server_url_p = "grpc://localhost:8815");
+	explicit DistributedClient(string server_url_p = "grpc://localhost:8815", string db_path_p = "");
 	~DistributedClient() = default;
 
 	static DistributedClient &GetInstance();
+	
+	// Configure the singleton instance with server details
+	static void Configure(const string &server_url, const string &db_path);
 
 	// Execute arbitrary SQL on the server.
 	unique_ptr<QueryResult> ExecuteSQL(const string &sql);
@@ -46,8 +49,12 @@ public:
 	// Get table data.
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
 
+	// Get catalog information from the server.
+	bool GetCatalogInfo(distributed::GetCatalogInfoResponse &response);
+
 private:
 	string server_url;
+	string db_path;
 	unique_ptr<DistributedFlightClient> client;
 };
 

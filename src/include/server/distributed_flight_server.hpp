@@ -8,6 +8,8 @@
 #include <arrow/flight/server.h>
 #include <arrow/record_batch.h>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 
 namespace duckdb {
 
@@ -38,43 +40,62 @@ public:
 	                    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) override;
 
 private:
+	// Get or create a connection for the specified database path.
+	Connection &GetConnection(const string &db_path);
+
 	// Process different request types using protobuf messages directly.
-	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleExecuteSQL(const string &db_path, const distributed::ExecuteSQLRequest &req,
+	                               distributed::DistributedResponse &resp);
 
 	// Handle CREATE TABLE request.
 	// Return error status if the table already exists.
-	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleCreateTable(const string &db_path, const distributed::CreateTableRequest &req,
+	                                distributed::DistributedResponse &resp);
 
 	// Handle DROP TABLE request.
 	// Return OK status if the table doesn't exist.
-	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleDropTable(const string &db_path, const distributed::DropTableRequest &req,
+	                              distributed::DistributedResponse &resp);
 
 	// Handle CREATE INDEX request.
 	// Return error status if the index already exists.
-	arrow::Status HandleCreateIndex(const distributed::CreateIndexRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleCreateIndex(const string &db_path, const distributed::CreateIndexRequest &req,
+	                                distributed::DistributedResponse &resp);
 
 	// Handle DROP INDEX request.
 	// Return OK status if the index doesn't exist.
-	arrow::Status HandleDropIndex(const distributed::DropIndexRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleDropIndex(const string &db_path, const distributed::DropIndexRequest &req,
+	                              distributed::DistributedResponse &resp);
 
 	// Handle ALTER TABLE request.
 	// Return error status if the table doesn't exist or if the alteration fails.
-	arrow::Status HandleAlterTable(const distributed::AlterTableRequest &req, distributed::DistributedResponse &resp);
-
-	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
-	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
-	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
-	arrow::Status HandleInsertData(const std::string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
+	arrow::Status HandleAlterTable(const string &db_path, const distributed::AlterTableRequest &req,
 	                               distributed::DistributedResponse &resp);
+
+	arrow::Status HandleTableExists(const string &db_path, const distributed::TableExistsRequest &req,
+	                                distributed::DistributedResponse &resp);
+	arrow::Status HandleGetCatalogInfo(const string &db_path, const distributed::GetCatalogInfoRequest &req,
+	                                   distributed::DistributedResponse &resp);
+	arrow::Status HandleScanTable(const string &db_path, const distributed::ScanTableRequest &req,
+	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
+	arrow::Status HandleInsertData(const string &db_path, const std::string &table_name,
+	                               std::shared_ptr<arrow::RecordBatch> batch, distributed::DistributedResponse &resp);
 
 	// Convert DuckDB result to Arrow RecordBatch.
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader);
 
 private:
+	struct DatabaseConnection {
+		unique_ptr<DuckDB> db;
+		unique_ptr<Connection> conn;
+	};
+
 	string host;
 	int port;
-	unique_ptr<DuckDB> db;
-	unique_ptr<Connection> conn;
+
+	// Database connections cache, keyed by database path.
+	std::mutex connections_mutex;
+	std::unordered_map<string, unique_ptr<DatabaseConnection>> connections;
 };
 
 } // namespace duckdb
