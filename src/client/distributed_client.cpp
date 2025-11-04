@@ -23,22 +23,23 @@ DistributedClient::DistributedClient(string server_url_p, string db_path_p)
 	}
 }
 
-DistributedClient &DistributedClient::GetInstance() {
+/*static*/ DistributedClient &DistributedClient::GetInstance() {
 	static NoDestructor<DistributedClient> client {};
 	return *client;
 }
 
-void DistributedClient::Configure(const string &server_url_param, const string &db_path_param) {
+/*static*/ void DistributedClient::Configure(const string &server_url_param, const string &db_path_param) {
 	auto &instance = GetInstance();
 
-	// Reconfigure if either server_url or db_path changed
+	// Reconfigure if either server_url or db_path changed.
 	if (instance.server_url != server_url_param || instance.db_path != db_path_param) {
 		instance.server_url = server_url_param;
 		instance.db_path = db_path_param;
 		instance.client = make_uniq<DistributedFlightClient>(server_url_param, db_path_param);
 		auto status = instance.client->Connect();
 		if (!status.ok()) {
-			throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
+			throw Exception(ExceptionType::CONNECTION,
+			                "Failed to connect to Arrow Flight server: " + status.ToString());
 		}
 	}
 }

@@ -42,20 +42,11 @@ DuckherderCatalog::~DuckherderCatalog() = default;
 
 void DuckherderCatalog::Initialize(bool load_builtin) {
 	duckdb_catalog->Initialize(load_builtin);
-
-	// Configure the DistributedClient singleton with server details including db_path
 	auto server_url = GetServerUrl();
 	DistributedClient::Configure(server_url, server_db_path);
 }
 
 void DuckherderCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
-	// TODO: Implement automatic catalog sync from server
-	// Currently disabled due to deadlock issues during FinalizeLoad
-	// If server_db_path is specified, sync catalog from server
-	// if (!server_db_path.empty() && context) {
-	// 	std::cerr << "[DuckherderCatalog::FinalizeLoad] Syncing catalog from server..." << std::endl;
-	// 	SyncCatalogFromServer(*context);
-	// }
 }
 
 void DuckherderCatalog::SyncCatalogFromServer(ClientContext &context) {

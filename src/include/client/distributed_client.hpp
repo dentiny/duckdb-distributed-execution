@@ -14,9 +14,10 @@ public:
 	explicit DistributedClient(string server_url_p = "grpc://localhost:8815", string db_path_p = "");
 	~DistributedClient() = default;
 
+	// Get client singleton.
 	static DistributedClient &GetInstance();
 
-	// Configure the singleton instance with server details
+	// Configure the singleton instance with server details.
 	static void Configure(const string &server_url, const string &db_path);
 
 	// Execute arbitrary SQL on the server.
@@ -42,6 +43,7 @@ public:
 	unique_ptr<QueryResult> DropIndex(const string &index_name);
 
 	// INSERT INTO on server.
+	//
 	// TODO(hjiang): Currently for implementation easy, directly execute SQL statements, should be use transfer rows and
 	// table name.
 	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
