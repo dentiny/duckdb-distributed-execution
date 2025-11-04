@@ -33,7 +33,8 @@ struct RemoteTableConfig {
 
 class DuckherderCatalog : public DuckCatalog {
 public:
-	explicit DuckherderCatalog(AttachedDatabase &db);
+	DuckherderCatalog(AttachedDatabase &db, string server_host_p = "localhost", int server_port_p = 8815,
+	                  string server_db_path_p = "");
 
 	~DuckherderCatalog() override;
 
@@ -89,6 +90,9 @@ public:
 	bool IsRemoteTable(const string &table_name) const;
 	RemoteTableConfig GetRemoteTableConfig(const string &table_name) const;
 
+	// Get server URL from stored configuration.
+	string GetServerUrl() const;
+
 	// Remote index management.
 	void RegisterRemoteIndex(const string &index_name);
 	void UnregisterRemoteIndex(const string &index_name);
@@ -100,6 +104,11 @@ private:
 
 	unique_ptr<DuckCatalog> duckdb_catalog;
 	DatabaseInstance &db_instance;
+
+	// Server configuration.
+	string server_host;
+	int server_port;
+	string server_db_path;
 
 	// Remote table configuration.
 	// TODO(hjiang): Currently remote tables lives in memory, should provide options to persist and load.

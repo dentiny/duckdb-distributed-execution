@@ -27,8 +27,10 @@
 
 namespace duckdb {
 
-DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db)
-    : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()) {
+DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
+                                     string server_db_path_p)
+    : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()),
+      server_host(std::move(server_host_p)), server_port(server_port_p), server_db_path(std::move(server_db_path_p)) {
 }
 
 DuckherderCatalog::~DuckherderCatalog() = default;
@@ -260,6 +262,10 @@ void DuckherderCatalog::UnregisterRemoteIndex(const string &index_name) {
 bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
 	std::lock_guard<std::mutex> lck(remote_indexes_mu);
 	return remote_indexes.find(index_name) != remote_indexes.end();
+}
+
+string DuckherderCatalog::GetServerUrl() const {
+	return StringUtil::Format("http://%s:%d", server_host, server_port);
 }
 
 } // namespace duckdb
