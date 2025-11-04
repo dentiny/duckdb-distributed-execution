@@ -79,7 +79,6 @@ arrow::Status DistributedFlightClient::GetCatalogInfo(distributed::GetCatalogInf
 	distributed::DistributedRequest req;
 	req.set_db_path(db_path);
 	auto *catalog_req = req.mutable_get_catalog_info();
-	// Empty request - gets all catalog info
 
 	distributed::DistributedResponse resp;
 	ARROW_RETURN_NOT_OK(SendAction(req, resp));
@@ -93,7 +92,6 @@ arrow::Status DistributedFlightClient::GetCatalogInfo(distributed::GetCatalogInf
 
 arrow::Status DistributedFlightClient::InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
                                                   distributed::DistributedResponse &response) {
-	// Encode db_path and table_name in the FlightDescriptor path
 	arrow::flight::FlightDescriptor descriptor = arrow::flight::FlightDescriptor::Path({db_path, table_name});
 
 	std::unique_ptr<arrow::flight::FlightStreamWriter> writer;

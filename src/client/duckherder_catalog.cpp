@@ -57,7 +57,7 @@ void DuckherderCatalog::SyncCatalogFromServer(ClientContext &context) {
 		return;
 	}
 
-	// Create tables in the local catalog using CREATE TABLE via the context
+	// Create tables in the local catalog using CREATE TABLE via the context.
 	auto db_name = GetName();
 
 	for (int i = 0; i < catalog_info.tables_size(); i++) {

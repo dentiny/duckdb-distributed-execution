@@ -3,13 +3,13 @@ version: v1
 lint:
   use:
     - DEFAULT
+  except:
+    - FIELD_NOT_REQUIRED
+    - ONEOF_NOT_REQUIRED
+  rules:
+    # Set maximum line length to 100 characters
+    max_line_length: 100
   enum_zero_value_suffix: _UNSPECIFIED
   rpc_allow_same_request_response: false
   rpc_allow_google_protobuf_empty_requests: true
   rpc_allow_google_protobuf_empty_responses: true
-
-# Exclude generated files from linting
-lint:
-  ignore:
-    - build
-    - vcpkg_installed

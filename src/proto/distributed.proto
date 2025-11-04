@@ -2,21 +2,6 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-// Request types for distributed operations.
-enum RequestType {
-  REQUEST_TYPE_UNSPECIFIED = 0;
-  EXECUTE_SQL = 1;
-  CREATE_TABLE = 2;
-  DROP_TABLE = 3;
-  INSERT_DATA = 4;
-  SCAN_TABLE = 5;
-  DELETE_DATA = 6;
-  TABLE_EXISTS = 7;
-  CREATE_INDEX = 8;
-  DROP_INDEX = 9;
-  ALTER_TABLE = 10;
-}
-
 // Execute SQL request.
 message ExecuteSQLRequest {
   string sql = 1;
@@ -102,21 +87,28 @@ message IndexInfo {
 
 // Request message for distributed operations.
 message DistributedRequest {
-  // Optional database path for the server to use.
-  // If empty, the server will use its default database.
-  string db_path = 10;
+  // Database path for the server to use.
+  // - If non-empty: specifies the file path to a DuckDB database file
+  // - If empty: the server will use an in-memory database
+  // Each request must specify which database it operates on for stateless operation, which is used to indicate the duckdb instance to operate on.
+  string db_path = 1;
 
   // Request-specific parameters.
   oneof request {
-    ExecuteSQLRequest execute_sql = 1;
+    // DDL operations.
     CreateTableRequest create_table = 2;
     DropTableRequest drop_table = 3;
-    ScanTableRequest scan_table = 4;
-    DeleteDataRequest delete_data = 5;
-    TableExistsRequest table_exists = 6;
-    CreateIndexRequest create_index = 7;
-    DropIndexRequest drop_index = 8;
-    AlterTableRequest alter_table = 9;
+    CreateIndexRequest create_index = 4;
+    DropIndexRequest drop_index = 5;
+    AlterTableRequest alter_table = 6;
+
+    // DML operations
+    ExecuteSQLRequest execute_sql = 7;
+    ScanTableRequest scan_table = 8;
+    DeleteDataRequest delete_data = 9;
+
+    // Util operations
+    TableExistsRequest table_exists = 10;
     GetCatalogInfoRequest get_catalog_info = 11;
   }
 }
@@ -164,22 +156,28 @@ message GetCatalogInfoResponse {
 
 // Response message for distributed operations.
 message DistributedResponse {
-  // Whether option succeeds.
-  // TODO(hjiang): We don't need to craft error message inside of the response, instead we could use grpc response directly.
+  // Whether operation succeeds.
+  // TODO(hjiang): We don't need to craft error message inside of the response,
+  // instead we could use grpc response directly.
   bool success = 1;
   string error_message = 2;
 
   // Response-specific data.
   oneof response {
-    ExecuteSQLResponse execute_sql = 3;
-    CreateTableResponse create_table = 4;
-    DropTableResponse drop_table = 5;
-    ScanTableResponse scan_table = 6;
-    DeleteDataResponse delete_data = 7;
-    TableExistsResponse table_exists = 8;
-    CreateIndexResponse create_index = 9;
-    DropIndexResponse drop_index = 10;
-    AlterTableResponse alter_table = 11;
+    // DDL responses.
+    CreateTableResponse create_table = 3;
+    DropTableResponse drop_table = 4;
+    CreateIndexResponse create_index = 5;
+    DropIndexResponse drop_index = 6;
+    AlterTableResponse alter_table = 7;
+
+    // DML responses.
+    ExecuteSQLResponse execute_sql = 8;
+    ScanTableResponse scan_table = 9;
+    DeleteDataResponse delete_data = 10;
+
+    // Util responses.
+    TableExistsResponse table_exists = 11;
     GetCatalogInfoResponse get_catalog_info = 12;
   }
 }
