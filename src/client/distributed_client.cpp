@@ -209,12 +209,11 @@ unique_ptr<QueryResult> DistributedClient::InsertInto(const string &insert_sql) 
 	return ExecuteSQL(insert_sql);
 }
 
-bool DistributedClient::GetCatalogInfo(distributed::GetCatalogInfoResponse &response) {
+void DistributedClient::GetCatalogInfo(distributed::GetCatalogInfoResponse &response) {
 	auto status = client->GetCatalogInfo(response);
 	if (!status.ok()) {
-		return false;
+		throw Exception(ExceptionType::INVALID, StringUtil::Format("Failed to get catalog: %s", status.ToString()));
 	}
-	return true;
 }
 
 } // namespace duckdb

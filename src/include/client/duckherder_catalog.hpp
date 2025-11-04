@@ -41,6 +41,8 @@ public:
 	void Initialize(bool load_builtin) override;
 	void FinalizeLoad(optional_ptr<ClientContext> context) override;
 
+	void SyncCatalogFromServer(ClientContext &context);
+
 	string GetCatalogType() override {
 		return "duckherder";
 	}
@@ -100,9 +102,6 @@ public:
 	bool IsRemoteIndex(const string &index_name) const;
 
 private:
-	// Sync catalog (tables, columns, indexes) from the server.
-	void SyncCatalogFromServer(ClientContext &context);
-
 	std::mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
 

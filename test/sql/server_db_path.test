@@ -4,31 +4,16 @@
 
 require duckherder
 
-# Stop any existing server first (from other tests) and restart with server_db_path
 statement ok
-SELECT duckherder_stop_local_server();
+SELECT duckherder_start_local_server(8817);
 
-# Start distributed server on default port 8815
 statement ok
-SELECT duckherder_start_local_server(8815);
+ATTACH DATABASE 'test_db' (TYPE duckherder, server_host 'localhost', server_port 8817, server_db_path '/home/vscode/duckdb-distributed-execution/test/data/sample_employees.duckdb');
 
-# Attach with server_db_path pointing to the pre-existing database file
-# The server will open test/data/sample_employees.duckdb which contains the employees table
-statement ok
-ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815, server_db_path 'test/data/sample_employees.duckdb');
+# Tables are automatically discovered and registered from the server database
 
-# Create the table structure LOCALLY first (before registering as remote)
-# This teaches the local catalog about the schema without touching the server
-statement ok
-CREATE TABLE dh.employees (id INTEGER, name VARCHAR, salary DOUBLE, department VARCHAR);
-
-# Now register it as remote - queries will go to the server
-statement ok
-PRAGMA duckherder_register_remote_table('employees', 'employees');
-
-# Query the data from the server - should get the 5 employees we pre-populated
 query IIRR
-SELECT id, name, salary, department FROM dh.employees ORDER BY id;
+SELECT id, name, salary, department FROM test_db.employees ORDER BY id;
 ----
 1	Alice Johnson	75000.0	Engineering
 2	Bob Smith	82000.0	Engineering
@@ -38,13 +23,13 @@ SELECT id, name, salary, department FROM dh.employees ORDER BY id;
 
 # Verify count
 query I
-SELECT COUNT(*) FROM dh.employees;
+SELECT COUNT(*) FROM test_db.employees;
 ----
 5
 
 # Test selecting specific columns
 query IR
-SELECT name, salary FROM dh.employees ORDER BY id LIMIT 3;
+SELECT name, salary FROM test_db.employees ORDER BY id LIMIT 3;
 ----
 Alice Johnson	75000.0
 Bob Smith	82000.0
@@ -53,21 +38,18 @@ Charlie Davis	68000.0
 # TODO(hjiang): The following queries trigger a pre-existing bug in DistributedTableScanFunction
 # Error: "Vector::Reference used on vector of different type (source VARCHAR referenced INTEGER)"
 # This is NOT related to server_db_path functionality, but a bug in distributed query execution.
-# 
+#
 # Queries that currently fail:
-# - SELECT * FROM dh.employees WHERE department = 'Engineering';
-# - SELECT * FROM dh.employees WHERE salary > 80000;
-# - SELECT COUNT(*) FROM dh.employees WHERE id > 2;
+# - SELECT * FROM test_db.employees WHERE department = 'Engineering';
+# - SELECT * FROM test_db.employees WHERE salary > 80000;
+# - SELECT COUNT(*) FROM test_db.employees WHERE id > 2;
 #
 # These should be uncommented and tested once the distributed WHERE clause bug is fixed.
 
 # Clean up - detach
 statement ok
-DETACH dh;
+DETACH test_db;
 
-# Restart the server to restore it to clean in-memory state for subsequent tests
+# Stop the server
 statement ok
 SELECT duckherder_stop_local_server();
-
-statement ok
-SELECT duckherder_start_local_server(8815);

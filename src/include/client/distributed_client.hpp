@@ -52,7 +52,7 @@ public:
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
 
 	// Get catalog information from the server.
-	bool GetCatalogInfo(distributed::GetCatalogInfoResponse &response);
+	void GetCatalogInfo(distributed::GetCatalogInfoResponse &response);
 
 private:
 	string server_url;

@@ -38,22 +38,28 @@ string DistributedFlightServer::GetLocation() const {
 }
 
 Connection &DistributedFlightServer::GetConnection(const string &db_path) {
+	std::cerr << "[GetConnection] Called with db_path='" << db_path << "'" << std::endl;
 	std::lock_guard<std::mutex> lock(connections_mutex);
 
 	auto it = connections.find(db_path);
 	if (it != connections.end()) {
+		std::cerr << "[GetConnection] Reusing existing connection" << std::endl;
 		return *it->second->conn;
 	}
 
+	std::cerr << "[GetConnection] Creating new database connection" << std::endl;
 	// Create new database connection.
 	auto db_conn = make_uniq<DatabaseConnection>();
 	if (db_path.empty()) {
+		std::cerr << "[GetConnection] Opening in-memory database" << std::endl;
 		// In-memory database.
 		db_conn->db = make_uniq<DuckDB>();
 	} else {
+		std::cerr << "[GetConnection] Opening file-based database: " << db_path << std::endl;
 		// File-based database.
 		db_conn->db = make_uniq<DuckDB>(db_path);
 	}
+	std::cerr << "[GetConnection] Database opened, creating connection" << std::endl;
 	db_conn->conn = make_uniq<Connection>(*db_conn->db);
 
 	auto *conn_ptr = db_conn->conn.get();
@@ -97,6 +103,7 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 		ARROW_RETURN_NOT_OK(HandleTableExists(db_path, request.table_exists(), response));
 		break;
 	case distributed::DistributedRequest::kGetCatalogInfo:
+		std::cerr << "[DoAction] Handling GetCatalogInfo request for db_path='" << db_path << "'" << std::endl;
 		ARROW_RETURN_NOT_OK(HandleGetCatalogInfo(db_path, request.get_catalog_info(), response));
 		break;
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
@@ -312,7 +319,11 @@ arrow::Status DistributedFlightServer::HandleTableExists(const string &db_path,
 arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_path,
                                                             const distributed::GetCatalogInfoRequest &req,
                                                             distributed::DistributedResponse &resp) {
+	std::cerr << "[HandleGetCatalogInfo] Called with db_path='" << db_path << "'" << std::endl;
+	
 	auto &conn = GetConnection(db_path);
+	std::cerr << "[HandleGetCatalogInfo] Got connection for db_path='" << db_path << "'" << std::endl;
+	
 	auto *catalog_resp = resp.mutable_get_catalog_info();
 
 	// Query all tables and their columns
@@ -321,12 +332,15 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 	                    "WHERE table_schema NOT IN ('information_schema', 'pg_catalog') "
 	                    "ORDER BY table_schema, table_name, ordinal_position";
 
+	std::cerr << "[HandleGetCatalogInfo] Executing query: " << tables_sql << std::endl;
 	auto result = conn.Query(tables_sql);
 	if (result->HasError()) {
+		std::cerr << "[HandleGetCatalogInfo] Query failed: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message("Failed to query catalog: " + result->GetError());
 		return arrow::Status::OK();
 	}
+	std::cerr << "[HandleGetCatalogInfo] Query succeeded" << std::endl;
 
 	// Build table info map
 	std::unordered_map<string, distributed::TableInfo *> table_map;
@@ -376,6 +390,9 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 			index_info->set_is_unique(false); // Would need to parse from SQL
 		}
 	}
+
+	std::cerr << "[HandleGetCatalogInfo] Returning " << catalog_resp->tables_size() << " tables, " 
+	          << catalog_resp->indexes_size() << " indexes" << std::endl;
 
 	resp.set_success(true);
 	return arrow::Status::OK();
