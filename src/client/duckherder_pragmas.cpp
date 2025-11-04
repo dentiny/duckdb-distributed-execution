@@ -14,13 +14,13 @@ namespace duckdb {
 	// Takes 2 positional arguments: table_name, remote_table_name
 	auto register_function =
 	    PragmaFunction::PragmaCall("duckherder_register_remote_table", RegisterRemoteTable,
-	                               {LogicalType::VARCHAR, LogicalType::VARCHAR});
+	                               {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}});
 	loader.RegisterFunction(register_function);
 
 	// Register pragma function for unregistering remote tables.
 	// Takes 1 argument: table_name
-	auto unregister_function =
-	    PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable, {LogicalType::VARCHAR});
+	auto unregister_function = PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable,
+	                                                      {LogicalType {LogicalTypeId::VARCHAR}});
 	loader.RegisterFunction(unregister_function);
 }
 
@@ -45,7 +45,6 @@ namespace duckdb {
 		throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
 	}
 
-	// Get server URL from catalog's stored configuration
 	auto server_url = dh_catalog_ptr->GetServerUrl();
 	dh_catalog_ptr->RegisterRemoteTable(table_name, server_url, remote_table_name);
 }
