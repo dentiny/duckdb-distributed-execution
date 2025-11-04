@@ -42,11 +42,9 @@ DuckherderCatalog::~DuckherderCatalog() = default;
 
 void DuckherderCatalog::Initialize(bool load_builtin) {
 	duckdb_catalog->Initialize(load_builtin);
-	
+
 	// Configure the DistributedClient singleton with server details including db_path
 	auto server_url = GetServerUrl();
-	std::cerr << "[DuckherderCatalog::Initialize] Configuring DistributedClient with server_url='" 
-	          << server_url << "', server_db_path='" << server_db_path << "'" << std::endl;
 	DistributedClient::Configure(server_url, server_db_path);
 }
 
@@ -63,31 +61,21 @@ void DuckherderCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
 void DuckherderCatalog::SyncCatalogFromServer(ClientContext &context) {
 	auto &client = DistributedClient::GetInstance();
 	distributed::GetCatalogInfoResponse catalog_info;
-	
+
 	if (!client.GetCatalogInfo(catalog_info)) {
-		std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Failed to get catalog info from server" << std::endl;
 		return;
 	}
 
-	std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Received " << catalog_info.tables_size() 
-	          << " tables from server" << std::endl;
-
 	// Create tables in the local catalog using CREATE TABLE via the context
 	auto db_name = GetName();
-	
+
 	for (int i = 0; i < catalog_info.tables_size(); i++) {
 		const auto &table_info = catalog_info.tables(i);
-		
-		std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Found table: " 
-		          << table_info.schema_name() << "." << table_info.table_name() 
-		          << " with " << table_info.columns_size() << " columns" << std::endl;
-		
+
 		// Build CREATE TABLE SQL with full qualification
-		string create_sql = StringUtil::Format("CREATE TABLE IF NOT EXISTS %s.%s.%s (", 
-		                                      db_name,
-		                                      table_info.schema_name(), 
-		                                      table_info.table_name());
-		
+		string create_sql = StringUtil::Format("CREATE TABLE IF NOT EXISTS %s.%s.%s (", db_name,
+		                                       table_info.schema_name(), table_info.table_name());
+
 		for (int j = 0; j < table_info.columns_size(); j++) {
 			const auto &col = table_info.columns(j);
 			if (j > 0) {
@@ -100,24 +88,17 @@ void DuckherderCatalog::SyncCatalogFromServer(ClientContext &context) {
 		}
 		create_sql += ")";
 
-		std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Creating table locally: " << create_sql << std::endl;
-
 		// Execute CREATE TABLE using the context (this creates it locally in this catalog)
 		auto result = context.Query(create_sql, false);
 		if (result->HasError()) {
-			std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Failed to create table: " 
-			          << result->GetError() << std::endl;
 			continue;
 		}
 
 		// Automatically register as remote table
 		RegisterRemoteTable(table_info.table_name(), GetServerUrl(), table_info.table_name());
-		std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Registered remote table: " 
-		          << table_info.table_name() << std::endl;
 	}
 
 	// TODO: Sync indexes as well
-	std::cerr << "[DuckherderCatalog::SyncCatalogFromServer] Catalog sync complete!" << std::endl;
 }
 
 optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {

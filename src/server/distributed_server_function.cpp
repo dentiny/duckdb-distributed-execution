@@ -18,11 +18,8 @@ constexpr int DEFAULT_SERVER_PORT = 8815;
 
 void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	const std::lock_guard<std::mutex> lock(g_server_mutex);
-	
-	std::cerr << "[StartLocalServer] Called, g_server_started=" << g_server_started << std::endl;
 
 	if (g_server_started) {
-		std::cerr << "[StartLocalServer] Server already running, returning" << std::endl;
 		auto result_data = FlatVector::GetData<string_t>(result);
 		result_data[0] = StringVector::AddString(result, "Server already running");
 		return;
@@ -34,28 +31,21 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto port_data = FlatVector::GetData<int32_t>(port_vector);
 		port = port_data[0];
 	}
-	
-	std::cerr << "[StartLocalServer] Starting server on port " << port << std::endl;
 
 	try {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
-		std::cerr << "[StartLocalServer] Created DistributedFlightServer, calling Start()..." << std::endl;
 		auto status = g_test_server->Start();
 		if (!status.ok()) {
-			std::cerr << "[StartLocalServer] Start() failed: " << status.ToString() << std::endl;
 			throw Exception(ExceptionType::IO, "Failed to start local server: " + status.ToString());
 		}
-		std::cerr << "[StartLocalServer] Start() succeeded, now starting Serve() in background thread" << std::endl;
 
 		// Start server in background thread and detach.
 		std::thread([port]() {
-			std::cerr << "[StartLocalServer background thread] Calling Serve() on port " << port << std::endl;
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
 			if (!serve_status.ok() && g_server_started) {
-				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
+				// Server error occurred
 			}
-			std::cerr << "[StartLocalServer background thread] Serve() returned" << std::endl;
 		}).detach();
 
 		// TODO(hjiang): Use readiness probe to validate server on.

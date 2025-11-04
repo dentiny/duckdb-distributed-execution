@@ -15,7 +15,7 @@ public:
 	~DistributedClient() = default;
 
 	static DistributedClient &GetInstance();
-	
+
 	// Configure the singleton instance with server details
 	static void Configure(const string &server_url, const string &db_path);
 

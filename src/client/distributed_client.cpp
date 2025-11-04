@@ -14,7 +14,7 @@
 
 namespace duckdb {
 
-DistributedClient::DistributedClient(string server_url_p, string db_path_p) 
+DistributedClient::DistributedClient(string server_url_p, string db_path_p)
     : server_url(std::move(server_url_p)), db_path(std::move(db_path_p)) {
 	client = make_uniq<DistributedFlightClient>(server_url, db_path);
 	auto status = client->Connect();
@@ -30,14 +30,9 @@ DistributedClient &DistributedClient::GetInstance() {
 
 void DistributedClient::Configure(const string &server_url_param, const string &db_path_param) {
 	auto &instance = GetInstance();
-	std::cerr << "[DistributedClient::Configure] Called with server_url='" << server_url_param 
-	          << "', db_path='" << db_path_param << "'" << std::endl;
-	std::cerr << "[DistributedClient::Configure] Current instance has server_url='" << instance.server_url 
-	          << "', db_path='" << instance.db_path << "'" << std::endl;
-	
+
 	// Reconfigure if either server_url or db_path changed
 	if (instance.server_url != server_url_param || instance.db_path != db_path_param) {
-		std::cerr << "[DistributedClient::Configure] Reconfiguring client..." << std::endl;
 		instance.server_url = server_url_param;
 		instance.db_path = db_path_param;
 		instance.client = make_uniq<DistributedFlightClient>(server_url_param, db_path_param);
@@ -45,9 +40,6 @@ void DistributedClient::Configure(const string &server_url_param, const string &
 		if (!status.ok()) {
 			throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
 		}
-		std::cerr << "[DistributedClient::Configure] Client reconfigured successfully" << std::endl;
-	} else {
-		std::cerr << "[DistributedClient::Configure] No change needed, skipping reconfiguration" << std::endl;
 	}
 }
 
@@ -219,11 +211,8 @@ unique_ptr<QueryResult> DistributedClient::InsertInto(const string &insert_sql) 
 bool DistributedClient::GetCatalogInfo(distributed::GetCatalogInfoResponse &response) {
 	auto status = client->GetCatalogInfo(response);
 	if (!status.ok()) {
-		std::cerr << "[DistributedClient::GetCatalogInfo] Failed: " << status.ToString() << std::endl;
 		return false;
 	}
-	std::cerr << "[DistributedClient::GetCatalogInfo] Success: found " << response.tables_size() 
-	          << " tables" << std::endl;
 	return true;
 }
 

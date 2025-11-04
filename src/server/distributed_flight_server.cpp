@@ -39,25 +39,19 @@ string DistributedFlightServer::GetLocation() const {
 
 Connection &DistributedFlightServer::GetConnection(const string &db_path) {
 	std::lock_guard<std::mutex> lock(connections_mutex);
-	
-	std::cerr << "[DistributedFlightServer::GetConnection] Called with db_path='" << db_path << "'" << std::endl;
 
 	auto it = connections.find(db_path);
 	if (it != connections.end()) {
-		std::cerr << "[DistributedFlightServer::GetConnection] Reusing existing connection for db_path='" << db_path << "'" << std::endl;
 		return *it->second->conn;
 	}
 
 	// Create new database connection.
-	std::cerr << "[DistributedFlightServer::GetConnection] Creating new connection for db_path='" << db_path << "'" << std::endl;
 	auto db_conn = make_uniq<DatabaseConnection>();
 	if (db_path.empty()) {
 		// In-memory database.
-		std::cerr << "[DistributedFlightServer::GetConnection] Opening in-memory database" << std::endl;
 		db_conn->db = make_uniq<DuckDB>();
 	} else {
 		// File-based database.
-		std::cerr << "[DistributedFlightServer::GetConnection] Opening file-based database: " << db_path << std::endl;
 		db_conn->db = make_uniq<DuckDB>(db_path);
 	}
 	db_conn->conn = make_uniq<Connection>(*db_conn->db);
@@ -145,7 +139,7 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
                                              std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                              std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 	auto descriptor = reader->descriptor();
-	
+
 	// Extract db_path and table_name from the FlightDescriptor path
 	// Path format: [db_path, table_name]
 	string db_path = "";
@@ -220,8 +214,7 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const string &db_path,
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleDropTable(const string &db_path,
-                                                       const distributed::DropTableRequest &req,
+arrow::Status DistributedFlightServer::HandleDropTable(const string &db_path, const distributed::DropTableRequest &req,
                                                        distributed::DistributedResponse &resp) {
 	auto &conn = GetConnection(db_path);
 	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
@@ -256,8 +249,7 @@ arrow::Status DistributedFlightServer::HandleCreateIndex(const string &db_path,
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleDropIndex(const string &db_path,
-                                                       const distributed::DropIndexRequest &req,
+arrow::Status DistributedFlightServer::HandleDropIndex(const string &db_path, const distributed::DropIndexRequest &req,
                                                        distributed::DistributedResponse &resp) {
 	auto &conn = GetConnection(db_path);
 	auto sql = "DROP INDEX IF EXISTS " + req.index_name();
@@ -321,15 +313,13 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
                                                             const distributed::GetCatalogInfoRequest &req,
                                                             distributed::DistributedResponse &resp) {
 	auto &conn = GetConnection(db_path);
-	std::cerr << "[DistributedFlightServer::HandleGetCatalogInfo] Getting catalog info for db_path='" << db_path << "'" << std::endl;
-
 	auto *catalog_resp = resp.mutable_get_catalog_info();
 
 	// Query all tables and their columns
 	string tables_sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable "
-	                   "FROM information_schema.columns "
-	                   "WHERE table_schema NOT IN ('information_schema', 'pg_catalog') "
-	                   "ORDER BY table_schema, table_name, ordinal_position";
+	                    "FROM information_schema.columns "
+	                    "WHERE table_schema NOT IN ('information_schema', 'pg_catalog') "
+	                    "ORDER BY table_schema, table_name, ordinal_position";
 
 	auto result = conn.Query(tables_sql);
 	if (result->HasError()) {
@@ -341,11 +331,10 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 	// Build table info map
 	std::unordered_map<string, distributed::TableInfo *> table_map;
 	idx_t row_count = 0;
-	
+
 	// Materialize the result to iterate properly
 	auto materialized = unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(result));
-	std::cerr << "[HandleGetCatalogInfo] Query returned " << materialized->RowCount() << " rows" << std::endl;
-	
+
 	// Iterate through all rows using the Rows() iterator
 	for (auto &row : materialized->Collection().Rows()) {
 		string schema_name = row.GetValue(0).ToString();
@@ -353,9 +342,6 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 		string column_name = row.GetValue(2).ToString();
 		string data_type = row.GetValue(3).ToString();
 		string is_nullable = row.GetValue(4).ToString();
-
-		std::cerr << "[HandleGetCatalogInfo] Row " << row_count++ << ": schema=" << schema_name << ", table=" << table_name 
-		          << ", column=" << column_name << ", type=" << data_type << ", nullable=" << is_nullable << std::endl;
 
 		string full_table_name = schema_name + "." + table_name;
 
@@ -365,7 +351,6 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 			table_info->set_schema_name(schema_name);
 			table_info->set_table_name(table_name);
 			table_map[full_table_name] = table_info;
-			std::cerr << "[HandleGetCatalogInfo] Created new table entry for: " << full_table_name << std::endl;
 		}
 
 		// Add column info
@@ -374,13 +359,11 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 		col_info->set_type(data_type);
 		col_info->set_nullable(is_nullable == "YES");
 	}
-	
-	std::cerr << "[HandleGetCatalogInfo] Processed " << row_count << " total rows" << std::endl;
 
 	// Query indexes
 	string indexes_sql = "SELECT table_schema, table_name, index_name, sql "
-	                    "FROM duckdb_indexes() "
-	                    "WHERE table_schema NOT IN ('information_schema', 'pg_catalog')";
+	                     "FROM duckdb_indexes() "
+	                     "WHERE table_schema NOT IN ('information_schema', 'pg_catalog')";
 
 	auto idx_result = conn.Query(indexes_sql);
 	if (!idx_result->HasError()) {
@@ -393,9 +376,6 @@ arrow::Status DistributedFlightServer::HandleGetCatalogInfo(const string &db_pat
 			index_info->set_is_unique(false); // Would need to parse from SQL
 		}
 	}
-
-	std::cerr << "[DistributedFlightServer::HandleGetCatalogInfo] Found " << catalog_resp->tables_size() 
-	          << " tables, " << catalog_resp->indexes_size() << " indexes" << std::endl;
 
 	resp.set_success(true);
 	return arrow::Status::OK();
