@@ -39,6 +39,9 @@ public:
 	~DuckherderCatalog() override;
 
 	void Initialize(bool load_builtin) override;
+	void FinalizeLoad(optional_ptr<ClientContext> context) override;
+
+	void SyncCatalogFromServer(ClientContext &context);
 
 	string GetCatalogType() override {
 		return "duckherder";

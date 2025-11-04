@@ -36,15 +36,16 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 		auto status = g_test_server->Start();
 		if (!status.ok()) {
-			throw Exception(ExceptionType::IO, "Failed to start local server: " + status.ToString());
+			throw Exception(ExceptionType::IO,
+			                StringUtil::Format("Failed to start local server: %s", status.ToString()));
 		}
 
 		// Start server in background thread and detach.
 		std::thread([port]() {
-			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
 			if (!serve_status.ok() && g_server_started) {
-				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
+				throw Exception(ExceptionType::IO,
+				                StringUtil::Format("Failed to start serving local server %s", serve_status.ToString()));
 			}
 		}).detach();
 

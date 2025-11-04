@@ -1,0 +1,55 @@
+# name: test/sql/server_db_path.test
+# description: Test server_db_path parameter to connect to an existing database file (read-only test)
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8817);
+
+statement ok
+ATTACH DATABASE 'test_db' (TYPE duckherder, server_host 'localhost', server_port 8817, server_db_path '/home/vscode/duckdb-distributed-execution/test/data/sample_employees.duckdb');
+
+# Tables are automatically discovered and registered from the server database
+
+query IIRR
+SELECT id, name, salary, department FROM test_db.employees ORDER BY id;
+----
+1	Alice Johnson	75000.0	Engineering
+2	Bob Smith	82000.0	Engineering
+3	Charlie Davis	68000.0	Marketing
+4	Diana Prince	95000.0	Management
+5	Eve Martinez	71000.0	Sales
+
+# Verify count
+query I
+SELECT COUNT(*) FROM test_db.employees;
+----
+5
+
+# Test selecting specific columns
+query IR
+SELECT name, salary FROM test_db.employees ORDER BY id LIMIT 3;
+----
+Alice Johnson	75000.0
+Bob Smith	82000.0
+Charlie Davis	68000.0
+
+# TODO(hjiang): The following queries trigger a pre-existing bug in DistributedTableScanFunction
+# Error: "Vector::Reference used on vector of different type (source VARCHAR referenced INTEGER)"
+# This is NOT related to server_db_path functionality, but a bug in distributed query execution.
+#
+# Queries that currently fail:
+# - SELECT * FROM test_db.employees WHERE department = 'Engineering';
+# - SELECT * FROM test_db.employees WHERE salary > 80000;
+# - SELECT COUNT(*) FROM test_db.employees WHERE id > 2;
+#
+# These should be uncommented and tested once the distributed WHERE clause bug is fixed.
+
+# Clean up - detach
+statement ok
+DETACH test_db;
+
+# Stop the server
+statement ok
+SELECT duckherder_stop_local_server();

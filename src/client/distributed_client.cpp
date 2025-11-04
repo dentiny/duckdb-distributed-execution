@@ -14,17 +14,34 @@
 
 namespace duckdb {
 
-DistributedClient::DistributedClient(string server_url_p) : server_url(std::move(server_url_p)) {
-	client = make_uniq<DistributedFlightClient>(server_url);
+DistributedClient::DistributedClient(string server_url_p, string db_path_p)
+    : server_url(std::move(server_url_p)), db_path(std::move(db_path_p)) {
+	client = make_uniq<DistributedFlightClient>(server_url, db_path);
 	auto status = client->Connect();
 	if (!status.ok()) {
 		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
 	}
 }
 
-DistributedClient &DistributedClient::GetInstance() {
+/*static*/ DistributedClient &DistributedClient::GetInstance() {
 	static NoDestructor<DistributedClient> client {};
 	return *client;
+}
+
+/*static*/ void DistributedClient::Configure(const string &server_url_param, const string &db_path_param) {
+	auto &instance = GetInstance();
+
+	// Reconfigure if either server_url or db_path changed.
+	if (instance.server_url != server_url_param || instance.db_path != db_path_param) {
+		instance.server_url = server_url_param;
+		instance.db_path = db_path_param;
+		instance.client = make_uniq<DistributedFlightClient>(server_url_param, db_path_param);
+		auto status = instance.client->Connect();
+		if (!status.ok()) {
+			throw Exception(ExceptionType::CONNECTION,
+			                "Failed to connect to Arrow Flight server: " + status.ToString());
+		}
+	}
 }
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset) {
@@ -190,6 +207,13 @@ unique_ptr<QueryResult> DistributedClient::DropIndex(const string &index_name) {
 
 unique_ptr<QueryResult> DistributedClient::InsertInto(const string &insert_sql) {
 	return ExecuteSQL(insert_sql);
+}
+
+void DistributedClient::GetCatalogInfo(distributed::GetCatalogInfoResponse &response) {
+	auto status = client->GetCatalogInfo(response);
+	if (!status.ok()) {
+		throw Exception(ExceptionType::INVALID, StringUtil::Format("Failed to get catalog: %s", status.ToString()));
+	}
 }
 
 } // namespace duckdb
