@@ -11,10 +11,10 @@ namespace duckdb {
 
 /*static*/ void DuckherderPragmas::RegisterPragmas(ExtensionLoader &loader) {
 	// Register pragma function for registering remote tables.
-	// Takes 3 positional arguments: table_name, server_url, remote_table_name
+	// Takes 2 positional arguments: table_name, remote_table_name
 	auto register_function =
 	    PragmaFunction::PragmaCall("duckherder_register_remote_table", RegisterRemoteTable,
-	                               {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR});
+	                               {LogicalType::VARCHAR, LogicalType::VARCHAR});
 	loader.RegisterFunction(register_function);
 
 	// Register pragma function for unregistering remote tables.
@@ -26,8 +26,7 @@ namespace duckdb {
 
 /*static*/ void DuckherderPragmas::RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters) {
 	auto table_name = parameters.values[0].ToString();
-	auto server_url = parameters.values[1].ToString();
-	auto remote_table_name = parameters.values[2].ToString();
+	auto remote_table_name = parameters.values[1].ToString();
 
 	// Get the duckherder catalog - assuming it's attached as "dh".
 	auto &db_manager = DatabaseManager::Get(context);
@@ -38,7 +37,7 @@ namespace duckdb {
 
 	auto &catalog = dh_db->GetCatalog();
 	if (catalog.GetCatalogType() != "duckherder") {
-		throw Exception(ExceptionType::CATALOG, "Database 'md' is not a duckherder database");
+		throw Exception(ExceptionType::CATALOG, "Database 'dh' is not a duckherder database");
 	}
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
@@ -46,6 +45,8 @@ namespace duckdb {
 		throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
 	}
 
+	// Get server URL from catalog's stored configuration
+	auto server_url = dh_catalog_ptr->GetServerUrl();
 	dh_catalog_ptr->RegisterRemoteTable(table_name, server_url, remote_table_name);
 }
 
@@ -61,7 +62,7 @@ namespace duckdb {
 
 	auto &catalog = dh_db->GetCatalog();
 	if (catalog.GetCatalogType() != "duckherder") {
-		throw Exception(ExceptionType::CATALOG, "Database 'md' is not a duckherder database");
+		throw Exception(ExceptionType::CATALOG, "Database 'dh' is not a duckherder database");
 	}
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
