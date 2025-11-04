@@ -36,9 +36,6 @@ set(CLIENT_SOURCES
     src/client/distributed_flight_client.cpp
     src/client/distributed_insert.cpp
     src/client/distributed_table_scan_function.cpp
-    src/client/entry_lookup_info_hash_utils.cpp
-    src/client/logical_remote_alter_table.cpp
-    src/client/logical_remote_create_index.cpp
     src/client/duckherder_catalog.cpp
     src/client/duckherder_index_catalog_entry.cpp
     src/client/duckherder_pragmas.cpp
@@ -46,7 +43,10 @@ set(CLIENT_SOURCES
     src/client/duckherder_schema_catalog_entry.cpp
     src/client/duckherder_table_catalog_entry.cpp
     src/client/duckherder_transaction.cpp
-    src/client/duckherder_transaction_manager.cpp)
+    src/client/duckherder_transaction_manager.cpp
+    src/client/entry_lookup_info_hash_utils.cpp
+    src/client/logical_remote_alter_table.cpp
+    src/client/logical_remote_create_index.cpp)
 
 set(SERVER_SOURCES src/server/distributed_flight_server.cpp
                    src/server/distributed_server_function.cpp)
@@ -58,10 +58,10 @@ set(EXTENSION_SOURCES
     ${UTIL_SOURCES}
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
+    src/duckherder_extension.cpp
     src/query_history_query_function.cpp
     src/query_recorder.cpp
-    src/query_recorder_factory.cpp
-    src/duckherder_extension.cpp)
+    src/query_recorder_factory.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
