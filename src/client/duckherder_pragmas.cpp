@@ -13,14 +13,14 @@ namespace duckdb {
 	// Register pragma function for registering remote tables.
 	// Takes 3 positional arguments: table_name, server_url, remote_table_name
 	auto register_function =
-	    PragmaFunction::PragmaCall("dh_register_remote_table", RegisterRemoteTable,
+	    PragmaFunction::PragmaCall("duckherder_register_remote_table", RegisterRemoteTable,
 	                               {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR});
 	loader.RegisterFunction(register_function);
 
 	// Register pragma function for unregistering remote tables.
 	// Takes 1 argument: table_name
 	auto unregister_function =
-	    PragmaFunction::PragmaCall("dh_unregister_remote_table", UnregisterRemoteTable, {LogicalType::VARCHAR});
+	    PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable, {LogicalType::VARCHAR});
 	loader.RegisterFunction(unregister_function);
 }
 

@@ -11,7 +11,7 @@ statement ok
 ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA dh_register_remote_table('test_alter_table', 'http://localhost:8815', 'test_alter_table');
+PRAGMA duckherder_register_remote_table('test_alter_table', 'http://localhost:8815', 'test_alter_table');
 
 statement ok
 DROP TABLE IF EXISTS dh.test_alter_table;
@@ -160,10 +160,6 @@ statement error
 ALTER TABLE dh.nonexistent_table DROP COLUMN IF EXISTS some_column;
 ----
 Catalog Error: Table with name nonexistent_table does not exist
-
-# Clean up
-statement ok
-PRAGMA dh_unregister_remote_table('test_alter_table');
 
 statement ok
 DROP TABLE dh.test_alter_table;

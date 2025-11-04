@@ -12,7 +12,7 @@ statement ok
 ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA dh_register_remote_table('test_query_table', 'http://localhost:8080', 'test_query_table');
+PRAGMA duckherder_register_remote_table('test_query_table', 'http://localhost:8080', 'test_query_table');
 
 statement ok
 DROP TABLE IF EXISTS dh.test_query_table;
@@ -33,14 +33,14 @@ statement ok
 DROP TABLE dh.test_query_table;
 
 query I
-SELECT COUNT(*) FROM dh_get_query_history();
+SELECT COUNT(*) FROM duckherder_get_query_history();
 ----
 2
 
 statement ok
-SELECT dh_clear_query_recorder_stats();
+SELECT duckherder_clear_query_recorder_stats();
 
 query I
-SELECT COUNT(*) FROM dh_get_query_history();
+SELECT COUNT(*) FROM duckherder_get_query_history();
 ----
 0

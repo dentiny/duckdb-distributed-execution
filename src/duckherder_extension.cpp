@@ -24,9 +24,6 @@ void ClearQueryRecorderStats(const DataChunk &args, ExpressionState &state, Vect
 void LoadInternal(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
-	// Register 'dh' as the storage extension prefix (for ATTACH DATABASE 'dh:' syntax)
-	config.storage_extensions["dh"] = make_uniq<DuckherderStorageExtension>();
-	// Also register as 'duckherder' for TYPE syntax (ATTACH DATABASE 'dh' (TYPE duckherder))
 	config.storage_extensions["duckherder"] = make_uniq<DuckherderStorageExtension>();
 
 	// Register pragma functions to register and unregister remote table.
@@ -36,14 +33,14 @@ void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(GetQueryHistory());
 
 	// Register function to clear query recorder stats.
-	ScalarFunction clear_recorder_stats_function("dh_clear_query_recorder_stats",
+	ScalarFunction clear_recorder_stats_function("duckherder_clear_query_recorder_stats",
 	                                             /*arguments=*/ {},
 	                                             /*return_type=*/LogicalType::BOOLEAN, ClearQueryRecorderStats);
 	loader.RegisterFunction(clear_recorder_stats_function);
 
 	// Register distributed server control functions, which could be local usage.
-	loader.RegisterFunction(GetStartDistributedServerFunction());
-	loader.RegisterFunction(GetStopDistributedServerFunction());
+	loader.RegisterFunction(GetStartLocalServerFunction());
+	loader.RegisterFunction(GetStopLocalServerFunction());
 }
 
 } // namespace

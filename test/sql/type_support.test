@@ -8,10 +8,10 @@ statement ok
 SELECT duckherder_start_local_server(8815);
 
 statement ok
-ATTACH DATABASE 'dh:' AS dh;
+ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA dh_register_remote_table('type_test_table', 'http://localhost:8815', 'type_test_table');
+PRAGMA duckherder_register_remote_table('type_test_table', 'http://localhost:8815', 'type_test_table');
 
 statement ok
 DROP TABLE IF EXISTS dh.type_test_table;

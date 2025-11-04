@@ -12,24 +12,24 @@ statement ok
 ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA dh_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
+PRAGMA duckherder_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
 
 # Double registration.
 statement error
-PRAGMA dh_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
+PRAGMA duckherder_register_remote_table('registration_test_table', 'http://localhost:8080', 'registration_test_table');
 ----
 Invalid Input Error: Failed to register table registration_test_table because it's already registered!
 
 statement ok
-PRAGMA dh_unregister_remote_table('registration_test_table');
+PRAGMA duckherder_unregister_remote_table('registration_test_table');
 
 statement error
-PRAGMA dh_unregister_remote_table('non_existent_table_xyz');
+PRAGMA duckherder_unregister_remote_table('non_existent_table_xyz');
 ----
 Invalid Input Error: Failed to unregister table non_existent_table_xyz because it hasn't been registered!
 
 # Double unregistration.
 statement error
-PRAGMA dh_unregister_remote_table('registration_test_table');
+PRAGMA duckherder_unregister_remote_table('registration_test_table');
 ----
 Invalid Input Error: Failed to unregister table registration_test_table because it hasn't been registered!

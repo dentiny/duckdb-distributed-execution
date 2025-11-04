@@ -12,7 +12,7 @@ statement ok
 ATTACH DATABASE 'dh' (TYPE duckherder);
 
 statement ok
-PRAGMA dh_register_remote_table('remote_exec_table', 'http://localhost:8815', 'remote_exec_table');
+PRAGMA duckherder_register_remote_table('remote_exec_table', 'http://localhost:8815', 'remote_exec_table');
 
 statement ok
 DROP TABLE IF EXISTS dh.remote_exec_table;
