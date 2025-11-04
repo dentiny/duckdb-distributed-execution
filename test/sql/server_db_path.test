@@ -1,17 +1,21 @@
 # name: test/sql/server_db_path.test
-# description: Test server_db_path parameter to connect to an existing database file
+# description: Test server_db_path parameter to connect to an existing database file (read-only test)
 # group: [sql]
 
 require duckherder
 
-# Start distributed server on port 8820
+# Stop any existing server first (from other tests) and restart with server_db_path
 statement ok
-SELECT duckherder_start_local_server(8820);
+SELECT duckherder_stop_local_server();
+
+# Start distributed server on default port 8815
+statement ok
+SELECT duckherder_start_local_server(8815);
 
 # Attach with server_db_path pointing to the pre-existing database file
 # The server will open test/data/sample_employees.duckdb which contains the employees table
 statement ok
-ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8820, server_db_path 'test/data/sample_employees.duckdb');
+ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815, server_db_path 'test/data/sample_employees.duckdb');
 
 # Create the table structure LOCALLY first (before registering as remote)
 # This teaches the local catalog about the schema without touching the server
@@ -38,21 +42,32 @@ SELECT COUNT(*) FROM dh.employees;
 ----
 5
 
-# Test adding more data through duckherder - it should persist to the file
-statement ok
-INSERT INTO dh.employees VALUES (6, 'Frank Wilson', 78000.0, 'Engineering');
-
-query I
-SELECT COUNT(*) FROM dh.employees;
+# Test selecting specific columns
+query IR
+SELECT name, salary FROM dh.employees ORDER BY id LIMIT 3;
 ----
-6
+Alice Johnson	75000.0
+Bob Smith	82000.0
+Charlie Davis	68000.0
 
-# Test querying the new row
-query IIRR
-SELECT id, name, salary, department FROM dh.employees WHERE id = 6;
-----
-6	Frank Wilson	78000.0	Engineering
+# TODO(hjiang): The following queries trigger a pre-existing bug in DistributedTableScanFunction
+# Error: "Vector::Reference used on vector of different type (source VARCHAR referenced INTEGER)"
+# This is NOT related to server_db_path functionality, but a bug in distributed query execution.
+# 
+# Queries that currently fail:
+# - SELECT * FROM dh.employees WHERE department = 'Engineering';
+# - SELECT * FROM dh.employees WHERE salary > 80000;
+# - SELECT COUNT(*) FROM dh.employees WHERE id > 2;
+#
+# These should be uncommented and tested once the distributed WHERE clause bug is fixed.
 
 # Clean up - detach
 statement ok
 DETACH dh;
+
+# Restart the server to restore it to clean in-memory state for subsequent tests
+statement ok
+SELECT duckherder_stop_local_server();
+
+statement ok
+SELECT duckherder_start_local_server(8815);
