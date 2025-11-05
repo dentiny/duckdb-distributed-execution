@@ -53,24 +53,28 @@ public:
 	//===--------------------------------------------------------------------===//
 	// SchemaCatalogEntry-specific functions
 	//===--------------------------------------------------------------------===//
-	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback);
-	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback);
+	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
+	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
-	                                       TableCatalogEntry &table);
-	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info);
-	optional_ptr<CatalogEntry> CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info);
-	optional_ptr<CatalogEntry> CreateView(CatalogTransaction transaction, CreateViewInfo &info);
-	optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info);
-	optional_ptr<CatalogEntry> CreateTableFunction(CatalogTransaction transaction, CreateTableFunctionInfo &info);
-	optional_ptr<CatalogEntry> CreateCopyFunction(CatalogTransaction transaction, CreateCopyFunctionInfo &info);
-	optional_ptr<CatalogEntry> CreatePragmaFunction(CatalogTransaction transaction, CreatePragmaFunctionInfo &info);
-	optional_ptr<CatalogEntry> CreateCollation(CatalogTransaction transaction, CreateCollationInfo &info);
-	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
-	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info);
-	CatalogSet::EntryLookup LookupEntryDetailed(CatalogTransaction transaction, const EntryLookupInfo &lookup_info);
-	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info);
-	void DropEntry(ClientContext &context, DropInfo &info);
-	void Alter(CatalogTransaction transaction, AlterInfo &info);
+	                                       TableCatalogEntry &table) override;
+	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) override;
+	optional_ptr<CatalogEntry> CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) override;
+	optional_ptr<CatalogEntry> CreateView(CatalogTransaction transaction, CreateViewInfo &info) override;
+	optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info) override;
+	optional_ptr<CatalogEntry> CreateTableFunction(CatalogTransaction transaction,
+	                                               CreateTableFunctionInfo &info) override;
+	optional_ptr<CatalogEntry> CreateCopyFunction(CatalogTransaction transaction,
+	                                              CreateCopyFunctionInfo &info) override;
+	optional_ptr<CatalogEntry> CreatePragmaFunction(CatalogTransaction transaction,
+	                                                CreatePragmaFunctionInfo &info) override;
+	optional_ptr<CatalogEntry> CreateCollation(CatalogTransaction transaction, CreateCollationInfo &info) override;
+	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info) override;
+	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
+	CatalogSet::EntryLookup LookupEntryDetailed(CatalogTransaction transaction,
+	                                            const EntryLookupInfo &lookup_info) override;
+	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
+	void DropEntry(ClientContext &context, DropInfo &info) override;
+	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 
 private:
 	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry);
