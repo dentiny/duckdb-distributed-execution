@@ -10,6 +10,9 @@ namespace duckdb {
 
 namespace {
 
+// Success function return value.
+constexpr bool SUCCESS = true;
+
 // Global server instance and thread.
 unique_ptr<DistributedFlightServer> g_test_server;
 bool g_server_started = false;
@@ -20,8 +23,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	const std::lock_guard<std::mutex> lock(g_server_mutex);
 
 	if (g_server_started) {
-		auto result_data = FlatVector::GetData<string_t>(result);
-		result_data[0] = StringVector::AddString(result, "Server already running");
+		result.Reference(Value(SUCCESS));
 		return;
 	}
 
@@ -52,11 +54,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 		g_server_started = true;
-
-		auto result_data = FlatVector::GetData<string_t>(result);
-		result_data[0] = StringVector::AddString(result, "Local server started on port " + std::to_string(port));
-
-		// Note: Cleanup happens via detached thread or explicit duckherder_stop_local_server()
+		result.Reference(Value(SUCCESS));
 	} catch (const std::exception &ex) {
 		throw Exception(ExceptionType::IO, "Failed to start local server: " + string(ex.what()));
 	}
@@ -66,20 +64,18 @@ void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	const std::lock_guard<std::mutex> lock(g_server_mutex);
 
 	if (!g_server_started) {
-		auto result_data = FlatVector::GetData<string_t>(result);
-		result_data[0] = StringVector::AddString(result, "Server not running");
+		result.Reference(Value(SUCCESS));
 		return;
 	}
 
-	if (g_test_server) {
+	if (g_test_server != nullptr) {
 		g_test_server->Shutdown();
 	}
 
 	g_test_server.reset();
 	g_server_started = false;
 
-	auto result_data = FlatVector::GetData<string_t>(result);
-	result_data[0] = StringVector::AddString(result, "Local server stopped");
+	result.Reference(Value(SUCCESS));	
 }
 
 } // namespace
@@ -87,7 +83,7 @@ void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 ScalarFunction GetStartLocalServerFunction() {
 	auto start_func = ScalarFunction("duckherder_start_local_server",
 	                                 /*arguments*/ {LogicalType {LogicalTypeId::INTEGER}},
-	                                 /*return_type=*/LogicalType {LogicalTypeId::VARCHAR}, StartLocalServer);
+	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer);
 	start_func.varargs = LogicalType::ANY;
 	return start_func;
 }
@@ -95,7 +91,7 @@ ScalarFunction GetStartLocalServerFunction() {
 ScalarFunction GetStopLocalServerFunction() {
 	return ScalarFunction("duckherder_stop_local_server",
 	                      /*arguments*/ {},
-	                      /*return_type=*/LogicalType {LogicalTypeId::VARCHAR}, StopLocalServer);
+	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StopLocalServer);
 }
 
 } // namespace duckdb
