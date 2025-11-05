@@ -41,7 +41,7 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 
 #### Prerequisites
 
-1. Install VCPKG for dependency management:
+1. Install [VCPKG](https://duckdb.org/2024/03/22/dependency-management) for dependency management:
 ```bash
 git clone https://github.com/Microsoft/vcpkg.git
 ./vcpkg/bootstrap-vcpkg.sh
