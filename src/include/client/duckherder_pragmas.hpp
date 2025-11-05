@@ -20,7 +20,6 @@ public:
 private:
 	static void RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
 	static void UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
-	static void LoadExtension(ClientContext &context, const FunctionParameters &parameters);
 	static void LoadExtensionScalar(DataChunk &args, ExpressionState &state, Vector &result);
 };
 
