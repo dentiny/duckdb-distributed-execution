@@ -246,19 +246,9 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
                                                            distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
-	DUCKDB_LOG_DEBUG(db_instance, "Extension Load Request: " + req.extension_name());
-
-	if (!req.repository().empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, "Repository: " + req.repository());
-	}
-	if (!req.version().empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, "Version: " + req.version());
-	}
-
-	// Build the LOAD statement based on the request parameters
 	string sql = "LOAD " + req.extension_name();
 
-	// Handle INSTALL with repository and version
+	// Handle INSTALL with repository and version.
 	if (!req.repository().empty() || !req.version().empty()) {
 		sql = "INSTALL " + req.extension_name();
 		if (!req.repository().empty()) {
@@ -267,34 +257,32 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 		if (!req.version().empty()) {
 			sql += " VERSION '" + req.version() + "'";
 		}
-
-		DUCKDB_LOG_DEBUG(db_instance, "Executing: " + sql);
-
-		// Execute INSTALL first
-		auto install_result = conn->Query(sql);
-		if (install_result->HasError()) {
-			DUCKDB_LOG_DEBUG(db_instance, "INSTALL failed: " + install_result->GetError());
-			resp.set_success(false);
-			resp.set_error_message("Install failed: " + install_result->GetError());
-			return arrow::Status::OK();
-		}
-		DUCKDB_LOG_DEBUG(db_instance, "INSTALL successful");
-
-		// Then LOAD the extension
-		sql = "LOAD " + req.extension_name();
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, "Executing: " + sql);
-	auto result = conn->Query(sql);
-
-	if (result->HasError()) {
-		DUCKDB_LOG_DEBUG(db_instance, "LOAD failed: " + result->GetError());
+	// Execute INSTALL first.
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
+	auto install_result = conn->Query(sql);
+	if (install_result->HasError()) {
+		const string error_message =
+		    StringUtil::Format("Extension %s install failed %s", req.extension_name(), install_result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
 		resp.set_success(false);
-		resp.set_error_message(result->GetError());
+		resp.set_error_message(std::move(error_message));
 		return arrow::Status::OK();
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, "Extension '" + req.extension_name() + "' loaded successfully");
+	// Then LOAD the extension.
+	sql = "LOAD " + req.extension_name();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Load extension with %s", sql));
+	auto load_result = conn->Query(sql);
+	if (load_result->HasError()) {
+		const string error_message =
+		    StringUtil::Format("Extension %s load failed %s", req.extension_name(), load_result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		resp.set_success(false);
+		resp.set_error_message(std::move(error_message));
+		return arrow::Status::OK();
+	}
 
 	resp.set_success(true);
 	resp.mutable_load_extension();

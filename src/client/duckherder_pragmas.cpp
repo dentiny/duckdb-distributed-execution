@@ -159,7 +159,7 @@ namespace duckdb {
 		}
 
 		distributed::DistributedResponse response;
-		status = client.LoadExtension(extension_name_str, "", "", response);
+		status = client.LoadExtension(extension_name_str, /*repository=*/"", /*version=*/"", response);
 		if (!status.ok()) {
 			throw Exception(ExceptionType::CONNECTION, StringUtil::Format("Failed to load extension on server %s: %s",
 			                                                              extension_name_str, status.ToString()));
@@ -169,7 +169,7 @@ namespace duckdb {
 			                                                            extension_name_str, response.error_message()));
 		}
 
-		// Attempt to load extension on client side to keep compatibility.
+		// Attempt to load extension on client side to keep client/server compatibility.
 		try {
 			ExtensionHelper::LoadExternalExtension(context, extension_name_str);
 		} catch (std::exception &ex) {
