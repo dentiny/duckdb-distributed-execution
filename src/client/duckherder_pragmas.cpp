@@ -133,20 +133,14 @@ namespace duckdb {
 		    auto extension_name_str = extension_name.GetString();
 		    auto &context = state.GetContext();
 		    
-		    // Step 1: Load extension on CLIENT side by executing LOAD statement
+		    // Step 1: Load extension on CLIENT side using ExtensionHelper
 		    // Tolerate failures (e.g., extension already loaded)
 		    try {
-			    string client_sql = "LOAD " + extension_name_str;
-			    auto client_result = context.Query(client_sql, false);
-			    if (client_result->HasError()) {
-				    // Log but don't fail - extension might already be loaded
-				    auto &db = DatabaseInstance::GetDatabase(context);
-				    DUCKDB_LOG_DEBUG(db, "Client LOAD warning: " + client_result->GetError());
-			    }
+			    ExtensionHelper::LoadExternalExtension(context, extension_name_str);
 		    } catch (std::exception &ex) {
-			    // Log but continue - we'll still try to load on server
+			    // Log but continue - extension might already be loaded, we'll still try to load on server
 			    auto &db = DatabaseInstance::GetDatabase(context);
-			    DUCKDB_LOG_DEBUG(db, StringUtil::Format("Client LOAD exception: %s", ex.what()));
+			    DUCKDB_LOG_DEBUG(db, StringUtil::Format("Client LOAD note: %s (continuing...)", ex.what()));
 		    }
 		    
 		    // Step 2: Load extension on SERVER side
