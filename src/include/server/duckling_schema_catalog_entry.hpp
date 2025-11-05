@@ -71,10 +71,9 @@ private:
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
 	Catalog &duckling_catalog_ref;
-	
+
 	std::mutex mu;
 	unordered_map<string, unique_ptr<CatalogEntry>> catalog_entries;
 };
 
 } // namespace duckdb
-

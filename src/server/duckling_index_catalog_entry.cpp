@@ -5,7 +5,6 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckling_catalog.hpp"
-#include <iostream>
 
 namespace duckdb {
 
@@ -20,8 +19,6 @@ DucklingIndexCatalogEntry::DucklingIndexCatalogEntry(Catalog &duckling_catalog_p
     : DuckIndexEntry(duckling_catalog_p, schema, info,
                      make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckling_catalog_p), info.index_name)),
       duckling_catalog_ref(duckling_catalog_p), schema_name(schema.name), table_name(info.table) {
-	std::cerr << "[DUCKLING INDEX] DucklingIndexCatalogEntry created for index: " 
-	          << info.index_name << " on table: " << info.table << std::endl;
 }
 
 DucklingIndexCatalogEntry::~DucklingIndexCatalogEntry() {
@@ -50,4 +47,3 @@ unique_ptr<CatalogEntry> DucklingIndexCatalogEntry::Copy(ClientContext &context)
 }
 
 } // namespace duckdb
-

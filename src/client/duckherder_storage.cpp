@@ -42,7 +42,7 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	return make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, std::move(server_db_path));
 }
 
-}  // namespace
+} // namespace
 
 unique_ptr<TransactionManager> DuckherderCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info,
                                                                   AttachedDatabase &db, Catalog &catalog) {

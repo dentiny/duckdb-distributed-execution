@@ -14,56 +14,35 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
-#include <iostream>
 
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
-	std::cerr << "\n========================================" << std::endl;
-	std::cerr << "[SERVER INIT] Starting server initialization" << std::endl;
-	std::cerr << "========================================" << std::endl;
-
 	// Register the Duckling storage extension
-	std::cerr << "[SERVER INIT] Registering Duckling storage extension..." << std::endl;
 	DBConfig config;
 	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
-	std::cerr << "[SERVER INIT] DuckDB instance created" << std::endl;
-	
+
 	auto &db_instance = *db->instance.get();
-	
+
 	// Attach duckling storage extension
-	std::cerr << "[SERVER INIT] Attaching Duckling catalog..." << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "Attaching Duckling storage extension");
 	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
 	if (result->HasError()) {
-		std::cerr << "[SERVER INIT] ERROR attaching: " << result->GetError() << std::endl;
-		DUCKDB_LOG_DEBUG(db_instance,
-		                 StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
 	} else {
-		std::cerr << "[SERVER INIT] Duckling attached successfully" << std::endl;
-		DUCKDB_LOG_DEBUG(db_instance, "Duckling attached");
+		DUCKDB_LOG_DEBUG(db_instance, "Duckling attached successfully");
 
 		// Set duckling as the default database
-		std::cerr << "[SERVER INIT] Setting duckling as default catalog..." << std::endl;
 		auto use_result = conn->Query("USE duckling;");
 		if (use_result->HasError()) {
-			std::cerr << "[SERVER INIT] ERROR: " << use_result->GetError() << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
 		} else {
-			std::cerr << "[SERVER INIT] SUCCESS: Duckling is default catalog" << std::endl;
-			
-			// Verify it worked
-			auto check_db = conn->Query("SELECT current_database()");
-			if (!check_db->HasError() && check_db->Fetch()) {
-				std::cerr << "[SERVER INIT] Verified current_database(): " << check_db->GetValue(0, 0).ToString() << std::endl;
-			}
+			DUCKDB_LOG_DEBUG(db_instance, "Duckling set as default catalog");
 		}
 	}
-
-	std::cerr << "========================================" << std::endl;
-	std::cerr << "[SERVER INIT] Initialization complete\n" << std::endl;
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -175,8 +154,6 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 		table_name = descriptor.path[0];
 	}
 
-	std::cerr << "[SERVER] DoPut called for table: " << table_name << std::endl;
-
 	// Read all record batches.
 	ARROW_ASSIGN_OR_RAISE(auto schema, reader->GetSchema());
 	std::shared_ptr<arrow::RecordBatch> batch;
@@ -191,8 +168,6 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 		}
 		batch = next.data;
 
-		std::cerr << "[SERVER] DoPut: Processing batch for table: " << table_name << std::endl;
-		// Process each batch
 		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, resp));
 	}
 
@@ -206,17 +181,14 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
                                                         distributed::DistributedResponse &resp) {
-	std::cerr << "[SERVER] HandleExecuteSQL: " << req.sql() << std::endl;
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
-		std::cerr << "[SERVER] HandleExecuteSQL ERROR: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	std::cerr << "[SERVER] HandleExecuteSQL SUCCESS" << std::endl;
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_sql();
 	exec_resp->set_rows_affected(0);
@@ -226,19 +198,16 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
-	std::cerr << "[SERVER] HandleCreateTable: " << req.sql() << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateTable: %s", req.sql()));
-	
+
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
-		std::cerr << "[SERVER] HandleCreateTable ERROR: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	std::cerr << "[SERVER] HandleCreateTable SUCCESS" << std::endl;
 	resp.set_success(true);
 	resp.mutable_create_table();
 
@@ -248,7 +217,6 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTableRequest &req,
                                                        distributed::DistributedResponse &resp) {
 	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
-	std::cerr << "[SERVER] HandleDropTable: " << sql << std::endl;
 	auto result = conn->Query(sql);
 
 	if (result->HasError()) {
@@ -265,19 +233,16 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
-	std::cerr << "[SERVER] HandleCreateIndex: " << req.sql() << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateIndex: %s", req.sql()));
-	
+
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
-		std::cerr << "[SERVER] HandleCreateIndex ERROR: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	std::cerr << "[SERVER] HandleCreateIndex SUCCESS" << std::endl;
 	resp.set_success(true);
 	resp.mutable_create_index();
 
@@ -287,7 +252,6 @@ arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::Crea
 arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIndexRequest &req,
                                                        distributed::DistributedResponse &resp) {
 	auto sql = "DROP INDEX IF EXISTS " + req.index_name();
-	std::cerr << "[SERVER] HandleDropIndex: " << sql << std::endl;
 	auto result = conn->Query(sql);
 
 	if (result->HasError()) {
@@ -364,10 +328,8 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 
 arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
                                                          distributed::DistributedResponse &resp) {
-	string sql = StringUtil::Format(
-	    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'",
-	    req.table_name());
-	std::cerr << "[SERVER] HandleTableExists: Checking for table " << req.table_name() << std::endl;
+	string sql =
+	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
 
 	auto result = conn->Query(sql);
 
@@ -390,9 +352,8 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
-	string sql = StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), 
-	                                req.limit(), req.offset());
-	std::cerr << "[SERVER] HandleScanTable: " << sql << std::endl;
+	string sql =
+	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
 	auto result = conn->Query(sql);
 
 	if (result->HasError()) {
@@ -411,8 +372,6 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
                                                         distributed::DistributedResponse &resp) {
 	// TODO(hjiang): Current implementation is pretty insufficient, which directly executes insertion statement.
 	// Better to call native duckdb APIs for ingestion.
-
-	std::cerr << "[SERVER] HandleInsertData: Inserting into " << table_name << std::endl;
 
 	// Build INSERT statement.
 	std::string insert_sql = "INSERT INTO " + table_name + " VALUES ";
@@ -439,16 +398,13 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 		insert_sql += ")";
 	}
 
-	std::cerr << "[SERVER] HandleInsertData: Executing SQL: " << insert_sql << std::endl;
 	auto result = conn->Query(insert_sql);
 	if (result->HasError()) {
-		std::cerr << "[SERVER] HandleInsertData ERROR: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	std::cerr << "[SERVER] HandleInsertData SUCCESS" << std::endl;
 	resp.set_success(true);
 	return arrow::Status::OK();
 }

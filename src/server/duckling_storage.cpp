@@ -24,7 +24,7 @@ unique_ptr<TransactionManager> DucklingCreateTransactionManager(optional_ptr<Sto
 	return make_uniq<DucklingTransactionManager>(db);
 }
 
-}  // namespace
+} // namespace
 
 DucklingStorageExtension::DucklingStorageExtension() {
 	attach = DucklingAttach;

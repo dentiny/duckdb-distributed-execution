@@ -12,8 +12,7 @@ class DatabaseInstance;
 class DucklingTableCatalogEntry : public DuckTableEntry {
 public:
 	DucklingTableCatalogEntry(Catalog &duckling_catalog_p, DatabaseInstance &db_instance_p,
-	                          DuckTableEntry *duck_table_entry_p,
-	                          unique_ptr<BoundCreateTableInfo> create_table_info_p);
+	                          DuckTableEntry *duck_table_entry_p, unique_ptr<BoundCreateTableInfo> create_table_info_p);
 	~DucklingTableCatalogEntry() override = default;
 
 	//===--------------------------------------------------------------------===//
@@ -59,4 +58,3 @@ private:
 };
 
 } // namespace duckdb
-

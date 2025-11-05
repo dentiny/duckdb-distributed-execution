@@ -13,14 +13,12 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "duckling_schema_catalog_entry.hpp"
-#include <iostream>
 
 namespace duckdb {
 
 DucklingCatalog::DucklingCatalog(AttachedDatabase &db)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()) {
-	std::cerr << "[DUCKLING CATALOG] DucklingCatalog initialized for server-side storage" << std::endl;
-	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog initialized for server-side storage");
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog initialized");
 }
 
 DucklingCatalog::~DucklingCatalog() = default;
@@ -38,16 +36,12 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
                                                                const EntryLookupInfo &schema_lookup,
                                                                OnEntryNotFound if_not_found) {
 	auto entry_lookup_str = schema_lookup.GetEntryName();
-	std::cerr << "[DUCKLING CATALOG] LookupSchema: " << entry_lookup_str << std::endl;
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::LookupSchema %s", entry_lookup_str));
-	
+
 	std::lock_guard<std::mutex> lck(mu);
 	auto iter = schema_catalog_entries.find(entry_lookup_str);
 	if (iter == schema_catalog_entries.end()) {
-		std::cerr << "[DUCKLING CATALOG] LookupSchema: Cache miss, creating new DucklingSchemaCatalogEntry" << std::endl;
 		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
 		if (!catalog_entry) {
-			std::cerr << "[DUCKLING CATALOG] LookupSchema: Schema not found" << std::endl;
 			return catalog_entry;
 		}
 
@@ -61,8 +55,6 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
 		auto duckling_schema_entry = make_uniq<DucklingSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
 		                                                                   std::move(create_schema_info));
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(duckling_schema_entry)).first;
-	} else {
-		std::cerr << "[DUCKLING CATALOG] LookupSchema: Cache hit" << std::endl;
 	}
 
 	return iter->second.get();
@@ -75,14 +67,11 @@ void DucklingCatalog::ScanSchemas(ClientContext &context, std::function<void(Sch
 
 PhysicalOperator &DucklingCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                      LogicalCreateTable &op, PhysicalOperator &plan) {
-	std::cerr << "[DUCKLING CATALOG] PlanCreateTableAs called" << std::endl;
-	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanCreateTableAs");
 	return duckdb_catalog->PlanCreateTableAs(context, planner, op, plan);
 }
 
 PhysicalOperator &DucklingCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
                                               optional_ptr<PhysicalOperator> plan) {
-	std::cerr << "[DUCKLING CATALOG] PlanInsert called" << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanInsert");
 
 	// For now, just pass through to DuckCatalog
@@ -105,8 +94,6 @@ PhysicalOperator &DucklingCatalog::PlanUpdate(ClientContext &context, PhysicalPl
 unique_ptr<LogicalOperator> DucklingCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
                                                              TableCatalogEntry &table,
                                                              unique_ptr<LogicalOperator> plan) {
-	std::cerr << "[DUCKLING CATALOG] BindCreateIndex called on table: " << table.name << std::endl;
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::BindCreateIndex on table: %s", table.name));
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }
 

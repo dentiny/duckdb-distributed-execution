@@ -8,7 +8,6 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckling_catalog.hpp"
-#include <iostream>
 
 namespace duckdb {
 
@@ -19,8 +18,6 @@ DucklingTableCatalogEntry::DucklingTableCatalogEntry(Catalog &duckling_catalog_p
                      duck_table_entry_p->GetStorage().shared_from_this()),
       db_instance(db_instance_p), bound_create_table_info(std::move(bound_create_table_info_p)),
       duckling_catalog_ref(duckling_catalog_p) {
-	std::cerr << "[DUCKLING TABLE] DucklingTableCatalogEntry created for table: " 
-	          << duck_table_entry_p->name << std::endl;
 }
 
 // Simple pass-through implementations - no-op wrapper for now
@@ -89,7 +86,6 @@ unique_ptr<BaseStatistics> DucklingTableCatalogEntry::GetStatistics(ClientContex
 }
 
 TableFunction DucklingTableCatalogEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
-	std::cerr << "[DUCKLING TABLE] GetScanFunction called for table: " << name << std::endl;
 	return DuckTableEntry::GetScanFunction(context, bind_data);
 }
 
@@ -117,4 +113,3 @@ vector<column_t> DucklingTableCatalogEntry::GetRowIdColumns() const {
 }
 
 } // namespace duckdb
-
