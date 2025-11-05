@@ -283,11 +283,10 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
                                                            distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
-	string sql = "LOAD " + req.extension_name();
 
-	// Handle INSTALL with repository and version.
+	// Execute INSTALL first.
+	string sql = "INSTALL " + req.extension_name();
 	if (!req.repository().empty() || !req.version().empty()) {
-		sql = "INSTALL " + req.extension_name();
 		if (!req.repository().empty()) {
 			sql += " FROM '" + req.repository() + "'";
 		}
@@ -295,8 +294,6 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 			sql += " VERSION '" + req.version() + "'";
 		}
 	}
-
-	// Execute INSTALL first.
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
 	auto install_result = conn->Query(sql);
 	if (install_result->HasError()) {
