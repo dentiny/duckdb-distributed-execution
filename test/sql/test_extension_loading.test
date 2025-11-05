@@ -7,31 +7,8 @@ require duckherder
 statement ok
 SELECT duckherder_start_local_server(8815);
 
+statement ok
 ATTACH DATABASE '' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
 
-USE dh;
-
--- Step 4: Check which extensions are currently loaded (before LOAD)
-SELECT extension_name, loaded, installed 
-FROM duckdb_extensions() 
-WHERE extension_name = 'httpfs';
-
--- Step 6: Load httpfs extension on SERVER using function
+statement ok
 SELECT duckherder_load_extension('httpfs');
-
--- Step 7: Verify httpfs is loaded on client
-SELECT extension_name, loaded, installed 
-FROM duckdb_extensions() 
-WHERE extension_name = 'httpfs';
-
--- Step 8: Test with a remote table
-CREATE TABLE test_remote (id INTEGER, name VARCHAR);
-INSERT INTO test_remote VALUES (1, 'test');
-SELECT * FROM test_remote;
-
--- Step 9: Clean up
-DROP TABLE test_remote;
-
--- Success message
-SELECT 'All tests passed! Extension loading synchronization works.' as status;
-

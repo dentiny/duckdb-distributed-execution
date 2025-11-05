@@ -45,10 +45,8 @@ set(CLIENT_SOURCES
     src/client/duckherder_transaction.cpp
     src/client/duckherder_transaction_manager.cpp
     src/client/entry_lookup_info_hash_utils.cpp
-    src/client/logical_distributed_load.cpp
     src/client/logical_remote_alter_table.cpp
-    src/client/logical_remote_create_index.cpp
-    src/client/physical_distributed_load.cpp)
+    src/client/logical_remote_create_index.cpp)
 
 set(SERVER_SOURCES src/server/distributed_flight_server.cpp
                    src/server/distributed_server_function.cpp)
