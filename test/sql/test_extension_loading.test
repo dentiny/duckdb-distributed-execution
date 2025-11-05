@@ -13,6 +13,7 @@ ATTACH DATABASE '' AS dh (TYPE duckherder, server_host 'localhost', server_port 
 query III
 SELECT extension_name, loaded, installed  FROM duckdb_extensions() WHERE extension_name = 'httpfs';
 ----
+httpfs	false	true
 
 statement ok
 SELECT duckherder_load_extension('httpfs');
@@ -20,4 +21,4 @@ SELECT duckherder_load_extension('httpfs');
 query III
 SELECT extension_name, loaded, installed  FROM duckdb_extensions() WHERE extension_name = 'httpfs';
 ----
-httpfs	false	true
+httpfs	true	true

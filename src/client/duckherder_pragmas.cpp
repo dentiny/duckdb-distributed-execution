@@ -132,18 +132,9 @@ namespace duckdb {
 	    [&](string_t extension_name) {
 		    auto extension_name_str = extension_name.GetString();
 		    auto &context = state.GetContext();
-		    
-		    // Step 1: Load extension on CLIENT side using ExtensionHelper
-		    // Tolerate failures (e.g., extension already loaded)
-		    try {
-			    ExtensionHelper::LoadExternalExtension(context, extension_name_str);
-		    } catch (std::exception &ex) {
-			    // Log but continue - extension might already be loaded, we'll still try to load on server
-			    auto &db = DatabaseInstance::GetDatabase(context);
-			    DUCKDB_LOG_DEBUG(db, StringUtil::Format("Client LOAD note: %s (continuing...)", ex.what()));
-		    }
-		    
-		    // Step 2: Load extension on SERVER side
+
+			// Load extension on server side.
+			//
 		    // Get the duckherder catalog - assuming it's attached as "dh".
 		    auto &db_manager = DatabaseManager::Get(context);
 		    auto dh_db = db_manager.GetDatabase(context, "dh");
@@ -174,13 +165,21 @@ namespace duckdb {
 		    status = client.LoadExtension(extension_name_str, "", "", response);
 		    if (!status.ok()) {
 			    throw Exception(ExceptionType::CONNECTION, 
-			                    StringUtil::Format("Failed to load extension on server: %s", status.ToString()));
+			                    StringUtil::Format("Failed to load extension on server %s: %s", extension_name_str, status.ToString()));
 		    }
 		    if (!response.success()) {
 			    throw Exception(ExceptionType::EXECUTOR, 
-			                    StringUtil::Format("Server failed to load extension: %s", response.error_message()));
+			                    StringUtil::Format("Server failed to load extension %s: %s", extension_name_str, response.error_message()));
 		    }
-
+		    
+		    // Attempt to load extension on client side to keep compatibility.
+		    try {
+			    ExtensionHelper::LoadExternalExtension(context, extension_name_str);
+		    } catch (std::exception &ex) {
+			    auto &db = DatabaseInstance::GetDatabase(context);
+			    DUCKDB_LOG_DEBUG(db, StringUtil::Format("Failed to load extension %s because %s", extension_name_str, ex.what()));
+		    }
+		    
 		    return true;
 	    });
 }
