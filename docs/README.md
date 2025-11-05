@@ -1,6 +1,6 @@
 # Duckherder - DuckDB Remote Execution Extension
 
-Duckherder is a DuckDB extension that enables remote query execution on server using [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) for data transfer. It allows you to seamlessly work with remote tables as if they were local, while maintaining DuckDB's familiar SQL interface.
+Duckherder is a DuckDB extension build upon [storage extension](https://github.com/duckdb/duckdb/pull/6066), which enables remote query execution on server using [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) for data transfer. It allows you to seamlessly work with remote tables as if they were local, while maintaining DuckDB's familiar SQL interface.
 
 ## Overview
 
