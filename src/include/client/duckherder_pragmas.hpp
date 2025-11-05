@@ -20,7 +20,7 @@ public:
 private:
 	static void RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
 	static void UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
-	static void LoadExtensionScalar(DataChunk &args, ExpressionState &state, Vector &result);
+	static void LoadExtension(DataChunk &args, ExpressionState &state, Vector &result);
 };
 
 } // namespace duckdb

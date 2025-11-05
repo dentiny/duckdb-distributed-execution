@@ -30,7 +30,7 @@ namespace duckdb {
 	// Register scalar function for loading extensions on server.
 	// Takes 1 argument: extension_name
 	ScalarFunction load_extension_func("duckherder_load_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
-	                                   LoadExtensionScalar);
+	                                   LoadExtension);
 	loader.RegisterFunction(load_extension_func);
 }
 
@@ -81,7 +81,7 @@ namespace duckdb {
 	dh_catalog_ptr->UnregisterRemoteTable(table_name);
 }
 
-/*static*/ void DuckherderPragmas::LoadExtensionScalar(DataChunk &args, ExpressionState &state, Vector &result) {
+/*static*/ void DuckherderPragmas::LoadExtension(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &extension_name_vector = args.data[0];
 	UnaryExecutor::Execute<string_t, bool>(extension_name_vector, result, args.size(), [&](string_t extension_name) {
 		auto extension_name_str = extension_name.GetString();
