@@ -46,6 +46,7 @@ public:
 	//===--------------------------------------------------------------------===//
 	// SchemaCatalogEntry-specific functions (no-op delegation for now)
 	//===--------------------------------------------------------------------===//
+	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback);
 	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback);
 	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,

@@ -15,6 +15,7 @@
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckling_catalog.hpp"
 #include "duckling_table_catalog_entry.hpp"
@@ -238,6 +239,15 @@ void DucklingSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &inf
 	
 	// Simple no-op pass-through - delegate to underlying schema
 	schema_catalog_entry->DropEntry(context, info);
+}
+
+void DucklingSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	std::cerr << "[DUCKLING SCHEMA] Alter: " << info.name << " (type: " << static_cast<int>(info.type) << ")" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingSchemaCatalogEntry::Alter - type=%d name=%s",
+	                                                 static_cast<int>(info.type), info.name));
+	
+	// Simple no-op pass-through - delegate to underlying schema
+	schema_catalog_entry->Alter(std::move(transaction), info);
 }
 
 } // namespace duckdb
