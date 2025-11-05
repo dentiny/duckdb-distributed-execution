@@ -2,7 +2,15 @@
 
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/parser/parsed_data/create_collation_info.hpp"
+#include "duckdb/parser/parsed_data/create_copy_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_type_info.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckling_catalog.hpp"
 #include <iostream>
 
@@ -15,7 +23,7 @@ DucklingSchemaCatalogEntry::DucklingSchemaCatalogEntry(Catalog &duckling_catalog
       create_schema_info(std::move(create_schema_info_p)), schema_catalog_entry(schema_catalog_entry_p),
       duckling_catalog_ref(duckling_catalog_p) {
 	std::cerr << "[DUCKLING SCHEMA] DucklingSchemaCatalogEntry created for schema: " 
-	          << create_schema_info_p->schema << std::endl;
+	          << schema_catalog_entry_p->name << std::endl;
 }
 
 unique_ptr<CatalogEntry> DucklingSchemaCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
@@ -86,6 +94,85 @@ const SchemaCatalogEntry &DucklingSchemaCatalogEntry::ParentSchema() const {
 void DucklingSchemaCatalogEntry::Verify(Catalog &catalog) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::Verify");
 	schema_catalog_entry->Verify(catalog);
+}
+
+//===--------------------------------------------------------------------===//
+// SchemaCatalogEntry-specific functions (no-op pass-through for now)
+//===--------------------------------------------------------------------===//
+
+void DucklingSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type,
+                                      const std::function<void(CatalogEntry &)> &callback) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::Scan (with ClientContext)");
+	schema_catalog_entry->Scan(context, type, callback);
+}
+
+void DucklingSchemaCatalogEntry::Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::Scan");
+	schema_catalog_entry->Scan(type, callback);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
+                                                                   CreateIndexInfo &info, TableCatalogEntry &table) {
+	std::cerr << "[DUCKLING SCHEMA] CreateIndex: " << info.index_name << " on table: " << info.table << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateIndex");
+	// Simple pass-through - no remote logic for now
+	return schema_catalog_entry->CreateIndex(std::move(transaction), info, table);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateFunction(CatalogTransaction transaction,
+                                                                      CreateFunctionInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateFunction");
+	return schema_catalog_entry->CreateFunction(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateTable(CatalogTransaction transaction,
+                                                                   BoundCreateTableInfo &info) {
+	std::cerr << "[DUCKLING SCHEMA] CreateTable: " << info.Base().table << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateTable");
+	// Simple pass-through - no remote logic for now
+	return schema_catalog_entry->CreateTable(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateView(CatalogTransaction transaction,
+                                                                  CreateViewInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateView");
+	return schema_catalog_entry->CreateView(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateSequence(CatalogTransaction transaction,
+                                                                      CreateSequenceInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateSequence");
+	return schema_catalog_entry->CreateSequence(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateTableFunction(CatalogTransaction transaction,
+                                                                           CreateTableFunctionInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateTableFunction");
+	return schema_catalog_entry->CreateTableFunction(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateCopyFunction(CatalogTransaction transaction,
+                                                                          CreateCopyFunctionInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateCopyFunction");
+	return schema_catalog_entry->CreateCopyFunction(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreatePragmaFunction(CatalogTransaction transaction,
+                                                                            CreatePragmaFunctionInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreatePragmaFunction");
+	return schema_catalog_entry->CreatePragmaFunction(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateCollation(CatalogTransaction transaction,
+                                                                       CreateCollationInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateCollation");
+	return schema_catalog_entry->CreateCollation(std::move(transaction), info);
+}
+
+optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateType(CatalogTransaction transaction,
+                                                                  CreateTypeInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateType");
+	return schema_catalog_entry->CreateType(std::move(transaction), info);
 }
 
 } // namespace duckdb

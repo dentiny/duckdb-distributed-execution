@@ -39,6 +39,23 @@ public:
 
 	void Verify(Catalog &catalog) override;
 
+	//===--------------------------------------------------------------------===//
+	// SchemaCatalogEntry-specific functions (no-op delegation for now)
+	//===--------------------------------------------------------------------===//
+	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback);
+	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback);
+	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+	                                       TableCatalogEntry &table);
+	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info);
+	optional_ptr<CatalogEntry> CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info);
+	optional_ptr<CatalogEntry> CreateView(CatalogTransaction transaction, CreateViewInfo &info);
+	optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info);
+	optional_ptr<CatalogEntry> CreateTableFunction(CatalogTransaction transaction, CreateTableFunctionInfo &info);
+	optional_ptr<CatalogEntry> CreateCopyFunction(CatalogTransaction transaction, CreateCopyFunctionInfo &info);
+	optional_ptr<CatalogEntry> CreatePragmaFunction(CatalogTransaction transaction, CreatePragmaFunctionInfo &info);
+	optional_ptr<CatalogEntry> CreateCollation(CatalogTransaction transaction, CreateCollationInfo &info);
+	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
+
 private:
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;

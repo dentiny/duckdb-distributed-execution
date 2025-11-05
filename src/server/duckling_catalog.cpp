@@ -12,6 +12,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
+#include "duckling_schema_catalog_entry.hpp"
 #include <iostream>
 
 namespace duckdb {
@@ -37,11 +38,30 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
                                                                const EntryLookupInfo &schema_lookup,
                                                                OnEntryNotFound if_not_found) {
 	auto entry_lookup_str = schema_lookup.GetEntryName();
+	std::cerr << "[DUCKLING CATALOG] LookupSchema: " << entry_lookup_str << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::LookupSchema %s", entry_lookup_str));
+	
+	std::lock_guard<std::mutex> lck(mu);
+	auto iter = schema_catalog_entries.find(entry_lookup_str);
+	if (iter == schema_catalog_entries.end()) {
+		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
+		if (!catalog_entry) {
+			return catalog_entry;
+		}
 
-	// For now, just pass through to DuckCatalog
-	// In the future, this could be extended for fleet management, monitoring, etc.
-	return duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
+		auto create_schema_info = make_uniq<CreateSchemaInfo>();
+		create_schema_info->schema = catalog_entry->name;
+		create_schema_info->comment = catalog_entry->comment;
+		create_schema_info->tags = catalog_entry->tags;
+
+		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
+		D_ASSERT(schema_catalog_entry != nullptr);
+		auto duckling_schema_entry = make_uniq<DucklingSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
+		                                                                   std::move(create_schema_info));
+		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(duckling_schema_entry)).first;
+	}
+
+	return iter->second.get();
 }
 
 void DucklingCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
