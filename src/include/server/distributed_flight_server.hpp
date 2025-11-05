@@ -6,6 +6,7 @@
 #include "duckdb/common/unique_ptr.hpp"
 
 #include <arrow/flight/server.h>
+#include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
 #include <memory>
 

@@ -8,6 +8,7 @@
 #include "duckdb/main/query_result.hpp"
 
 #include <arrow/flight/client.h>
+#include <arrow/flight/types.h>
 #include <arrow/record_batch.h>
 #include <memory>
 
