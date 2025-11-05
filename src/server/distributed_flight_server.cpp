@@ -247,17 +247,17 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
                                                            distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
 	DUCKDB_LOG_DEBUG(db_instance, "Extension Load Request: " + req.extension_name());
-	
+
 	if (!req.repository().empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "Repository: " + req.repository());
 	}
 	if (!req.version().empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "Version: " + req.version());
 	}
-	
+
 	// Build the LOAD statement based on the request parameters
 	string sql = "LOAD " + req.extension_name();
-	
+
 	// Handle INSTALL with repository and version
 	if (!req.repository().empty() || !req.version().empty()) {
 		sql = "INSTALL " + req.extension_name();
@@ -267,9 +267,9 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 		if (!req.version().empty()) {
 			sql += " VERSION '" + req.version() + "'";
 		}
-		
+
 		DUCKDB_LOG_DEBUG(db_instance, "Executing: " + sql);
-		
+
 		// Execute INSTALL first
 		auto install_result = conn->Query(sql);
 		if (install_result->HasError()) {
@@ -279,7 +279,7 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 			return arrow::Status::OK();
 		}
 		DUCKDB_LOG_DEBUG(db_instance, "INSTALL successful");
-		
+
 		// Then LOAD the extension
 		sql = "LOAD " + req.extension_name();
 	}
@@ -295,7 +295,7 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 	}
 
 	DUCKDB_LOG_DEBUG(db_instance, "Extension '" + req.extension_name() + "' loaded successfully");
-	
+
 	resp.set_success(true);
 	resp.mutable_load_extension();
 	return arrow::Status::OK();
