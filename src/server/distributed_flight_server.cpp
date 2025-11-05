@@ -18,31 +18,31 @@
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
-	// Register the Duckling storage extension
+	// Register the Duckling storage extension.
 	DBConfig config;
 	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
-
 	auto &db_instance = *db->instance.get();
 
-	// Attach duckling storage extension
+	// Attach duckling storage extension.
 	DUCKDB_LOG_DEBUG(db_instance, "Attaching Duckling storage extension");
 	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
 	if (result->HasError()) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
-	} else {
-		DUCKDB_LOG_DEBUG(db_instance, "Duckling attached successfully");
-
-		// Set duckling as the default database
-		auto use_result = conn->Query("USE duckling;");
-		if (use_result->HasError()) {
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
-		} else {
-			DUCKDB_LOG_DEBUG(db_instance, "Duckling set as default catalog");
-		}
+		auto error_message = StringUtil::Format("Failed to attach Duckling: %s", result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		throw InternalException(error_message);
 	}
+
+	// Set duckling as the default database.
+	auto use_result = conn->Query("USE duckling;");
+	if (use_result->HasError()) {
+		auto error_message = StringUtil::Format("Failed to USE duckling: %s", use_result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		throw InternalException(error_message);
+	}
+	DUCKDB_LOG_DEBUG(db_instance, "Duckling attach and set as default catalog");
 }
 
 arrow::Status DistributedFlightServer::Start() {

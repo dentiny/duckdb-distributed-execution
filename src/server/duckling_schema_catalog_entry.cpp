@@ -112,10 +112,6 @@ void DucklingSchemaCatalogEntry::Verify(Catalog &catalog) {
 	schema_catalog_entry->Verify(catalog);
 }
 
-//===--------------------------------------------------------------------===//
-// SchemaCatalogEntry-specific functions (no-op pass-through for now)
-//===--------------------------------------------------------------------===//
-
 void DucklingSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type,
                                       const std::function<void(CatalogEntry &)> &callback) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::Scan (with ClientContext)");
@@ -130,7 +126,6 @@ void DucklingSchemaCatalogEntry::Scan(CatalogType type, const std::function<void
 optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
                                                                    CreateIndexInfo &info, TableCatalogEntry &table) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateIndex");
-	// Simple pass-through - no remote logic for now
 	return schema_catalog_entry->CreateIndex(std::move(transaction), info, table);
 }
 
@@ -143,7 +138,6 @@ optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateFunction(CatalogTra
 optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateTable(CatalogTransaction transaction,
                                                                    BoundCreateTableInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingSchemaCatalogEntry::CreateTable");
-	// Simple pass-through - no remote logic for now
 	return schema_catalog_entry->CreateTable(std::move(transaction), info);
 }
 
@@ -189,34 +183,28 @@ optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::CreateType(CatalogTransac
 	return schema_catalog_entry->CreateType(std::move(transaction), info);
 }
 
+// TODO(hjiang): Implement table catalog entry cache.
 CatalogEntry *DucklingSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLock(string key,
                                                                                 CatalogEntry *catalog_entry) {
-	// Not wrapping for now - just pass through
-	// Future: can wrap in DucklingTableCatalogEntry for monitoring
 	return catalog_entry;
 }
 
+// TODO(hjiang): Implement index catalog entry cache.
 CatalogEntry *DucklingSchemaCatalogEntry::WrapAndCacheIndexCatalogEntryWithLock(string key,
                                                                                 CatalogEntry *catalog_entry) {
-	// Not wrapping for now - just pass through
-	// Future: can wrap in DucklingIndexCatalogEntry for monitoring
 	return catalog_entry;
 }
 
 optional_ptr<CatalogEntry> DucklingSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
                                                                    const EntryLookupInfo &lookup_info) {
-	// Simple pass-through without wrapping/caching for now
-	// This avoids lifecycle issues with drop entry
 	return schema_catalog_entry->LookupEntry(std::move(transaction), lookup_info);
 }
 
 void DucklingSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
-	// Simple no-op pass-through - delegate to underlying schema
 	schema_catalog_entry->DropEntry(context, info);
 }
 
 void DucklingSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	// Simple no-op pass-through - delegate to underlying schema
 	schema_catalog_entry->Alter(std::move(transaction), info);
 }
 

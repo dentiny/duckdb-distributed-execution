@@ -1,3 +1,6 @@
+// Implementation note: most of the functions are delegated to parent class DuckTableEntry instead of taking a
+// DuckTableEntry* entry. Because alter table would invalidate the pointer to the entry.
+
 #include "duckling_table_catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog_transaction.hpp"
@@ -20,7 +23,6 @@ DucklingTableCatalogEntry::DucklingTableCatalogEntry(Catalog &duckling_catalog_p
       duckling_catalog_ref(duckling_catalog_p) {
 }
 
-// Simple pass-through implementations - no-op wrapper for now
 unique_ptr<CatalogEntry> DucklingTableCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	return DuckTableEntry::AlterEntry(context, info);
 }

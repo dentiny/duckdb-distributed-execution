@@ -9,7 +9,7 @@
 namespace duckdb {
 
 /*static*/ shared_ptr<DataTableInfo> DucklingIndexCatalogEntry::GetDummyDataTableInfo(Catalog &catalog) {
-	// Create a dummy DataTableInfo for index operations
+	// Create a dummy DataTableInfo for index operations.
 	auto &db = catalog.GetAttached();
 	return make_shared_ptr<DataTableInfo>(db, /*table_io_manager_p=*/nullptr, "duckling_schema", "duckling_table");
 }
@@ -33,12 +33,10 @@ string DucklingIndexCatalogEntry::GetTableName() const {
 }
 
 void DucklingIndexCatalogEntry::Rollback(CatalogEntry &prev_entry) {
-	// No-op for now - just delegate to base
 	DuckIndexEntry::Rollback(prev_entry);
 }
 
 unique_ptr<CatalogEntry> DucklingIndexCatalogEntry::Copy(ClientContext &context) const {
-	// Simple copy
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateIndexInfo>();
 	auto result =
