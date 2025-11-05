@@ -12,11 +12,13 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
+#include <iostream>
 
 namespace duckdb {
 
 DucklingCatalog::DucklingCatalog(AttachedDatabase &db)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()) {
+	std::cerr << "[DUCKLING CATALOG] DucklingCatalog initialized for server-side storage" << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog initialized for server-side storage");
 }
 
@@ -49,12 +51,14 @@ void DucklingCatalog::ScanSchemas(ClientContext &context, std::function<void(Sch
 
 PhysicalOperator &DucklingCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                      LogicalCreateTable &op, PhysicalOperator &plan) {
+	std::cerr << "[DUCKLING CATALOG] PlanCreateTableAs called" << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanCreateTableAs");
 	return duckdb_catalog->PlanCreateTableAs(context, planner, op, plan);
 }
 
 PhysicalOperator &DucklingCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
                                               optional_ptr<PhysicalOperator> plan) {
+	std::cerr << "[DUCKLING CATALOG] PlanInsert called" << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanInsert");
 
 	// For now, just pass through to DuckCatalog
@@ -77,6 +81,7 @@ PhysicalOperator &DucklingCatalog::PlanUpdate(ClientContext &context, PhysicalPl
 unique_ptr<LogicalOperator> DucklingCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
                                                              TableCatalogEntry &table,
                                                              unique_ptr<LogicalOperator> plan) {
+	std::cerr << "[DUCKLING CATALOG] BindCreateIndex called on table: " << table.name << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::BindCreateIndex on table: %s", table.name));
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }

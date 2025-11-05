@@ -14,41 +14,58 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
+#include <iostream>
 
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
+	std::cerr << "\n========================================" << std::endl;
+	std::cerr << "[SERVER INIT] Starting server initialization" << std::endl;
+	std::cerr << "========================================" << std::endl;
+
 	// Register the Duckling storage extension
+	std::cerr << "[SERVER INIT] Registering Duckling storage extension..." << std::endl;
 	DBConfig config;
 	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
+	std::cerr << "[SERVER INIT] DuckDB instance created" << std::endl;
 
 	// Automatically attach the Duckling storage extension as the default catalog
 	// This makes all queries use the Duckling catalog, which provides a foundation
 	// for future features like fleet distribution, monitoring, etc.
 	auto &db_instance = *db->instance.get();
 
+	std::cerr << "[SERVER INIT] Attaching Duckling catalog..." << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "Registering and attaching Duckling storage extension");
 	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
 	if (result->HasError()) {
+		std::cerr << "[SERVER INIT] ERROR attaching: " << result->GetError() << std::endl;
 		DUCKDB_LOG_DEBUG(db_instance,
 		                 StringUtil::Format("Failed to auto-attach Duckling storage: %s", result->GetError()));
 	} else {
+		std::cerr << "[SERVER INIT] Duckling attached successfully" << std::endl;
 		DUCKDB_LOG_DEBUG(db_instance, "Duckling storage extension automatically attached");
 
 		// Set duckling as the default database so all tables and indexes are created there
+		std::cerr << "[SERVER INIT] Setting duckling as default catalog..." << std::endl;
 		auto use_result = conn->Query("USE duckling;");
 		if (use_result->HasError()) {
+			std::cerr << "[SERVER INIT] ERROR setting default: " << use_result->GetError() << std::endl;
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Failed to set duckling as default database: %s",
 			                                                 use_result->GetError()));
 		} else {
+			std::cerr << "[SERVER INIT] Duckling is now the default catalog" << std::endl;
+			std::cerr << "[SERVER INIT] All operations will use Duckling catalog" << std::endl;
 			DUCKDB_LOG_DEBUG(
 			    db_instance,
 			    "Duckling set as default database - all tables and indexes will be created in duckling catalog");
 		}
 	}
+
+	std::cerr << "========================================" << std::endl;
+	std::cerr << "[SERVER INIT] Initialization complete\n" << std::endl;
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -205,16 +222,19 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
+	std::cerr << "[SERVER] HandleCreateTable: " << req.sql() << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateTable: %s", req.sql()));
-
+	
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
+		std::cerr << "[SERVER] HandleCreateTable ERROR: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
+	std::cerr << "[SERVER] HandleCreateTable SUCCESS" << std::endl;
 	resp.set_success(true);
 	resp.mutable_create_table();
 
@@ -240,16 +260,19 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
+	std::cerr << "[SERVER] HandleCreateIndex: " << req.sql() << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateIndex: %s", req.sql()));
-
+	
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
+		std::cerr << "[SERVER] HandleCreateIndex ERROR: " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
+	std::cerr << "[SERVER] HandleCreateIndex SUCCESS" << std::endl;
 	resp.set_success(true);
 	resp.mutable_create_index();
 
