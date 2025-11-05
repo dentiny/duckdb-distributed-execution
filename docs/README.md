@@ -157,8 +157,9 @@ SELECT duckherder_clear_query_recorder_stats();
 ### Distributed query support
 - [ ] Distribute query on server side via `duckling` storage extension
 
-### Security support
+### Multi-client support
 - [ ] Query server authN and authZ
+- [ ] Multiple duckdb instance support on servers
 
 ### Full write support
 - [ ] Persist server-side database file
