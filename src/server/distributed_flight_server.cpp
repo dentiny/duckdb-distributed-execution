@@ -1,10 +1,12 @@
 #include "distributed_flight_server.hpp"
 
+#include "duckling_storage.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/config.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -12,12 +14,56 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
+#include <iostream>
 
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
-	db = make_uniq<DuckDB>();
+	std::cerr << "\n==================================================================" << std::endl;
+	std::cerr << "[SERVER INIT] Starting Distributed Flight Server" << std::endl;
+	std::cerr << "==================================================================" << std::endl;
+	
+	// Register the Duckling storage extension
+	std::cerr << "[SERVER INIT] Registering Duckling storage extension..." << std::endl;
+	DBConfig config;
+	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
+	
+	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
+	std::cerr << "[SERVER INIT] DuckDB instance created with Duckling storage extension registered" << std::endl;
+	
+	// Automatically attach the Duckling storage extension as the default catalog
+	// This makes all queries use the Duckling catalog, which provides a foundation
+	// for future features like fleet distribution, monitoring, etc.
+	auto &db_instance = *db->instance.get();
+	
+	std::cerr << "[SERVER INIT] Attaching Duckling catalog..." << std::endl;
+	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
+	if (result->HasError()) {
+		std::cerr << "[SERVER INIT] ERROR: Failed to attach Duckling storage: " << result->GetError() << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                 StringUtil::Format("Failed to auto-attach Duckling storage: %s", result->GetError()));
+	} else {
+		std::cerr << "[SERVER INIT] SUCCESS: Duckling catalog attached" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "Duckling storage extension automatically attached");
+		
+		// Set duckling as the default database so all tables and indexes are created there
+		std::cerr << "[SERVER INIT] Setting Duckling as default catalog..." << std::endl;
+		auto use_result = conn->Query("USE duckling;");
+		if (use_result->HasError()) {
+			std::cerr << "[SERVER INIT] ERROR: Failed to set duckling as default: " << use_result->GetError() << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                 StringUtil::Format("Failed to set duckling as default database: %s", use_result->GetError()));
+		} else {
+			std::cerr << "[SERVER INIT] SUCCESS: Duckling is now the default catalog" << std::endl;
+			std::cerr << "[SERVER INIT] All tables and indexes will be created in duckling catalog" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance, "Duckling set as default database - all tables and indexes will be created in duckling catalog");
+		}
+	}
+	
+	std::cerr << "==================================================================" << std::endl;
+	std::cerr << "[SERVER INIT] Server initialization complete" << std::endl;
+	std::cerr << "==================================================================\n" << std::endl;
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -173,14 +219,18 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	std::cerr << "[SERVER] HandleCreateTable: Executing SQL: " << req.sql() << std::endl;
+	
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
+		std::cerr << "[SERVER] HandleCreateTable: ERROR - " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
+	std::cerr << "[SERVER] HandleCreateTable: SUCCESS - Table created in duckling catalog" << std::endl;
 	resp.set_success(true);
 	resp.mutable_create_table();
 
@@ -205,14 +255,18 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	std::cerr << "[SERVER] HandleCreateIndex: Executing SQL: " << req.sql() << std::endl;
+	
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
+		std::cerr << "[SERVER] HandleCreateIndex: ERROR - " << result->GetError() << std::endl;
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
+	std::cerr << "[SERVER] HandleCreateIndex: SUCCESS - Index created in duckling catalog" << std::endl;
 	resp.set_success(true);
 	resp.mutable_create_index();
 
@@ -298,8 +352,10 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 
 arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
                                                          distributed::DistributedResponse &resp) {
-	string sql =
-	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
+	// Check for table in the duckling catalog specifically
+	string sql = StringUtil::Format(
+	    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s' AND table_catalog = 'duckling'",
+	    req.table_name());
 
 	auto result = conn->Query(sql);
 
@@ -324,12 +380,16 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 	string sql =
 	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
+	std::cerr << "[SERVER] HandleScanTable: Scanning table from duckling catalog: " << req.table_name() << std::endl;
+	
 	auto result = conn->Query(sql);
 
 	if (result->HasError()) {
+		std::cerr << "[SERVER] HandleScanTable: ERROR - " << result->GetError() << std::endl;
 		return arrow::Status::Invalid("Query error: " + result->GetError());
 	}
 
+	std::cerr << "[SERVER] HandleScanTable: SUCCESS - Retrieved data from duckling catalog" << std::endl;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
 	ARROW_RETURN_NOT_OK(QueryResultToArrow(*result, reader));
 
@@ -342,6 +402,9 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
                                                         distributed::DistributedResponse &resp) {
 	// TODO(hjiang): Current implementation is pretty insufficient, which directly executes insertion statement.
 	// Better to call native duckdb APIs for ingestion.
+
+	std::cerr << "[SERVER] HandleInsertData: Inserting " << batch->num_rows() << " rows into duckling." 
+	          << table_name << std::endl;
 
 	// Build INSERT statement.
 	std::string insert_sql = "INSERT INTO " + table_name + " VALUES ";
