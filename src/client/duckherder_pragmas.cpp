@@ -1,10 +1,13 @@
 #include "duckherder_pragmas.hpp"
 
 #include "distributed_flight_client.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/extension_helper.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckherder_catalog.hpp"
 
@@ -128,9 +131,26 @@ namespace duckdb {
 	    extension_name_vector, result, args.size(),
 	    [&](string_t extension_name) {
 		    auto extension_name_str = extension_name.GetString();
-		    
-		    // Get the duckherder catalog - assuming it's attached as "dh".
 		    auto &context = state.GetContext();
+		    
+		    // Step 1: Load extension on CLIENT side by executing LOAD statement
+		    // Tolerate failures (e.g., extension already loaded)
+		    try {
+			    string client_sql = "LOAD " + extension_name_str;
+			    auto client_result = context.Query(client_sql, false);
+			    if (client_result->HasError()) {
+				    // Log but don't fail - extension might already be loaded
+				    auto &db = DatabaseInstance::GetDatabase(context);
+				    DUCKDB_LOG_DEBUG(db, "Client LOAD warning: " + client_result->GetError());
+			    }
+		    } catch (std::exception &ex) {
+			    // Log but continue - we'll still try to load on server
+			    auto &db = DatabaseInstance::GetDatabase(context);
+			    DUCKDB_LOG_DEBUG(db, StringUtil::Format("Client LOAD exception: %s", ex.what()));
+		    }
+		    
+		    // Step 2: Load extension on SERVER side
+		    // Get the duckherder catalog - assuming it's attached as "dh".
 		    auto &db_manager = DatabaseManager::Get(context);
 		    auto dh_db = db_manager.GetDatabase(context, "dh");
 		    if (!dh_db) {

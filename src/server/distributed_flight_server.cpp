@@ -4,6 +4,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -11,7 +12,6 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
-#include <iostream>
 
 namespace duckdb {
 
@@ -27,11 +27,8 @@ arrow::Status DistributedFlightServer::Start() {
 	arrow::flight::FlightServerOptions options(location);
 	ARROW_RETURN_NOT_OK(Init(options));
 
-	std::cerr << "========================================" << std::endl;
-	std::cerr << "DuckDB Distributed Flight Server" << std::endl;
-	std::cerr << "Server started on " << host << ":" << port << std::endl;
-	std::cerr << "Ready to accept connections..." << std::endl;
-	std::cerr << "========================================" << std::endl;
+	auto &db_instance = *db->instance.get();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Server started on %s:%d", host, port));
 
 	return arrow::Status::OK();
 }
@@ -55,38 +52,6 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 
 	distributed::DistributedResponse response;
 	response.set_success(true);
-
-	// Log the request type
-	const char* request_type_name = "UNKNOWN";
-	switch (request.request_case()) {
-	case distributed::DistributedRequest::kExecuteSql:
-		request_type_name = "EXECUTE_SQL";
-		break;
-	case distributed::DistributedRequest::kCreateTable:
-		request_type_name = "CREATE_TABLE";
-		break;
-	case distributed::DistributedRequest::kDropTable:
-		request_type_name = "DROP_TABLE";
-		break;
-	case distributed::DistributedRequest::kCreateIndex:
-		request_type_name = "CREATE_INDEX";
-		break;
-	case distributed::DistributedRequest::kDropIndex:
-		request_type_name = "DROP_INDEX";
-		break;
-	case distributed::DistributedRequest::kAlterTable:
-		request_type_name = "ALTER_TABLE";
-		break;
-	case distributed::DistributedRequest::kLoadExtension:
-		request_type_name = "LOAD_EXTENSION";
-		break;
-	case distributed::DistributedRequest::kTableExists:
-		request_type_name = "TABLE_EXISTS";
-		break;
-	default:
-		break;
-	}
-	std::cerr << "[SERVER] Received request: " << request_type_name << std::endl;
 
 	switch (request.request_case()) {
 	case distributed::DistributedRequest::kExecuteSql:
@@ -280,15 +245,14 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 
 arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
                                                            distributed::DistributedResponse &resp) {
-	std::cerr << "[SERVER] ========================================" << std::endl;
-	std::cerr << "[SERVER] Extension Load Request Received" << std::endl;
-	std::cerr << "[SERVER] Extension: " << req.extension_name() << std::endl;
+	auto &db_instance = *db->instance;
+	DUCKDB_LOG_DEBUG(db_instance, "Extension Load Request: " + req.extension_name());
 	
 	if (!req.repository().empty()) {
-		std::cerr << "[SERVER] Repository: " << req.repository() << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "Repository: " + req.repository());
 	}
 	if (!req.version().empty()) {
-		std::cerr << "[SERVER] Version: " << req.version() << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "Version: " + req.version());
 	}
 	
 	// Build the LOAD statement based on the request parameters
@@ -304,36 +268,33 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 			sql += " VERSION '" + req.version() + "'";
 		}
 		
-		std::cerr << "[SERVER] Executing: " << sql << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "Executing: " + sql);
 		
 		// Execute INSTALL first
 		auto install_result = conn->Query(sql);
 		if (install_result->HasError()) {
-			std::cerr << "[SERVER] ❌ INSTALL FAILED: " << install_result->GetError() << std::endl;
-			std::cerr << "[SERVER] ========================================" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance, "INSTALL failed: " + install_result->GetError());
 			resp.set_success(false);
 			resp.set_error_message("Install failed: " + install_result->GetError());
 			return arrow::Status::OK();
 		}
-		std::cerr << "[SERVER] ✓ INSTALL successful" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "INSTALL successful");
 		
 		// Then LOAD the extension
 		sql = "LOAD " + req.extension_name();
 	}
 
-	std::cerr << "[SERVER] Executing: " << sql << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, "Executing: " + sql);
 	auto result = conn->Query(sql);
 
 	if (result->HasError()) {
-		std::cerr << "[SERVER] ❌ LOAD FAILED: " << result->GetError() << std::endl;
-		std::cerr << "[SERVER] ========================================" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "LOAD failed: " + result->GetError());
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
 
-	std::cerr << "[SERVER] ✅ Extension '" << req.extension_name() << "' loaded successfully!" << std::endl;
-	std::cerr << "[SERVER] ========================================" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, "Extension '" + req.extension_name() + "' loaded successfully");
 	
 	resp.set_success(true);
 	resp.mutable_load_extension();
