@@ -1,10 +1,12 @@
 #include "distributed_flight_server.hpp"
 
+#include "duckling_storage.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/config.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -16,8 +18,31 @@
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
-	db = make_uniq<DuckDB>();
+	// Register the Duckling storage extension.
+	DBConfig config;
+	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
+
+	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
+	auto &db_instance = *db->instance.get();
+
+	// Attach duckling storage extension.
+	DUCKDB_LOG_DEBUG(db_instance, "Attaching Duckling storage extension");
+	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
+	if (result->HasError()) {
+		auto error_message = StringUtil::Format("Failed to attach Duckling: %s", result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		throw InternalException(error_message);
+	}
+
+	// Set duckling as the default database.
+	auto use_result = conn->Query("USE duckling;");
+	if (use_result->HasError()) {
+		auto error_message = StringUtil::Format("Failed to USE duckling: %s", use_result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		throw InternalException(error_message);
+	}
+	DUCKDB_LOG_DEBUG(db_instance, "Duckling attach and set as default catalog");
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -143,7 +168,6 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 		}
 		batch = next.data;
 
-		// Process each batch
 		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, resp));
 	}
 
@@ -173,6 +197,9 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	auto &db_instance = *db->instance;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateTable: %s", req.sql()));
+
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
@@ -205,6 +232,9 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	auto &db_instance = *db->instance;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateIndex: %s", req.sql()));
+
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {

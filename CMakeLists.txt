@@ -48,8 +48,16 @@ set(CLIENT_SOURCES
     src/client/logical_remote_alter_table.cpp
     src/client/logical_remote_create_index.cpp)
 
-set(SERVER_SOURCES src/server/distributed_flight_server.cpp
-                   src/server/distributed_server_function.cpp)
+set(SERVER_SOURCES
+    src/server/distributed_flight_server.cpp
+    src/server/distributed_server_function.cpp
+    src/server/duckling_catalog.cpp
+    src/server/duckling_index_catalog_entry.cpp
+    src/server/duckling_schema_catalog_entry.cpp
+    src/server/duckling_storage.cpp
+    src/server/duckling_table_catalog_entry.cpp
+    src/server/duckling_transaction.cpp
+    src/server/duckling_transaction_manager.cpp)
 
 set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources
