@@ -7,6 +7,8 @@
 
 namespace duckdb {
 
+namespace {
+
 unique_ptr<Catalog> DucklingAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
                                    AttachedDatabase &db, const string &name, AttachInfo &info, AttachOptions &options) {
 	DUCKDB_LOG_DEBUG(db.GetDatabase(), "DucklingAttach");
@@ -21,6 +23,8 @@ unique_ptr<TransactionManager> DucklingCreateTransactionManager(optional_ptr<Sto
 	DUCKDB_LOG_DEBUG(db.GetDatabase(), "DucklingCreateTransactionManager");
 	return make_uniq<DucklingTransactionManager>(db);
 }
+
+}  // namespace
 
 DucklingStorageExtension::DucklingStorageExtension() {
 	attach = DucklingAttach;
