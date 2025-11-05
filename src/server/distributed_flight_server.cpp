@@ -54,30 +54,37 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 	response.set_success(true);
 
 	switch (request.request_case()) {
-	case distributed::DistributedRequest::kExecuteSql:
-		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
-		break;
+	// ========== Table perations ==========
 	case distributed::DistributedRequest::kCreateTable:
 		ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
 		break;
 	case distributed::DistributedRequest::kDropTable:
 		ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
 		break;
+	case distributed::DistributedRequest::kAlterTable:
+		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		break;
+
+	// ========== Index perations ==========
 	case distributed::DistributedRequest::kCreateIndex:
 		ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
 		break;
 	case distributed::DistributedRequest::kDropIndex:
 		ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
 		break;
-	case distributed::DistributedRequest::kAlterTable:
-		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
-		break;
-	case distributed::DistributedRequest::kLoadExtension:
-		ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
+
+	// ========== Query & Utility Operations ==========
+	case distributed::DistributedRequest::kExecuteSql:
+		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
 		break;
 	case distributed::DistributedRequest::kTableExists:
 		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
 		break;
+	case distributed::DistributedRequest::kLoadExtension:
+		ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
+		break;
+
+	// ========== Error Cases ==========
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
 		return arrow::Status::Invalid("Request type not set");
 	default:
