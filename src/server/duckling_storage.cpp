@@ -8,8 +8,7 @@
 namespace duckdb {
 
 unique_ptr<Catalog> DucklingAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
-                                   AttachedDatabase &db, const string &name, AttachInfo &info,
-                                   AttachOptions &options) {
+                                   AttachedDatabase &db, const string &name, AttachInfo &info, AttachOptions &options) {
 	DUCKDB_LOG_DEBUG(db.GetDatabase(), "DucklingAttach");
 
 	// For now, Duckling is a simple no-op wrapper around DuckCatalog
@@ -29,4 +28,3 @@ DucklingStorageExtension::DucklingStorageExtension() {
 }
 
 } // namespace duckdb
-

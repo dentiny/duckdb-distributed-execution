@@ -20,4 +20,3 @@ private:
 };
 
 } // namespace duckdb
-

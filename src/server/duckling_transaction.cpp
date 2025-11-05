@@ -7,8 +7,7 @@
 namespace duckdb {
 
 DucklingTransaction::DucklingTransaction(DuckTransactionManager &manager, ClientContext &context,
-                                         transaction_t start_time, transaction_t transaction_id,
-                                         idx_t catalog_version)
+                                         transaction_t start_time, transaction_t transaction_id, idx_t catalog_version)
     : Transaction(manager, context),
       duckdb_transaction(make_uniq<DuckTransaction>(manager, context, start_time, transaction_id, catalog_version)) {
 }
@@ -16,4 +15,3 @@ DucklingTransaction::DucklingTransaction(DuckTransactionManager &manager, Client
 DucklingTransaction::~DucklingTransaction() = default;
 
 } // namespace duckdb
-

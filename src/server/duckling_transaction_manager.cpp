@@ -28,4 +28,3 @@ void DucklingTransactionManager::Checkpoint(ClientContext &context, bool force) 
 }
 
 } // namespace duckdb
-

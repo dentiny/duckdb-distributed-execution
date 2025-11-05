@@ -12,13 +12,12 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
-#include <iostream>
 
 namespace duckdb {
 
 DucklingCatalog::DucklingCatalog(AttachedDatabase &db)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()) {
-	std::cerr << "[DUCKLING CATALOG] DucklingCatalog initialized for server-side storage" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog initialized for server-side storage");
 }
 
 DucklingCatalog::~DucklingCatalog() = default;
@@ -28,8 +27,7 @@ void DucklingCatalog::Initialize(bool load_builtin) {
 }
 
 optional_ptr<CatalogEntry> DucklingCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
-	std::cerr << "[DUCKLING CATALOG] CreateSchema: " << info.schema << std::endl;
-	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::CreateSchema");
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::CreateSchema: %s", info.schema));
 	return duckdb_catalog->CreateSchema(std::move(transaction), info);
 }
 
@@ -38,7 +36,7 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
                                                                OnEntryNotFound if_not_found) {
 	auto entry_lookup_str = schema_lookup.GetEntryName();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::LookupSchema %s", entry_lookup_str));
-	
+
 	// For now, just pass through to DuckCatalog
 	// In the future, this could be extended for fleet management, monitoring, etc.
 	return duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
@@ -51,29 +49,27 @@ void DucklingCatalog::ScanSchemas(ClientContext &context, std::function<void(Sch
 
 PhysicalOperator &DucklingCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                      LogicalCreateTable &op, PhysicalOperator &plan) {
-	std::cerr << "[DUCKLING CATALOG] PlanCreateTableAs: Creating table via duckling catalog" << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanCreateTableAs");
 	return duckdb_catalog->PlanCreateTableAs(context, planner, op, plan);
 }
 
-PhysicalOperator &DucklingCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
-                                              LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
-	std::cerr << "[DUCKLING CATALOG] PlanInsert: Planning insert into duckling catalog" << std::endl;
+PhysicalOperator &DucklingCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
+                                              optional_ptr<PhysicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanInsert");
-	
+
 	// For now, just pass through to DuckCatalog
 	// In the future, this could support fleet distribution
 	return duckdb_catalog->PlanInsert(context, planner, op, plan);
 }
 
-PhysicalOperator &DucklingCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner,
-                                              LogicalDelete &op, PhysicalOperator &plan) {
+PhysicalOperator &DucklingCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner, LogicalDelete &op,
+                                              PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanDelete");
 	return duckdb_catalog->PlanDelete(context, planner, op, plan);
 }
 
-PhysicalOperator &DucklingCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner,
-                                              LogicalUpdate &op, PhysicalOperator &plan) {
+PhysicalOperator &DucklingCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op,
+                                              PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::PlanUpdate");
 	return duckdb_catalog->PlanUpdate(context, planner, op, plan);
 }
@@ -81,8 +77,7 @@ PhysicalOperator &DucklingCatalog::PlanUpdate(ClientContext &context, PhysicalPl
 unique_ptr<LogicalOperator> DucklingCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
                                                              TableCatalogEntry &table,
                                                              unique_ptr<LogicalOperator> plan) {
-	std::cerr << "[DUCKLING CATALOG] BindCreateIndex: Creating index in duckling catalog on table: " << table.name << std::endl;
-	DUCKDB_LOG_DEBUG(db_instance, "DucklingCatalog::BindCreateIndex");
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::BindCreateIndex on table: %s", table.name));
 	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
 }
 
@@ -138,4 +133,3 @@ void DucklingCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 }
 
 } // namespace duckdb
-
