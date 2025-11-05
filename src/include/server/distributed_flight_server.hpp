@@ -5,6 +5,9 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 
+// Include types header first since there's dependency.
+#include <arrow/flight/types.h>
+
 #include <arrow/flight/server.h>
 #include <arrow/record_batch.h>
 #include <memory>
