@@ -1,6 +1,6 @@
-# Duckherder - DuckDB Distributed Execution Extension
+# Duckherder - DuckDB Remote Execution Extension
 
-Duckherder is a DuckDB extension that enables distributed query execution across multiple DuckDB instances using Apache Arrow Flight for high-performance data transfer. It allows you to seamlessly work with remote tables as if they were local, while maintaining DuckDB's familiar SQL interface.
+Duckherder is a DuckDB extension that enables remote query execution on server using Apache Arrow Flight for data transfer. It allows you to seamlessly work with remote tables as if they were local, while maintaining DuckDB's familiar SQL interface.
 
 ## Overview
 
@@ -8,7 +8,7 @@ Duckherder implements a client-server architecture where:
 - **Client (Duckherder)**: Coordinates queries and manages remote table references
 - **Server (Duckling)**: Executes queries on local data and returns results via Arrow Flight
 
-The extension transparently handles query routing, allowing you to run CREATE, SELECT, INSERT, DELETE, and ALTER operations on remote tables through a custom catalog system.
+The extension transparently handles query routing, allowing you to run CREATE, SELECT, INSERT, DELETE, and ALTER operations on remote tables through DuckDB storage extension.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 
 2. Build the extension:
 ```bash
-git clone --recurse-submodules https://github.com/<your-repo>/duckdb-distributed-execution.git
+git clone --recurse-submodules https://github.com/dentiny/duckdb-distributed-execution.git
 cd duckdb-distributed-execution
 make
 ```
@@ -76,6 +76,7 @@ SELECT duckherder_start_local_server(8815);
 
 ```sql
 -- Attach to the duckherder server as database 'dh'
+-- TODO: currently only support database dh
 ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
 ```
 
@@ -219,7 +220,7 @@ SELECT duckherder_stop_local_server();
 
 ### Supported Data Types
 
-Duckherder supports all DuckDB data types including:
+Duckherder supports all DuckDB primitive data types including:
 
 - **Numeric Types**: `TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT`, `HUGEINT`, `UTINYINT`, `USMALLINT`, `UINTEGER`, `UBIGINT`, `UHUGEINT`, `FLOAT`, `DOUBLE`, `DECIMAL`
 - **String Types**: `VARCHAR`, `TEXT`
@@ -229,81 +230,7 @@ Duckherder supports all DuckDB data types including:
 - **Special Types**: `UUID`
 - **NULL values**: Fully supported across all types
 
-## Complete Example
-
-```sql
--- 1. Start server
-SELECT duckherder_start_local_server(8815);
-
--- 2. Attach database
-ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
-
--- 3. Register table
-PRAGMA duckherder_register_remote_table('products', 'products');
-
--- 4. Create table
-CREATE TABLE dh.products (
-    id INTEGER,
-    name VARCHAR,
-    price DECIMAL(10,2),
-    stock INTEGER,
-    created_at TIMESTAMP
-);
-
--- 5. Insert data
-INSERT INTO dh.products VALUES
-    (1, 'Laptop', 999.99, 50, NOW()),
-    (2, 'Mouse', 29.99, 200, NOW()),
-    (3, 'Keyboard', 79.99, 150, NOW());
-
--- 6. Query
-SELECT name, price FROM dh.products WHERE stock > 100;
-
--- 7. Create index for better performance
-CREATE INDEX idx_products_stock ON dh.products(stock);
-
--- 8. Alter table
-ALTER TABLE dh.products ADD COLUMN category VARCHAR DEFAULT 'Electronics';
-
--- 9. View query history
-SELECT * FROM duckherder_get_query_history();
-
--- 10. Cleanup
-DROP TABLE dh.products;
-PRAGMA duckherder_unregister_remote_table('products');
-SELECT duckherder_stop_local_server();
-```
-
-## API Reference
-
-### Functions
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `duckherder_start_local_server(port)` | Start a local Arrow Flight server | `SELECT duckherder_start_local_server(8815);` |
-| `duckherder_stop_local_server()` | Stop the local Arrow Flight server | `SELECT duckherder_stop_local_server();` |
-| `duckherder_load_extension(name)` | Load an extension on the remote server | `SELECT duckherder_load_extension('parquet');` |
-| `duckherder_get_query_history()` | Get query execution history and statistics | `SELECT * FROM duckherder_get_query_history();` |
-| `duckherder_clear_query_recorder_stats()` | Clear query history statistics | `SELECT duckherder_clear_query_recorder_stats();` |
-
-### Pragmas
-
-| Pragma | Description | Example |
-|--------|-------------|---------|
-| `duckherder_register_remote_table(local_name, remote_name)` | Register a remote table with a local alias | `PRAGMA duckherder_register_remote_table('local_users', 'users');` |
-| `duckherder_unregister_remote_table(local_name)` | Unregister a remote table | `PRAGMA duckherder_unregister_remote_table('local_users');` |
-
-### ATTACH Options
-
-When attaching a Duckherder database, use these options:
-
-```sql
-ATTACH DATABASE 'db_alias' (
-    TYPE duckherder,
-    server_host 'hostname',  -- Server hostname (e.g., 'localhost', '192.168.1.100')
-    server_port port_number  -- Server port (e.g., 8815)
-);
-```
+**TODO**: Add support for complex types (LIST, STRUCT, MAP, ARRAY, UNION).
 
 ## Roadmap
 
@@ -333,6 +260,8 @@ ATTACH DATABASE 'db_alias' (
 - [x] **DROP INDEX** - Drop indexes with IF EXISTS support
 - [x] **Multi-column Indexes** - Support for composite indexes
 
+**TODO**: Enhance index support with more advanced indexing features.
+
 #### Data Types
 - [x] **All Numeric Types** - Support for TINYINT through HUGEINT and all unsigned variants
 - [x] **Floating Point Types** - FLOAT and DOUBLE with full precision
@@ -345,7 +274,7 @@ ATTACH DATABASE 'db_alias' (
 - [x] **DECIMAL Type** - Arbitrary precision decimal numbers
 - [x] **NULL Handling** - Full NULL support across all types
 
-#### Advanced Features
+#### Additional Features
 - [x] **Query History Tracking** - Record and retrieve query execution statistics
 - [x] **Extension Loading** - Load DuckDB extensions on remote servers
 - [x] **Transaction Support** - Basic transaction management
@@ -439,15 +368,6 @@ Run specific test files:
 ./build/release/test/unittest test/sql/remote_execution.test
 ./build/release/test/unittest test/sql/type_support.test
 ```
-
-Available test suites:
-- `registration.test` - Table registration/unregistration
-- `remote_execution.test` - Basic CRUD operations
-- `table_operations.test` - CREATE/DROP table operations
-- `alter_table.test` - ALTER TABLE operations
-- `index_operations.test` - Index management
-- `query_stats.test` - Query history tracking
-- `type_support.test` - Comprehensive data type testing
 
 ## Performance Considerations
 
