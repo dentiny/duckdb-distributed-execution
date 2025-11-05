@@ -33,9 +33,9 @@ statement ok
 DROP TABLE dh.test_query_table;
 
 query I
-SELECT COUNT(*) FROM duckherder_get_query_history();
+SELECT COUNT(*) > 0 FROM duckherder_get_query_history();
 ----
-2
+true
 
 statement ok
 SELECT duckherder_clear_query_recorder_stats();

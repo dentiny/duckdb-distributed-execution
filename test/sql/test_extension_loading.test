@@ -11,14 +11,14 @@ statement ok
 ATTACH DATABASE '' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
 
 query II
-SELECT extension_name, loaded  FROM duckdb_extensions() WHERE extension_name = 'httpfs';
+SELECT extension_name, loaded  FROM duckdb_extensions() WHERE extension_name = 'azure';
 ----
-httpfs	false
+azure	false
 
 statement ok
-SELECT duckherder_load_extension('httpfs');
+SELECT duckherder_load_extension('azure');
 
 query III
-SELECT extension_name, loaded, installed  FROM duckdb_extensions() WHERE extension_name = 'httpfs';
+SELECT extension_name, loaded, installed  FROM duckdb_extensions() WHERE extension_name = 'azure';
 ----
-httpfs	true	true
+azure	true	true

@@ -143,10 +143,10 @@ SELECT duckherder_clear_query_recorder_stats();
 ## Roadmap
 
 ### Table and index operations
-- [x] create/drop table
-- [x] create/drop index
-- [x] update table schema
-- [ ] update index
+- [x] Create/drop table
+- [x] Create/drop index
+- [x] Update table schema
+- [ ] Update index
 
 ### Data type support
 - [x] Primitive type support
@@ -168,3 +168,5 @@ SELECT duckherder_clear_query_recorder_stats();
 ### Additional feature support
 - [x] Query timing stats
 - [ ] Query resource consumption
+- [x] Support official extension install and load
+- [ ] Support community extension install and load
