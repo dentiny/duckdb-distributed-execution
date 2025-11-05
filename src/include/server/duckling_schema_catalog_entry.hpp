@@ -1,9 +1,13 @@
 #pragma once
 
+#include <mutex>
+
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 
 namespace duckdb {
@@ -55,12 +59,20 @@ public:
 	optional_ptr<CatalogEntry> CreatePragmaFunction(CatalogTransaction transaction, CreatePragmaFunctionInfo &info);
 	optional_ptr<CatalogEntry> CreateCollation(CatalogTransaction transaction, CreateCollationInfo &info);
 	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
+	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info);
+	void DropEntry(ClientContext &context, DropInfo &info);
 
 private:
+	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(string key, CatalogEntry *catalog_entry);
+	CatalogEntry *WrapAndCacheIndexCatalogEntryWithLock(string key, CatalogEntry *catalog_entry);
+
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
 	SchemaCatalogEntry *schema_catalog_entry;
 	Catalog &duckling_catalog_ref;
+	
+	std::mutex mu;
+	unordered_map<string, unique_ptr<CatalogEntry>> catalog_entries;
 };
 
 } // namespace duckdb

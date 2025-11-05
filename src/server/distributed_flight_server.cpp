@@ -24,19 +24,43 @@ DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : ho
 	std::cerr << "========================================" << std::endl;
 
 	// Register the Duckling storage extension
-	// For now, we just register it without attaching as a separate database
-	// The extension is available for future use (monitoring, fleet distribution, etc.)
-	// but operates transparently as a no-op wrapper around standard DuckDB
 	std::cerr << "[SERVER INIT] Registering Duckling storage extension..." << std::endl;
 	DBConfig config;
 	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
+	std::cerr << "[SERVER INIT] DuckDB instance created" << std::endl;
 	
 	auto &db_instance = *db->instance.get();
-	DUCKDB_LOG_DEBUG(db_instance, "Duckling storage extension registered (no-op mode for now)");
-	std::cerr << "[SERVER INIT] DuckDB instance created with Duckling extension registered" << std::endl;
+	
+	// Attach duckling storage extension
+	std::cerr << "[SERVER INIT] Attaching Duckling catalog..." << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, "Attaching Duckling storage extension");
+	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
+	if (result->HasError()) {
+		std::cerr << "[SERVER INIT] ERROR attaching: " << result->GetError() << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
+	} else {
+		std::cerr << "[SERVER INIT] Duckling attached successfully" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "Duckling attached");
+
+		// Set duckling as the default database
+		std::cerr << "[SERVER INIT] Setting duckling as default catalog..." << std::endl;
+		auto use_result = conn->Query("USE duckling;");
+		if (use_result->HasError()) {
+			std::cerr << "[SERVER INIT] ERROR: " << use_result->GetError() << std::endl;
+		} else {
+			std::cerr << "[SERVER INIT] SUCCESS: Duckling is default catalog" << std::endl;
+			
+			// Verify it worked
+			auto check_db = conn->Query("SELECT current_database()");
+			if (!check_db->HasError() && check_db->Fetch()) {
+				std::cerr << "[SERVER INIT] Verified current_database(): " << check_db->GetValue(0, 0).ToString() << std::endl;
+			}
+		}
+	}
 
 	std::cerr << "========================================" << std::endl;
 	std::cerr << "[SERVER INIT] Initialization complete\n" << std::endl;

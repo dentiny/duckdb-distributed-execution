@@ -44,8 +44,10 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
 	std::lock_guard<std::mutex> lck(mu);
 	auto iter = schema_catalog_entries.find(entry_lookup_str);
 	if (iter == schema_catalog_entries.end()) {
+		std::cerr << "[DUCKLING CATALOG] LookupSchema: Cache miss, creating new DucklingSchemaCatalogEntry" << std::endl;
 		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
 		if (!catalog_entry) {
+			std::cerr << "[DUCKLING CATALOG] LookupSchema: Schema not found" << std::endl;
 			return catalog_entry;
 		}
 
@@ -59,6 +61,8 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
 		auto duckling_schema_entry = make_uniq<DucklingSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
 		                                                                   std::move(create_schema_info));
 		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(duckling_schema_entry)).first;
+	} else {
+		std::cerr << "[DUCKLING CATALOG] LookupSchema: Cache hit" << std::endl;
 	}
 
 	return iter->second.get();
