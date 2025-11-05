@@ -3,6 +3,7 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "utils/thread_utils.hpp"
 
 #include <thread>
 
@@ -43,6 +44,8 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		// Start server in background thread and detach.
 		std::thread([port]() {
+			SetThreadName("LocalDuckSrv");
+
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
 			if (!serve_status.ok() && g_server_started) {
@@ -75,7 +78,7 @@ void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	g_test_server.reset();
 	g_server_started = false;
 
-	result.Reference(Value(SUCCESS));	
+	result.Reference(Value(SUCCESS));
 }
 
 } // namespace
