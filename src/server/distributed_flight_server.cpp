@@ -4,6 +4,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -25,6 +26,9 @@ arrow::Status DistributedFlightServer::Start() {
 
 	arrow::flight::FlightServerOptions options(location);
 	ARROW_RETURN_NOT_OK(Init(options));
+
+	auto &db_instance = *db->instance.get();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Server started on %s:%d", host, port));
 
 	return arrow::Status::OK();
 }
@@ -50,27 +54,37 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 	response.set_success(true);
 
 	switch (request.request_case()) {
-	case distributed::DistributedRequest::kExecuteSql:
-		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
-		break;
+	// ========== Table perations ==========
 	case distributed::DistributedRequest::kCreateTable:
 		ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
 		break;
 	case distributed::DistributedRequest::kDropTable:
 		ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
 		break;
+	case distributed::DistributedRequest::kAlterTable:
+		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		break;
+
+	// ========== Index perations ==========
 	case distributed::DistributedRequest::kCreateIndex:
 		ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
 		break;
 	case distributed::DistributedRequest::kDropIndex:
 		ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
 		break;
-	case distributed::DistributedRequest::kAlterTable:
-		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+
+	// ========== Query & Utility Operations ==========
+	case distributed::DistributedRequest::kExecuteSql:
+		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
 		break;
 	case distributed::DistributedRequest::kTableExists:
 		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
 		break;
+	case distributed::DistributedRequest::kLoadExtension:
+		ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
+		break;
+
+	// ========== Error Cases ==========
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
 		return arrow::Status::Invalid("Request type not set");
 	default:
@@ -233,6 +247,52 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 
 	resp.set_success(true);
 	resp.mutable_alter_table();
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
+                                                           distributed::DistributedResponse &resp) {
+	auto &db_instance = *db->instance;
+	string sql = "LOAD " + req.extension_name();
+
+	// Handle INSTALL with repository and version.
+	if (!req.repository().empty() || !req.version().empty()) {
+		sql = "INSTALL " + req.extension_name();
+		if (!req.repository().empty()) {
+			sql += " FROM '" + req.repository() + "'";
+		}
+		if (!req.version().empty()) {
+			sql += " VERSION '" + req.version() + "'";
+		}
+	}
+
+	// Execute INSTALL first.
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
+	auto install_result = conn->Query(sql);
+	if (install_result->HasError()) {
+		const string error_message =
+		    StringUtil::Format("Extension %s install failed %s", req.extension_name(), install_result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		resp.set_success(false);
+		resp.set_error_message(std::move(error_message));
+		return arrow::Status::OK();
+	}
+
+	// Then LOAD the extension.
+	sql = "LOAD " + req.extension_name();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Load extension with %s", sql));
+	auto load_result = conn->Query(sql);
+	if (load_result->HasError()) {
+		const string error_message =
+		    StringUtil::Format("Extension %s load failed %s", req.extension_name(), load_result->GetError());
+		DUCKDB_LOG_DEBUG(db_instance, error_message);
+		resp.set_success(false);
+		resp.set_error_message(std::move(error_message));
+		return arrow::Status::OK();
+	}
+
+	resp.set_success(true);
+	resp.mutable_load_extension();
 	return arrow::Status::OK();
 }
 

@@ -15,6 +15,7 @@ enum RequestType {
   CREATE_INDEX = 8;
   DROP_INDEX = 9;
   ALTER_TABLE = 10;
+  LOAD_EXTENSION = 11;
 }
 
 // Execute SQL request.
@@ -72,6 +73,16 @@ message AlterTableRequest {
   string sql = 1;
 }
 
+// Load extension request.
+message LoadExtensionRequest {
+  // Extension name or path.
+  string extension_name = 1;
+  // Optional repository.
+  string repository = 2;
+  // Optional version.
+  string version = 3;
+}
+
 // Request message for distributed operations.
 message DistributedRequest {
   // Request-specific parameters.
@@ -85,6 +96,7 @@ message DistributedRequest {
     CreateIndexRequest create_index = 7;
     DropIndexRequest drop_index = 8;
     AlterTableRequest alter_table = 9;
+    LoadExtensionRequest load_extension = 10;
   }
 }
 
@@ -123,6 +135,9 @@ message DropIndexResponse {}
 // Alter table response.
 message AlterTableResponse {}
 
+// Load extension response.
+message LoadExtensionResponse {}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -141,5 +156,6 @@ message DistributedResponse {
     CreateIndexResponse create_index = 9;
     DropIndexResponse drop_index = 10;
     AlterTableResponse alter_table = 11;
+    LoadExtensionResponse load_extension = 12;
   }
 }

@@ -36,6 +36,10 @@ public:
 	// Drop index.
 	arrow::Status DropIndex(const string &index_name, distributed::DistributedResponse &response);
 
+	// Load extension.
+	arrow::Status LoadExtension(const string &extension_name, const string &repository, const string &version,
+	                            distributed::DistributedResponse &response);
+
 	// Check if table exists.
 	arrow::Status TableExists(const string &table_name, bool &exists);
 
