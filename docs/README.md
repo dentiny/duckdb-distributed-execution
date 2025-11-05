@@ -22,10 +22,10 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 │  └───────────────────────────────────┘  │
 │              │                           │
 │              │ Arrow Flight Protocol     │
-│              ▼                           │
-└─────────────────────────────────────────┘
+│              │                           │
+└──────────────┼───────────────────────────┘
                │
-               │
+               ▼
 ┌──────────────┴──────────────────────────┐
 │         Server DuckDB Instance          │
 │  ┌───────────────────────────────────┐  │
@@ -53,7 +53,7 @@ export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```bash
 git clone --recurse-submodules https://github.com/dentiny/duckdb-distributed-execution.git
 cd duckdb-distributed-execution
-make
+export VCPKG_TOOLCHAIN_PATH=/home/vscode/vcpkg/scripts/buildsystems/vcpkg.cmake && CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) make
 ```
 
 The build produces:
@@ -65,11 +65,14 @@ The build produces:
 
 ### Basic Setup
 
-#### 1. Start a Local Server
+#### 1. Server Management
 
 ```sql
 -- Start a distributed server on port 8815
 SELECT duckherder_start_local_server(8815);
+
+-- Stop the local distributed server
+SELECT duckherder_stop_local_server();
 ```
 
 #### 2. Attach to the Server
@@ -118,14 +121,6 @@ SELECT * FROM dh.users WHERE id > 1;
 
 -- Aggregations
 SELECT COUNT(*) as user_count FROM dh.users;
-
--- Complex queries
-SELECT 
-    DATE_TRUNC('day', created_at) as day,
-    COUNT(*) as signups
-FROM dh.users
-GROUP BY day
-ORDER BY day;
 ```
 
 #### Update and Delete
@@ -209,13 +204,6 @@ SELECT duckherder_clear_query_recorder_stats();
 ```sql
 -- Unregister a remote table
 PRAGMA duckherder_unregister_remote_table('my_table');
-```
-
-#### Stop Server
-
-```sql
--- Stop the local distributed server
-SELECT duckherder_stop_local_server();
 ```
 
 ### Supported Data Types
@@ -400,50 +388,3 @@ PRAGMA duckherder_register_remote_table('my_table', 'my_table');
 -- Verify registration by attempting to query
 SELECT * FROM dh.my_table LIMIT 1;
 ```
-
-### Query Errors
-
-```sql
--- Check query history for errors
-SELECT * FROM duckherder_get_query_history();
-```
-
-## Contributing
-
-Contributions are welcome! This extension is based on the [DuckDB Extension Template](https://github.com/duckdb/extension-template).
-
-### Development Setup
-
-1. Clone with submodules:
-```bash
-git clone --recurse-submodules <repository-url>
-```
-
-2. Set up VCPKG:
-```bash
-export VCPKG_TOOLCHAIN_PATH=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-
-3. Build in debug mode:
-```bash
-make debug
-```
-
-4. Run tests:
-```bash
-make test
-```
-
-## License
-
-See [LICENSE](../LICENSE) file for details.
-
-## Related Projects
-
-- [DuckDB](https://github.com/duckdb/duckdb) - Main DuckDB project
-- [Apache Arrow](https://arrow.apache.org/) - Columnar data format and Flight RPC
-- [DuckDB Extension Template](https://github.com/duckdb/extension-template) - Template for DuckDB extensions
-
-## Support
-
-For issues, questions, or contributions, please open an issue on the GitHub repository.
