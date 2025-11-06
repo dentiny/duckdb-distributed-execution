@@ -58,9 +58,9 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 		if (first_batch) {
 			auto schema = arrow_batch->schema();
 
-			// If expected_types are provided, use them instead of deriving from Arrow schema
-			// This is important for types like ENUM that need proper type information
-			if (expected_types) {
+			// If expected_types are provided, use them instead of deriving from Arrow schema.
+			// This is useful to handle types like ENUM that need proper type information.
+			if (expected_types != nullptr) {
 				types = *expected_types;
 			}
 
@@ -68,7 +68,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 			for (int idx = 0; idx < schema->num_fields(); ++idx) {
 				auto field = schema->field(idx);
 				names.emplace_back(field->name());
-				if (!expected_types) {
+				if (expected_types == nullptr) {
 					types.emplace_back(ArrowTypeToDuckDBType(field->type()));
 				}
 			}
