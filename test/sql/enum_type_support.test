@@ -83,8 +83,7 @@ neutral
 
 # Test NULL handling with enum
 statement ok
-INSERT INTO dh.enum_test_table VALUES 
-    (4, NULL, 'person has no mood');
+INSERT INTO dh.enum_test_table VALUES (4, NULL, 'person has no mood');
 
 query I
 SELECT COUNT(*) FROM dh.enum_test_table WHERE person_mood IS NULL;
@@ -350,4 +349,3 @@ ORDER BY id;
 1	happy	positive
 2	sad	negative
 3	neutral	neutral
-
