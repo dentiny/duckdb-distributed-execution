@@ -2,6 +2,7 @@
 
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/types.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -13,6 +14,7 @@
 #include <arrow/extension_type.h>
 #include <arrow/type.h>
 #include <cstring>
+#include <iostream>
 
 namespace duckdb {
 
@@ -88,7 +90,76 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 	}
 	case LogicalTypeId::CHAR:
 	case LogicalTypeId::VARCHAR: {
-		if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
+		std::cerr << "[ConvertArrowPrimitiveElement] Handling VARCHAR, Arrow type ID: " << arrow_array->type_id() << std::endl;
+		if (arrow_array->type_id() == arrow::Type::DICTIONARY) {
+			// Handle dictionary-encoded strings (e.g., from ENUM types)
+			std::cerr << "[ConvertArrowPrimitiveElement] Handling DICTIONARY as VARCHAR" << std::endl;
+			auto dict_array = std::static_pointer_cast<arrow::DictionaryArray>(arrow_array);
+			auto dictionary = dict_array->dictionary();
+			auto indices = dict_array->indices();
+			
+			// Get the index value
+			int64_t idx_value;
+			switch (indices->type_id()) {
+			case arrow::Type::INT8: {
+				auto int_array = std::static_pointer_cast<arrow::Int8Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT16: {
+				auto int_array = std::static_pointer_cast<arrow::Int16Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT32: {
+				auto int_array = std::static_pointer_cast<arrow::Int32Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT8: {
+				auto int_array = std::static_pointer_cast<arrow::UInt8Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT16: {
+				auto int_array = std::static_pointer_cast<arrow::UInt16Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT32: {
+				auto int_array = std::static_pointer_cast<arrow::UInt32Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT64: {
+				auto int_array = std::static_pointer_cast<arrow::Int64Array>(indices);
+				idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT64: {
+				auto int_array = std::static_pointer_cast<arrow::UInt64Array>(indices);
+				idx_value = static_cast<int64_t>(int_array->Value(arrow_idx));
+				break;
+			}
+			default:
+				throw NotImplementedException("Unsupported Arrow dictionary index type for VARCHAR conversion");
+			}
+			
+			std::cerr << "[ConvertArrowPrimitiveElement] Dictionary index: " << idx_value << std::endl;
+			
+			// Get the string value from the dictionary
+			std::string str_val;
+			if (dictionary->type_id() == arrow::Type::LARGE_STRING) {
+				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(dictionary);
+				str_val = str_array->GetString(idx_value);
+			} else {
+				auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
+				str_val = str_array->GetString(idx_value);
+			}
+			
+			std::cerr << "[ConvertArrowPrimitiveElement] Dictionary string value: " << str_val << std::endl;
+			FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = StringVector::AddString(duckdb_vector, str_val);
+		} else if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
 			auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
 			auto str_val = str_array->GetString(arrow_idx);
 			FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = StringVector::AddString(duckdb_vector, str_val);
@@ -302,6 +373,100 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		}
 		break;
 	}
+	case LogicalTypeId::ENUM: {
+		// Handle Arrow dictionary-encoded arrays for ENUM types
+		std::cerr << "[ConvertArrowPrimitiveElement] Handling ENUM type at idx " << arrow_idx << std::endl;
+		std::cerr << "[ConvertArrowPrimitiveElement] Arrow array type ID: " << arrow_array->type_id() << std::endl;
+		if (arrow_array->type_id() == arrow::Type::DICTIONARY) {
+			std::cerr << "[ConvertArrowPrimitiveElement] Processing dictionary array for ENUM" << std::endl;
+			auto dict_array = std::static_pointer_cast<arrow::DictionaryArray>(arrow_array);
+			auto dictionary = dict_array->dictionary();
+			auto indices = dict_array->indices();
+			std::cerr << "[ConvertArrowPrimitiveElement] Index array type: " << indices->type()->ToString() << std::endl;
+			
+			// Get the Arrow dictionary index value
+			int64_t arrow_idx_value;
+			switch (indices->type_id()) {
+			case arrow::Type::INT8: {
+				auto int_array = std::static_pointer_cast<arrow::Int8Array>(indices);
+				arrow_idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT16: {
+				auto int_array = std::static_pointer_cast<arrow::Int16Array>(indices);
+				arrow_idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT32: {
+				auto int_array = std::static_pointer_cast<arrow::Int32Array>(indices);
+				arrow_idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT8: {
+				auto int_array = std::static_pointer_cast<arrow::UInt8Array>(indices);
+				arrow_idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT16: {
+				auto int_array = std::static_pointer_cast<arrow::UInt16Array>(indices);
+				arrow_idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::UINT32: {
+				auto int_array = std::static_pointer_cast<arrow::UInt32Array>(indices);
+				arrow_idx_value = int_array->Value(arrow_idx);
+				break;
+			}
+			default:
+				throw NotImplementedException("Unsupported Arrow dictionary index type for ENUM");
+			}
+			
+			std::cerr << "[ConvertArrowPrimitiveElement] Arrow dictionary index: " << arrow_idx_value << std::endl;
+			
+			// Get the string value from the Arrow dictionary
+			std::string str_val;
+			if (dictionary->type_id() == arrow::Type::LARGE_STRING) {
+				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(dictionary);
+				str_val = str_array->GetString(arrow_idx_value);
+			} else {
+				auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
+				str_val = str_array->GetString(arrow_idx_value);
+			}
+			
+			std::cerr << "[ConvertArrowPrimitiveElement] String value from Arrow dictionary: " << str_val << std::endl;
+			
+			// Convert the string to a DuckDB ENUM index using EnumType::GetPos
+			string_t enum_str = string_t(str_val);
+			int64_t enum_idx = EnumType::GetPos(type, enum_str);
+			
+			if (enum_idx < 0) {
+				throw InvalidInputException("ENUM value '%s' not found in type %s", str_val, type.ToString());
+			}
+			
+			std::cerr << "[ConvertArrowPrimitiveElement] DuckDB ENUM index: " << enum_idx << std::endl;
+			
+			// Store the index in the DuckDB vector based on its physical type
+			auto physical_type = type.InternalType();
+			std::cerr << "[ConvertArrowPrimitiveElement] ENUM physical type: " << (int)physical_type << std::endl;
+			switch (physical_type) {
+			case PhysicalType::UINT8:
+				FlatVector::GetData<uint8_t>(duckdb_vector)[duck_idx] = static_cast<uint8_t>(enum_idx);
+				break;
+			case PhysicalType::UINT16:
+				FlatVector::GetData<uint16_t>(duckdb_vector)[duck_idx] = static_cast<uint16_t>(enum_idx);
+				break;
+			case PhysicalType::UINT32:
+				FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(enum_idx);
+				break;
+			default:
+				throw NotImplementedException("Unsupported physical type for ENUM");
+			}
+			std::cerr << "[ConvertArrowPrimitiveElement] Successfully stored ENUM value" << std::endl;
+		} else {
+			throw NotImplementedException("ENUM type must be backed by Arrow DICTIONARY type");
+		}
+		break;
+	}
 	default:
 		throw NotImplementedException("Arrow to DuckDB conversion not implemented for type: %s", type.ToString());
 	}
@@ -314,6 +479,7 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 	// 1. Add support for complex nested types (STRUCT, MAP, UNION).
 	// 2. Add support for special types (ENUM, BIT, BIGNUM).
 	// 3. Add support for the above unsupported types, and nested list support.
+	std::cerr << "[ArrowTypeToDuckDBType] Arrow type ID: " << arrow_type->id() << " (" << arrow_type->ToString() << ")" << std::endl;
 	switch (arrow_type->id()) {
 	case arrow::Type::NA:
 		return LogicalType {LogicalTypeId::SQLNULL};
@@ -411,6 +577,27 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 		auto child_type = ArrowTypeToDuckDBType(list_type->value_type());
 		return LogicalType::LIST(child_type);
 	}
+	case arrow::Type::DICTIONARY: {
+		// Arrow dictionary types map to DuckDB ENUM types.
+		// The dictionary contains the enum values (strings), and indices reference them.
+		std::cerr << "[ArrowTypeToDuckDBType] Handling DICTIONARY type" << std::endl;
+		auto dict_type = std::static_pointer_cast<arrow::DictionaryType>(arrow_type);
+		auto value_type = dict_type->value_type();
+		std::cerr << "[ArrowTypeToDuckDBType] Dictionary value type: " << value_type->ToString() << std::endl;
+		
+		// We only support string dictionaries for enum conversion
+		if (value_type->id() != arrow::Type::STRING && value_type->id() != arrow::Type::LARGE_STRING) {
+			// Fallback to the index type for non-string dictionaries
+			std::cerr << "[ArrowTypeToDuckDBType] Non-string dictionary, falling back to index type" << std::endl;
+			return ArrowTypeToDuckDBType(dict_type->index_type());
+		}
+		
+		// For dictionary-encoded strings, we return VARCHAR since we need the actual
+		// dictionary values to create a proper ENUM type. The ENUM creation will be
+		// handled during table creation or when the full schema is known.
+		std::cerr << "[ArrowTypeToDuckDBType] Dictionary with string values, returning VARCHAR" << std::endl;
+		return LogicalType {LogicalTypeId::VARCHAR};
+	}
 	default:
 		// Fallback to VARCHAR for unsupported types (STRUCT, MAP, UNION, etc.).
 		return LogicalType {LogicalTypeId::VARCHAR};
@@ -420,6 +607,9 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_array, Vector &duckdb_vector,
                                      const LogicalType &type, idx_t num_rows) {
 	// Convert based on type - match Arrow array type to DuckDB type.
+	std::cerr << "[ConvertArrowArrayToDuckDBVector] Converting " << num_rows << " rows" << std::endl;
+	std::cerr << "[ConvertArrowArrayToDuckDBVector] Arrow array type: " << arrow_array->type()->ToString() << std::endl;
+	std::cerr << "[ConvertArrowArrayToDuckDBVector] DuckDB type: " << type.ToString() << std::endl;
 	for (idx_t row_idx = 0; row_idx < num_rows; row_idx++) {
 		if (arrow_array->IsNull(row_idx)) {
 			FlatVector::SetNull(duckdb_vector, row_idx, true);

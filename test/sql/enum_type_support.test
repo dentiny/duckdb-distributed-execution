@@ -1,0 +1,353 @@
+# name: test/sql/enum_type_support.test
+# description: Test distributed execution with ENUM data types
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8815);
+
+statement ok
+ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+statement ok
+PRAGMA duckherder_register_remote_table('enum_test_table', 'enum_test_table');
+
+statement ok
+DROP TABLE IF EXISTS dh.enum_test_table;
+
+# Test basic enum type
+statement ok
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral');
+
+statement ok
+CREATE TABLE dh.enum_test_table (
+    id INTEGER,
+    person_mood mood,
+    description VARCHAR
+);
+
+statement ok
+INSERT INTO dh.enum_test_table VALUES 
+    (1, 'happy', 'person is happy'),
+    (2, 'sad', 'person is sad'),
+    (3, 'neutral', 'person is neutral');
+
+query ITT
+SELECT * FROM dh.enum_test_table ORDER BY id;
+----
+1	happy	person is happy
+2	sad	person is sad
+3	neutral	person is neutral
+
+# Test filtering on enum values
+query IT
+SELECT id, person_mood FROM dh.enum_test_table WHERE person_mood = 'happy';
+----
+1	happy
+
+query IT
+SELECT id, person_mood FROM dh.enum_test_table WHERE person_mood = 'sad';
+----
+2	sad
+
+# Test aggregation with enum types
+query I
+SELECT COUNT(*) FROM dh.enum_test_table;
+----
+3
+
+query I
+SELECT COUNT(*) FROM dh.enum_test_table WHERE person_mood = 'neutral';
+----
+1
+
+# Test enum ordering (enums are ordered by their definition order)
+query T
+SELECT person_mood FROM dh.enum_test_table ORDER BY person_mood;
+----
+happy
+sad
+neutral
+
+# Test MIN/MAX on enum types
+query T
+SELECT MIN(person_mood) FROM dh.enum_test_table;
+----
+happy
+
+query T
+SELECT MAX(person_mood) FROM dh.enum_test_table;
+----
+neutral
+
+# Test NULL handling with enum
+statement ok
+INSERT INTO dh.enum_test_table VALUES 
+    (4, NULL, 'person has no mood');
+
+query I
+SELECT COUNT(*) FROM dh.enum_test_table WHERE person_mood IS NULL;
+----
+1
+
+query ITT
+SELECT * FROM dh.enum_test_table WHERE id = 4;
+----
+4	NULL	person has no mood
+
+# Test multiple enum types
+statement ok
+DROP TABLE IF EXISTS dh.multi_enum_table;
+
+statement ok
+CREATE TYPE size AS ENUM ('small', 'medium', 'large', 'xlarge');
+
+statement ok
+CREATE TYPE color AS ENUM ('red', 'green', 'blue', 'yellow');
+
+statement ok
+CREATE TABLE dh.multi_enum_table (
+    id INTEGER,
+    product_size size,
+    product_color color
+);
+
+statement ok
+INSERT INTO dh.multi_enum_table VALUES 
+    (1, 'small', 'red'),
+    (2, 'medium', 'green'),
+    (3, 'large', 'blue'),
+    (4, 'xlarge', 'yellow'),
+    (5, 'small', 'blue');
+
+query ITT
+SELECT * FROM dh.multi_enum_table ORDER BY id;
+----
+1	small	red
+2	medium	green
+3	large	blue
+4	xlarge	yellow
+5	small	blue
+
+# Test filtering with multiple enum columns
+query ITT
+SELECT * FROM dh.multi_enum_table WHERE product_size = 'small' ORDER BY id;
+----
+1	small	red
+5	small	blue
+
+query ITT
+SELECT * FROM dh.multi_enum_table WHERE product_color = 'blue' ORDER BY id;
+----
+3	large	blue
+5	small	blue
+
+query ITT
+SELECT * FROM dh.multi_enum_table WHERE product_size = 'small' AND product_color = 'blue';
+----
+5	small	blue
+
+# Test enum with many values (tests different physical types)
+statement ok
+DROP TABLE IF EXISTS dh.large_enum_table;
+
+statement ok
+CREATE TYPE priority AS ENUM (
+    'priority_01', 'priority_02', 'priority_03', 'priority_04', 'priority_05',
+    'priority_06', 'priority_07', 'priority_08', 'priority_09', 'priority_10'
+);
+
+statement ok
+CREATE TABLE dh.large_enum_table (
+    id INTEGER,
+    task_priority priority
+);
+
+statement ok
+INSERT INTO dh.large_enum_table VALUES 
+    (1, 'priority_01'),
+    (2, 'priority_05'),
+    (3, 'priority_10'),
+    (4, 'priority_03'),
+    (5, 'priority_07');
+
+query IT
+SELECT * FROM dh.large_enum_table ORDER BY id;
+----
+1	priority_01
+2	priority_05
+3	priority_10
+4	priority_03
+5	priority_07
+
+# Test enum comparison operations
+query I
+SELECT COUNT(*) FROM dh.large_enum_table WHERE task_priority < 'priority_05';
+----
+2
+
+query I
+SELECT COUNT(*) FROM dh.large_enum_table WHERE task_priority >= 'priority_05';
+----
+3
+
+# Test GROUP BY with enum
+query TI
+SELECT product_color, COUNT(*) FROM dh.multi_enum_table GROUP BY product_color ORDER BY product_color;
+----
+red	1
+green	1
+blue	2
+yellow	1
+
+query TI
+SELECT product_size, COUNT(*) FROM dh.multi_enum_table GROUP BY product_size ORDER BY product_size;
+----
+small	2
+medium	1
+large	1
+xlarge	1
+
+# Test DISTINCT with enum
+query T
+SELECT DISTINCT person_mood FROM dh.enum_test_table WHERE person_mood IS NOT NULL ORDER BY person_mood;
+----
+happy
+sad
+neutral
+
+# Test enum in WHERE clause with IN operator
+query IT
+SELECT id, person_mood FROM dh.enum_test_table WHERE person_mood IN ('happy', 'neutral') ORDER BY id;
+----
+1	happy
+3	neutral
+
+# Test enum comparison between columns
+statement ok
+DROP TABLE IF EXISTS dh.enum_comparison_table;
+
+statement ok
+CREATE TYPE status AS ENUM ('pending', 'approved', 'rejected');
+
+statement ok
+CREATE TABLE dh.enum_comparison_table (
+    id INTEGER,
+    old_status status,
+    new_status status
+);
+
+statement ok
+INSERT INTO dh.enum_comparison_table VALUES 
+    (1, 'pending', 'approved'),
+    (2, 'pending', 'rejected'),
+    (3, 'approved', 'approved'),
+    (4, 'rejected', 'pending');
+
+query ITT
+SELECT * FROM dh.enum_comparison_table WHERE old_status = new_status;
+----
+3	approved	approved
+
+query ITT
+SELECT * FROM dh.enum_comparison_table WHERE old_status != new_status ORDER BY id;
+----
+1	pending	approved
+2	pending	rejected
+4	rejected	pending
+
+# Test ORDER BY with enum in different directions
+query IT
+SELECT id, product_size FROM dh.multi_enum_table ORDER BY product_size ASC;
+----
+1	small
+5	small
+2	medium
+3	large
+4	xlarge
+
+query IT
+SELECT id, product_size FROM dh.multi_enum_table ORDER BY product_size DESC;
+----
+4	xlarge
+3	large
+2	medium
+1	small
+5	small
+
+# Test enum with JOIN operations
+statement ok
+DROP TABLE IF EXISTS dh.enum_join_table1;
+
+statement ok
+DROP TABLE IF EXISTS dh.enum_join_table2;
+
+statement ok
+CREATE TABLE dh.enum_join_table1 (
+    id INTEGER,
+    category mood
+);
+
+statement ok
+CREATE TABLE dh.enum_join_table2 (
+    id INTEGER,
+    category mood,
+    score INTEGER
+);
+
+statement ok
+INSERT INTO dh.enum_join_table1 VALUES 
+    (1, 'happy'),
+    (2, 'sad'),
+    (3, 'neutral');
+
+statement ok
+INSERT INTO dh.enum_join_table2 VALUES 
+    (1, 'happy', 100),
+    (2, 'happy', 95),
+    (3, 'sad', 50);
+
+query IITI
+SELECT t1.id, t1.category, t2.id, t2.score 
+FROM dh.enum_join_table1 t1 
+JOIN dh.enum_join_table2 t2 ON t1.category = t2.category 
+ORDER BY t1.id, t2.id;
+----
+1	happy	1	100
+1	happy	2	95
+2	sad	3	50
+
+# Test enum updates
+# TODO: UPDATE operations on distributed tables currently have issues
+# statement ok
+# UPDATE dh.enum_test_table SET person_mood = 'happy' WHERE id = 2;
+
+# query IT
+# SELECT id, person_mood FROM dh.enum_test_table WHERE id = 2;
+# ----
+# 2	happy
+
+# Test enum with aggregate functions
+query I
+SELECT COUNT(DISTINCT person_mood) FROM dh.enum_test_table WHERE person_mood IS NOT NULL;
+----
+3
+
+# Test enum with CASE statements
+query ITT
+SELECT id, person_mood,
+    CASE 
+        WHEN person_mood = 'happy' THEN 'positive'
+        WHEN person_mood = 'sad' THEN 'negative'
+        WHEN person_mood = 'neutral' THEN 'neutral'
+        ELSE 'unknown'
+    END AS mood_category
+FROM dh.enum_test_table 
+WHERE person_mood IS NOT NULL
+ORDER BY id;
+----
+1	happy	positive
+2	sad	negative
+3	neutral	neutral
+

@@ -44,7 +44,8 @@ public:
 	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
 
 	// Get table data.
-	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0);
+	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0,
+	                                  const vector<LogicalType> *expected_types = nullptr);
 
 private:
 	string server_url;
