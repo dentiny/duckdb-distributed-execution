@@ -70,6 +70,24 @@ std::string GetDictionaryString(const std::shared_ptr<arrow::Array> &dictionary,
 	}
 }
 
+// Util function to store an unsigned integer value in a DuckDB vector based on physical type
+void StoreEnumValue(Vector &duckdb_vector, idx_t duck_idx, const LogicalType &type, int64_t value) {
+	auto physical_type = type.InternalType();
+	switch (physical_type) {
+	case PhysicalType::UINT8:
+		FlatVector::GetData<uint8_t>(duckdb_vector)[duck_idx] = static_cast<uint8_t>(value);
+		break;
+	case PhysicalType::UINT16:
+		FlatVector::GetData<uint16_t>(duckdb_vector)[duck_idx] = static_cast<uint16_t>(value);
+		break;
+	case PhysicalType::UINT32:
+		FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(value);
+		break;
+	default:
+		throw NotImplementedException("Unsupported physical type for ENUM");
+	}
+}
+
 // Util function to convert a single primitive element from Arrow array to DuckDB vector.
 void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx,
                                   Vector &duckdb_vector, idx_t duck_idx, const LogicalType &type) {
@@ -378,20 +396,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			}
 
 			// Store the index in the DuckDB vector based on its physical type
-			auto physical_type = type.InternalType();
-			switch (physical_type) {
-			case PhysicalType::UINT8:
-				FlatVector::GetData<uint8_t>(duckdb_vector)[duck_idx] = static_cast<uint8_t>(enum_idx);
-				break;
-			case PhysicalType::UINT16:
-				FlatVector::GetData<uint16_t>(duckdb_vector)[duck_idx] = static_cast<uint16_t>(enum_idx);
-				break;
-			case PhysicalType::UINT32:
-				FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(enum_idx);
-				break;
-			default:
-				throw NotImplementedException("Unsupported physical type for ENUM");
-			}
+			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
 		} else {
 			throw NotImplementedException("ENUM type must be backed by Arrow DICTIONARY type");
 		}
