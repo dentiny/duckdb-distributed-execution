@@ -18,13 +18,11 @@ namespace duckdb {
 
 namespace {
 
-// Util function to convert a single primitive element from Arrow array to DuckDB vector
+// Util function to convert a single primitive element from Arrow array to DuckDB vector.
 void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx,
                                          Vector &duckdb_vector, idx_t duck_idx, const LogicalType &type) {
-	// Type-specific conversion using correct Arrow array types.
 	switch (type.id()) {
 	case LogicalTypeId::SQLNULL:
-		// NULL values are already handled by caller.
 		FlatVector::SetNull(duckdb_vector, duck_idx, true);
 		break;
 	case LogicalTypeId::BOOLEAN: {
@@ -73,7 +71,6 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		break;
 	}
 	case LogicalTypeId::FLOAT: {
-		// Handle both HALF_FLOAT and FLOAT Arrow types.
 		if (arrow_array->type_id() == arrow::Type::HALF_FLOAT) {
 			auto half_array = std::static_pointer_cast<arrow::HalfFloatArray>(arrow_array);
 			FlatVector::GetData<float>(duckdb_vector)[duck_idx] = static_cast<float>(half_array->Value(arrow_idx));
@@ -313,7 +310,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 }  // namespace
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
-	// TODO:
+	// TODO(hjiang):
 	// 1. Add support for complex nested types (STRUCT, MAP, UNION).
 	// 2. Add support for special types (ENUM, BIT, BIGNUM).
 	// 3. Add support for the above unsupported types, and nested list support.

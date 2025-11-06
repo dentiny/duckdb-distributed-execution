@@ -123,9 +123,6 @@ SELECT COUNT(*) FROM dh.list_test_table WHERE int_list IS NOT NULL;
 ----
 5
 
-# NOTE: Additional table tests removed for simplicity
-# The main list_test_table already covers all primitive types
-
 # Test list operations with WHERE clauses
 query I
 SELECT id FROM dh.list_test_table WHERE len(int_list) > 2 ORDER BY id;
