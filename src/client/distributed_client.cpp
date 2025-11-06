@@ -27,7 +27,8 @@ DistributedClient &DistributedClient::GetInstance() {
 	return *client;
 }
 
-unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset) {
+unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,
+                                                     const vector<LogicalType> *expected_types) {
 	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 	auto status = client->ScanTable(table_name, limit, offset, stream);
 	if (!status.ok()) {
@@ -57,11 +58,19 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 		if (first_batch) {
 			auto schema = arrow_batch->schema();
 
+			// If expected_types are provided, use them instead of deriving from Arrow schema.
+			// This is useful to handle types like ENUM that need proper type information.
+			if (expected_types != nullptr) {
+				types = *expected_types;
+			}
+
 			// Convert Arrow schema to DuckDB types and names.
 			for (int idx = 0; idx < schema->num_fields(); ++idx) {
 				auto field = schema->field(idx);
 				names.emplace_back(field->name());
-				types.emplace_back(ArrowTypeToDuckDBType(field->type()));
+				if (expected_types == nullptr) {
+					types.emplace_back(ArrowTypeToDuckDBType(field->type()));
+				}
 			}
 
 			collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
