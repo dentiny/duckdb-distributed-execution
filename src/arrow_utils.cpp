@@ -16,8 +16,10 @@
 
 namespace duckdb {
 
-// Helper function to convert a single primitive element from Arrow array to DuckDB vector
-static void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx,
+namespace {
+
+// Util function to convert a single primitive element from Arrow array to DuckDB vector
+void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx,
                                          Vector &duckdb_vector, idx_t duck_idx, const LogicalType &type) {
 	// Type-specific conversion using correct Arrow array types.
 	switch (type.id()) {
@@ -296,18 +298,19 @@ static void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &ar
 				FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = value;
 				break;
 			default:
-				FlatVector::SetNull(duckdb_vector, duck_idx, true);
-				break;
+				throw NotImplementedException("Unsupported physical type for DECIMAL");
 			}
+		} else {
+			throw NotImplementedException("Unsupported Arrow decimal type");
 		}
 		break;
 	}
 	default:
-		// Unsupported types default to NULL.
-		FlatVector::SetNull(duckdb_vector, duck_idx, true);
-		break;
+		throw NotImplementedException("Arrow to DuckDB conversion not implemented for type: %s", type.ToString());
 	}
 }
+
+}  // namespace
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
 	// TODO:
