@@ -19,6 +19,57 @@ namespace duckdb {
 
 namespace {
 
+// Util function to get the index value from an Arrow dictionary indices array
+int64_t GetDictionaryIndex(const std::shared_ptr<arrow::Array> &indices, idx_t arrow_idx) {
+	switch (indices->type_id()) {
+	case arrow::Type::INT8: {
+		auto int_array = std::static_pointer_cast<arrow::Int8Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::INT16: {
+		auto int_array = std::static_pointer_cast<arrow::Int16Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::INT32: {
+		auto int_array = std::static_pointer_cast<arrow::Int32Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::UINT8: {
+		auto int_array = std::static_pointer_cast<arrow::UInt8Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::UINT16: {
+		auto int_array = std::static_pointer_cast<arrow::UInt16Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::UINT32: {
+		auto int_array = std::static_pointer_cast<arrow::UInt32Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::INT64: {
+		auto int_array = std::static_pointer_cast<arrow::Int64Array>(indices);
+		return int_array->Value(arrow_idx);
+	}
+	case arrow::Type::UINT64: {
+		auto int_array = std::static_pointer_cast<arrow::UInt64Array>(indices);
+		return static_cast<int64_t>(int_array->Value(arrow_idx));
+	}
+	default:
+		throw NotImplementedException("Unsupported Arrow dictionary index type");
+	}
+}
+
+// Util function to get the string value from an Arrow dictionary at a given index
+std::string GetDictionaryString(const std::shared_ptr<arrow::Array> &dictionary, int64_t idx) {
+	if (dictionary->type_id() == arrow::Type::LARGE_STRING) {
+		auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(dictionary);
+		return str_array->GetString(idx);
+	} else {
+		auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
+		return str_array->GetString(idx);
+	}
+}
+
 // Util function to convert a single primitive element from Arrow array to DuckDB vector.
 void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx,
                                   Vector &duckdb_vector, idx_t duck_idx, const LogicalType &type) {
@@ -92,66 +143,8 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		if (arrow_array->type_id() == arrow::Type::DICTIONARY) {
 			// Handle dictionary-encoded strings (e.g., from ENUM types)
 			auto dict_array = std::static_pointer_cast<arrow::DictionaryArray>(arrow_array);
-			auto dictionary = dict_array->dictionary();
-			auto indices = dict_array->indices();
-
-			// Get the index value
-			int64_t idx_value;
-			switch (indices->type_id()) {
-			case arrow::Type::INT8: {
-				auto int_array = std::static_pointer_cast<arrow::Int8Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::INT16: {
-				auto int_array = std::static_pointer_cast<arrow::Int16Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::INT32: {
-				auto int_array = std::static_pointer_cast<arrow::Int32Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT8: {
-				auto int_array = std::static_pointer_cast<arrow::UInt8Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT16: {
-				auto int_array = std::static_pointer_cast<arrow::UInt16Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT32: {
-				auto int_array = std::static_pointer_cast<arrow::UInt32Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::INT64: {
-				auto int_array = std::static_pointer_cast<arrow::Int64Array>(indices);
-				idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT64: {
-				auto int_array = std::static_pointer_cast<arrow::UInt64Array>(indices);
-				idx_value = static_cast<int64_t>(int_array->Value(arrow_idx));
-				break;
-			}
-			default:
-				throw NotImplementedException("Unsupported Arrow dictionary index type for VARCHAR conversion");
-			}
-
-			// Get the string value from the dictionary
-			std::string str_val;
-			if (dictionary->type_id() == arrow::Type::LARGE_STRING) {
-				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(dictionary);
-				str_val = str_array->GetString(idx_value);
-			} else {
-				auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
-				str_val = str_array->GetString(idx_value);
-			}
-
+			auto idx_value = GetDictionaryIndex(dict_array->indices(), arrow_idx);
+			auto str_val = GetDictionaryString(dict_array->dictionary(), idx_value);
 			FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = StringVector::AddString(duckdb_vector, str_val);
 		} else if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
 			auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
@@ -371,55 +364,10 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		// Handle Arrow dictionary-encoded arrays for ENUM types
 		if (arrow_array->type_id() == arrow::Type::DICTIONARY) {
 			auto dict_array = std::static_pointer_cast<arrow::DictionaryArray>(arrow_array);
-			auto dictionary = dict_array->dictionary();
-			auto indices = dict_array->indices();
-
-			// Get the Arrow dictionary index value
-			int64_t arrow_idx_value;
-			switch (indices->type_id()) {
-			case arrow::Type::INT8: {
-				auto int_array = std::static_pointer_cast<arrow::Int8Array>(indices);
-				arrow_idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::INT16: {
-				auto int_array = std::static_pointer_cast<arrow::Int16Array>(indices);
-				arrow_idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::INT32: {
-				auto int_array = std::static_pointer_cast<arrow::Int32Array>(indices);
-				arrow_idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT8: {
-				auto int_array = std::static_pointer_cast<arrow::UInt8Array>(indices);
-				arrow_idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT16: {
-				auto int_array = std::static_pointer_cast<arrow::UInt16Array>(indices);
-				arrow_idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			case arrow::Type::UINT32: {
-				auto int_array = std::static_pointer_cast<arrow::UInt32Array>(indices);
-				arrow_idx_value = int_array->Value(arrow_idx);
-				break;
-			}
-			default:
-				throw NotImplementedException("Unsupported Arrow dictionary index type for ENUM");
-			}
 
 			// Get the string value from the Arrow dictionary
-			std::string str_val;
-			if (dictionary->type_id() == arrow::Type::LARGE_STRING) {
-				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(dictionary);
-				str_val = str_array->GetString(arrow_idx_value);
-			} else {
-				auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
-				str_val = str_array->GetString(arrow_idx_value);
-			}
+			auto arrow_idx_value = GetDictionaryIndex(dict_array->indices(), arrow_idx);
+			auto str_val = GetDictionaryString(dict_array->dictionary(), arrow_idx_value);
 
 			// Convert the string to a DuckDB ENUM index using EnumType::GetPos
 			string_t enum_str = string_t(str_val);
