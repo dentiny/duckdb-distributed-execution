@@ -10,7 +10,6 @@
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
-#include <arrow/flight/types.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
