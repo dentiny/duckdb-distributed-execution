@@ -17,7 +17,8 @@
 namespace duckdb {
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
-	// TODO: Add support for complex nested types (LIST, STRUCT, MAP, UNION) and special types (ENUM, BIT, BIGNUM).
+	// TODO: Add support for complex nested types (STRUCT, MAP, UNION) and special types (ENUM, BIT, BIGNUM).
+	// LIST with primitive child types is supported.
 	switch (arrow_type->id()) {
 	case arrow::Type::NA:
 		return LogicalType {LogicalTypeId::SQLNULL};
@@ -111,8 +112,14 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 		auto decimal_type = std::static_pointer_cast<arrow::DecimalType>(arrow_type);
 		return LogicalType::DECIMAL(decimal_type->precision(), decimal_type->scale());
 	}
+	case arrow::Type::LIST: {
+		// Extract child type from Arrow list type.
+		auto list_type = std::static_pointer_cast<arrow::ListType>(arrow_type);
+		auto child_type = ArrowTypeToDuckDBType(list_type->value_type());
+		return LogicalType::LIST(child_type);
+	}
 	default:
-		// Fallback to VARCHAR for unsupported types (LIST, STRUCT, MAP, etc.).
+		// Fallback to VARCHAR for unsupported types (STRUCT, MAP, UNION, etc.).
 		return LogicalType {LogicalTypeId::VARCHAR};
 	}
 }
@@ -419,6 +426,152 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 				}
 			}
 			// DECIMAL256 would fall back to VARCHAR in type conversion.
+			break;
+		}
+		case LogicalTypeId::LIST: {
+			auto list_array = std::static_pointer_cast<arrow::ListArray>(arrow_array);
+			auto child_array = list_array->values();
+			
+			// Get the child type from the DuckDB LIST type.
+			auto &child_type = ListType::GetChildType(type);
+			
+			// Get offset and length for this list entry.
+			auto offset = list_array->value_offset(row_idx);
+			auto length = list_array->value_length(row_idx);
+			
+			// Create a list entry in the DuckDB vector.
+			auto old_size = ListVector::GetListSize(duckdb_vector);
+			FlatVector::GetData<list_entry_t>(duckdb_vector)[row_idx].offset = old_size;
+			FlatVector::GetData<list_entry_t>(duckdb_vector)[row_idx].length = length;
+			
+			// Get the child vector from the LIST vector.
+			auto &child_vector = ListVector::GetEntry(duckdb_vector);
+			ListVector::SetListSize(duckdb_vector, old_size + length);
+			
+			// Convert each element in the list.
+			for (idx_t i = 0; i < static_cast<idx_t>(length); i++) {
+				auto child_idx = offset + i;
+				if (child_array->IsNull(child_idx)) {
+					FlatVector::SetNull(child_vector, old_size + i, true);
+					continue;
+				}
+				
+				// Convert child element based on its type.
+				switch (child_type.id()) {
+				case LogicalTypeId::BOOLEAN: {
+					auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(child_array);
+					FlatVector::GetData<bool>(child_vector)[old_size + i] = bool_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::TINYINT: {
+					auto int_array = std::static_pointer_cast<arrow::Int8Array>(child_array);
+					FlatVector::GetData<int8_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::SMALLINT: {
+					auto int_array = std::static_pointer_cast<arrow::Int16Array>(child_array);
+					FlatVector::GetData<int16_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::INTEGER: {
+					auto int_array = std::static_pointer_cast<arrow::Int32Array>(child_array);
+					FlatVector::GetData<int32_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::BIGINT: {
+					auto int_array = std::static_pointer_cast<arrow::Int64Array>(child_array);
+					FlatVector::GetData<int64_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::UTINYINT: {
+					auto int_array = std::static_pointer_cast<arrow::UInt8Array>(child_array);
+					FlatVector::GetData<uint8_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::USMALLINT: {
+					auto int_array = std::static_pointer_cast<arrow::UInt16Array>(child_array);
+					FlatVector::GetData<uint16_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::UINTEGER: {
+					auto int_array = std::static_pointer_cast<arrow::UInt32Array>(child_array);
+					FlatVector::GetData<uint32_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::UBIGINT: {
+					auto int_array = std::static_pointer_cast<arrow::UInt64Array>(child_array);
+					FlatVector::GetData<uint64_t>(child_vector)[old_size + i] = int_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::FLOAT: {
+					if (child_array->type_id() == arrow::Type::HALF_FLOAT) {
+						auto half_array = std::static_pointer_cast<arrow::HalfFloatArray>(child_array);
+						FlatVector::GetData<float>(child_vector)[old_size + i] = static_cast<float>(half_array->Value(child_idx));
+					} else {
+						auto float_array = std::static_pointer_cast<arrow::FloatArray>(child_array);
+						FlatVector::GetData<float>(child_vector)[old_size + i] = float_array->Value(child_idx);
+					}
+					break;
+				}
+				case LogicalTypeId::DOUBLE: {
+					auto double_array = std::static_pointer_cast<arrow::DoubleArray>(child_array);
+					FlatVector::GetData<double>(child_vector)[old_size + i] = double_array->Value(child_idx);
+					break;
+				}
+				case LogicalTypeId::VARCHAR: {
+					if (child_array->type_id() == arrow::Type::LARGE_STRING) {
+						auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(child_array);
+						auto str_val = str_array->GetString(child_idx);
+						FlatVector::GetData<string_t>(child_vector)[old_size + i] = StringVector::AddString(child_vector, str_val);
+					} else {
+						auto str_array = std::static_pointer_cast<arrow::StringArray>(child_array);
+						auto str_val = str_array->GetString(child_idx);
+						FlatVector::GetData<string_t>(child_vector)[old_size + i] = StringVector::AddString(child_vector, str_val);
+					}
+					break;
+				}
+				case LogicalTypeId::DATE: {
+					date_t date_val;
+					if (child_array->type_id() == arrow::Type::DATE32) {
+						auto date_array = std::static_pointer_cast<arrow::Date32Array>(child_array);
+						date_val = Date::EpochDaysToDate(date_array->Value(child_idx));
+					} else {
+						auto date_array = std::static_pointer_cast<arrow::Date64Array>(child_array);
+						auto ms = date_array->Value(child_idx);
+						date_val = Date::EpochDaysToDate(static_cast<int32_t>(ms / (1000 * 60 * 60 * 24)));
+					}
+					FlatVector::GetData<date_t>(child_vector)[old_size + i] = date_val;
+					break;
+				}
+				case LogicalTypeId::TIMESTAMP: {
+					auto ts_array = std::static_pointer_cast<arrow::TimestampArray>(child_array);
+					auto ts_type = std::static_pointer_cast<arrow::TimestampType>(child_array->type());
+					int64_t value = ts_array->Value(child_idx);
+					timestamp_t ts_val;
+					
+					switch (ts_type->unit()) {
+					case arrow::TimeUnit::SECOND:
+						ts_val = Timestamp::FromEpochSeconds(value);
+						break;
+					case arrow::TimeUnit::MILLI:
+						ts_val = Timestamp::FromEpochMs(value);
+						break;
+					case arrow::TimeUnit::MICRO:
+						ts_val = Timestamp::FromEpochMicroSeconds(value);
+						break;
+					case arrow::TimeUnit::NANO:
+						ts_val = Timestamp::FromEpochNanoSeconds(value);
+						break;
+					}
+					FlatVector::GetData<timestamp_t>(child_vector)[old_size + i] = ts_val;
+					break;
+				}
+				default:
+					// Unsupported child type.
+					FlatVector::SetNull(child_vector, old_size + i, true);
+					break;
+				}
+			}
 			break;
 		}
 		default:

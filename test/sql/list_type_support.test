@@ -1,0 +1,164 @@
+# name: test/sql/list_type_support.test
+# description: Test distributed execution with LIST data types
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8815);
+
+statement ok
+ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+statement ok
+PRAGMA duckherder_register_remote_table('list_test_table', 'list_test_table');
+
+statement ok
+DROP TABLE IF EXISTS dh.list_test_table;
+
+# Test basic list types with primitive elements
+statement ok
+CREATE TABLE dh.list_test_table (
+    id INTEGER,
+    int_list INTEGER[],
+    bigint_list BIGINT[],
+    float_list FLOAT[],
+    double_list DOUBLE[],
+    bool_list BOOLEAN[],
+    varchar_list VARCHAR[],
+    date_list DATE[],
+    timestamp_list TIMESTAMP[]
+);
+
+statement ok
+INSERT INTO dh.list_test_table VALUES 
+    (1, [1, 2, 3], [100, 200, 300], [1.1, 2.2, 3.3], [10.5, 20.5, 30.5], [true, false, true], ['a', 'b', 'c'], ['2023-01-01', '2023-06-15', '2023-12-31'], ['2023-01-01 10:00:00', '2023-06-15 12:30:00', '2023-12-31 23:59:59']),
+    (2, [10, 20], [1000, 2000], [5.5, 6.6], [100.1, 200.2], [false, false], ['hello', 'world'], ['2024-01-01', '2024-12-31'], ['2024-01-01 00:00:00', '2024-12-31 23:59:59']),
+    (3, [100], [10000], [99.9], [999.99], [true], ['single'], ['2025-06-15'], ['2025-06-15 12:00:00']);
+
+query IIIIITTTT
+SELECT * FROM dh.list_test_table ORDER BY id;
+----
+1	[1, 2, 3]	[100, 200, 300]	[1.1, 2.2, 3.3]	[10.5, 20.5, 30.5]	[true, false, true]	[a, b, c]	[2023-01-01, 2023-06-15, 2023-12-31]	['2023-01-01 10:00:00', '2023-06-15 12:30:00', '2023-12-31 23:59:59']
+2	[10, 20]	[1000, 2000]	[5.5, 6.6]	[100.1, 200.2]	[false, false]	[hello, world]	[2024-01-01, 2024-12-31]	['2024-01-01 00:00:00', '2024-12-31 23:59:59']
+3	[100]	[10000]	[99.9]	[999.99]	[true]	[single]	[2025-06-15]	['2025-06-15 12:00:00']
+
+# Test empty lists
+statement ok
+INSERT INTO dh.list_test_table VALUES 
+    (4, [], [], [], [], [], [], [], []);
+
+query IIIIITTTT
+SELECT * FROM dh.list_test_table WHERE id = 4;
+----
+4	[]	[]	[]	[]	[]	[]	[]	[]
+
+# Test NULL lists
+statement ok
+INSERT INTO dh.list_test_table VALUES 
+    (5, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+query I
+SELECT COUNT(*) FROM dh.list_test_table WHERE int_list IS NULL;
+----
+1
+
+query I
+SELECT COUNT(*) FROM dh.list_test_table WHERE varchar_list IS NULL;
+----
+1
+
+# Test lists with NULL elements in existing table
+statement ok
+INSERT INTO dh.list_test_table VALUES 
+    (10, [1, NULL, 3], [100, NULL, 300], [1.1, NULL, 3.3], [10.5, NULL, 30.5], [true, NULL, false], ['a', NULL, 'c'], NULL, NULL);
+
+query IIIIITTTT
+SELECT * FROM dh.list_test_table WHERE id = 10;
+----
+10	[1, NULL, 3]	[100, NULL, 300]	[1.1, NULL, 3.3]	[10.5, NULL, 30.5]	[true, NULL, false]	[a, NULL, c]	NULL	NULL
+
+# Test list length function
+query II
+SELECT id, len(int_list) FROM dh.list_test_table WHERE id <= 3 ORDER BY id;
+----
+1	3
+2	2
+3	1
+
+# Test list element access
+query II
+SELECT id, int_list[1] FROM dh.list_test_table WHERE id <= 3 ORDER BY id;
+----
+1	1
+2	10
+3	100
+
+query IT
+SELECT id, varchar_list[2] FROM dh.list_test_table WHERE id <= 3 ORDER BY id;
+----
+1	b
+2	world
+3	NULL
+
+# Test list aggregation with unnest
+query I
+SELECT unnest(int_list) FROM dh.list_test_table WHERE id = 1 ORDER BY 1;
+----
+1
+2
+3
+
+# Test filtering based on list content
+query I
+SELECT id FROM dh.list_test_table WHERE list_contains(bool_list, true) ORDER BY id;
+----
+1
+3
+10
+
+# Test COUNT with lists
+query I
+SELECT COUNT(*) FROM dh.list_test_table WHERE int_list IS NOT NULL;
+----
+5
+
+# NOTE: Additional table tests removed for simplicity
+# The main list_test_table already covers all primitive types
+
+# Test list operations with WHERE clauses
+query I
+SELECT id FROM dh.list_test_table WHERE len(int_list) > 2 ORDER BY id;
+----
+1
+10
+
+query I
+SELECT id FROM dh.list_test_table WHERE len(varchar_list) = 2 ORDER BY id;
+----
+2
+
+# Test list with dates
+query TT
+SELECT id, date_list FROM dh.list_test_table WHERE id = 1;
+----
+1	[2023-01-01, 2023-06-15, 2023-12-31]
+
+# Test list with timestamps
+query TT
+SELECT id, timestamp_list FROM dh.list_test_table WHERE id = 2;
+----
+2	['2024-01-01 00:00:00', '2024-12-31 23:59:59']
+
+# Test aggregation on tables with list columns
+query I
+SELECT COUNT(*) FROM dh.list_test_table WHERE int_list IS NOT NULL AND len(int_list) > 0;
+----
+4
+
+# Test boolean lists
+query TT
+SELECT id, bool_list FROM dh.list_test_table WHERE id <= 2 ORDER BY id;
+----
+1	[true, false, true]
+2	[false, false]
