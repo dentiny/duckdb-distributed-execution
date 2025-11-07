@@ -183,17 +183,9 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
 	
-	// Log worker execution - visible to user
-	printf("[WORKER %s] Partition %llu/%llu executed, returned %llu rows\n", 
-	       worker_id.c_str(), 
-	       static_cast<long long unsigned>(req.partition_id()), 
-	       static_cast<long long unsigned>(req.total_partitions()),
-	       static_cast<long long unsigned>(row_count));
-	fflush(stdout);
-	
-	DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Worker %s (partition %llu/%llu) returned %llu rows", 
-	                                                 worker_id, req.partition_id(), req.total_partitions(),
-	                                                 static_cast<long long unsigned>(row_count)));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s (partition %llu/%llu) returned %llu rows", 
+	                                                  worker_id, req.partition_id(), req.total_partitions(),
+	                                                  static_cast<long long unsigned>(row_count)));
 	
 	return arrow::Status::OK();
 }
@@ -240,8 +232,6 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 		return arrow::Status::Invalid("Deserialized plan was null");
 	}
 
-	std::cerr << "Worker executing plan, SQL was: " << req.sql() << std::endl;
-	
 	auto statement = make_uniq<LogicalPlanStatement>(std::move(logical_plan));
 	auto materialized = conn->Query(std::move(statement));
 	
@@ -251,8 +241,6 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 	if (materialized->HasError()) {
 		return arrow::Status::Invalid(materialized->GetError());
 	}
-	
-	std::cerr << "Worker query returned " << materialized->RowCount() << " rows" << std::endl;
 	
 	if (materialized->types.size() != types.size()) {
 		return arrow::Status::Invalid("Worker result column count mismatch with expected types");

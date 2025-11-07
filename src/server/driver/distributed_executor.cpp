@@ -53,12 +53,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		return nullptr;
 	}
 
-	printf("[DISTRIBUTED EXECUTOR] Executing query across %llu workers\n", 
-	       static_cast<long long unsigned>(workers.size()));
-	fflush(stdout);
-	
-	DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", 
-	                                                sql, static_cast<long long unsigned>(workers.size())));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", 
+	                                                  sql, static_cast<long long unsigned>(workers.size())));
 	vector<string> partition_sqls;
 	partition_sqls.reserve(workers.size());
 	vector<string> serialized_plans;
@@ -144,8 +140,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	}
 	D_ASSERT(!result_streams.empty());
 
-	DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Collecting and merging results from %llu workers",
-	                                                 static_cast<long long unsigned>(result_streams.size())));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Collecting and merging results from %llu workers",
+	                                                  static_cast<long long unsigned>(result_streams.size())));
 	auto result = CollectAndMergeResults(result_streams, names, types);
 	
 	if (result) {
@@ -155,8 +151,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		if (materialized) {
 			total_rows = materialized->RowCount();
 		}
-		DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Distributed query completed: %llu total rows returned",
-		                                                 static_cast<long long unsigned>(total_rows)));
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed query completed: %llu total rows returned",
+		                                                  static_cast<long long unsigned>(total_rows)));
 	}
 	
 	return result;

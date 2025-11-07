@@ -150,10 +150,8 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
                                              const arrow::flight::Ticket &ticket,
                                              std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
-
-
-
-	std::cerr << "DistributedFlightServer::DoGet" << std::endl;
+	auto &db_instance = *db->instance.get();
+	DUCKDB_LOG_DEBUG(db_instance, "DistributedFlightServer::DoGet called");
 
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
@@ -384,6 +382,8 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
+	auto &db_instance = *db->instance.get();
+	
 	// string sql =
 	//     StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
 
@@ -393,7 +393,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
 
-	std::cerr << "hanle scan table" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
 
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		result = distributed_executor->ExecuteDistributed(sql);
