@@ -4,8 +4,8 @@
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include "server/distributed_executor.hpp"
-#include "server/worker_manager.hpp"
+#include "server/driver/distributed_executor.hpp"
+#include "server/driver/worker_manager.hpp"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>

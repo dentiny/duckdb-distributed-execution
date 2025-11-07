@@ -1,9 +1,9 @@
-#include "duckling_storage.hpp"
+#include "server/driver/duckling_storage.hpp"
 
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckling_catalog.hpp"
-#include "duckling_transaction_manager.hpp"
+#include "server/driver/duckling_catalog.hpp"
+#include "server/driver/duckling_transaction_manager.hpp"
 
 namespace duckdb {
 

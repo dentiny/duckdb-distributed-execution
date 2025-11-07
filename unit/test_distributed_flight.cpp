@@ -3,7 +3,7 @@
 #include "catch.hpp"
 #include "client/distributed_flight_client.hpp"
 #include "distributed.pb.h"
-#include "server/distributed_flight_server.hpp"
+#include "server/driver/distributed_flight_server.hpp"
 
 #include <chrono>
 #include <iostream>

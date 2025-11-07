@@ -3,7 +3,7 @@
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "server/worker_node.hpp"
+#include "server/worker/worker_node.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>

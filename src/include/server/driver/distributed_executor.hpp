@@ -3,7 +3,7 @@
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "server/worker_manager.hpp"
+#include "server/driver/worker_manager.hpp"
 
 #include <arrow/record_batch.h>
 

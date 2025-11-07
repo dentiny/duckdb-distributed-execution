@@ -4,8 +4,8 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
-#include "server/distributed_flight_server.hpp"
-#include "server/duckling_storage.hpp"
+#include "server/driver/distributed_flight_server.hpp"
+#include "server/driver/duckling_storage.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>

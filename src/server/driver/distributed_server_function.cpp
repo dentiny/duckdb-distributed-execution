@@ -1,7 +1,7 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/function/scalar_function.hpp"
-#include "server/distributed_flight_server.hpp"
+#include "server/driver/distributed_flight_server.hpp"
 #include "utils/thread_utils.hpp"
 
 #include <thread>

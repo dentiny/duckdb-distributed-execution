@@ -1,4 +1,4 @@
-#include "duckling_catalog.hpp"
+#include "server/driver/duckling_catalog.hpp"
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -12,7 +12,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/database_size.hpp"
-#include "duckling_schema_catalog_entry.hpp"
+#include "server/driver/duckling_schema_catalog_entry.hpp"
 
 namespace duckdb {
 

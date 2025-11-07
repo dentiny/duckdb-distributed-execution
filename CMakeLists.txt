@@ -48,24 +48,27 @@ set(CLIENT_SOURCES
     src/client/logical_remote_alter_table.cpp
     src/client/logical_remote_create_index.cpp)
 
-set(SERVER_SOURCES
-    src/server/distributed_flight_server.cpp
-    src/server/distributed_server_function.cpp
-    src/server/distributed_executor.cpp
-    src/server/duckling_catalog.cpp
-    src/server/duckling_index_catalog_entry.cpp
-    src/server/duckling_schema_catalog_entry.cpp
-    src/server/duckling_storage.cpp
-    src/server/duckling_table_catalog_entry.cpp
-    src/server/duckling_transaction.cpp
-    src/server/duckling_transaction_manager.cpp
-    src/server/worker_manager.cpp
-    src/server/worker_node.cpp)
+set(SERVER_DRIVER_SOURCES
+    src/server/driver/distributed_executor.cpp
+    src/server/driver/distributed_flight_server.cpp
+    src/server/driver/distributed_server_function.cpp
+    src/server/driver/distributed_server_main.cpp
+    src/server/driver/duckling_catalog.cpp
+    src/server/driver/duckling_index_catalog_entry.cpp
+    src/server/driver/duckling_schema_catalog_entry.cpp
+    src/server/driver/duckling_storage.cpp
+    src/server/driver/duckling_table_catalog_entry.cpp
+    src/server/driver/duckling_transaction.cpp
+    src/server/driver/duckling_transaction_manager.cpp
+    src/server/driver/worker_manager.cpp)
+
+set(SERVER_WORKER_SOURCES src/server/worker/worker_node.cpp)
 
 set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources
     ${CLIENT_SOURCES}
-    ${SERVER_SOURCES}
+    ${SERVER_DRIVER_SOURCES}
+    ${SERVER_WORKER_SOURCES}
     ${UTIL_SOURCES}
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
@@ -93,7 +96,7 @@ install(
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
 
 # Add distributed server executable.
-add_executable(distributed_server src/server/distributed_server_main.cpp)
+add_executable(distributed_server src/server/driver/distributed_server_main.cpp)
 target_link_libraries(
   distributed_server ${EXTENSION_NAME} Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)

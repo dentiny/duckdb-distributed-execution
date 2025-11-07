@@ -1,10 +1,10 @@
-#include "duckling_index_catalog_entry.hpp"
+#include "server/driver/duckling_index_catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
-#include "duckling_catalog.hpp"
+#include "server/driver/duckling_catalog.hpp"
 
 namespace duckdb {
 

@@ -1,12 +1,12 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "distributed_server_function.hpp"
 #include "duckdb.hpp"
 #include "duckherder_extension.hpp"
 #include "duckherder_pragmas.hpp"
 #include "duckherder_storage.hpp"
 #include "query_history_query_function.hpp"
 #include "query_recorder_factory.hpp"
+#include "server/driver/distributed_server_function.hpp"
 
 namespace duckdb {
 

@@ -1,5 +1,5 @@
 #include "duckdb/common/string_util.hpp"
-#include "server/worker_manager.hpp"
+#include "server/driver/worker_manager.hpp"
 
 namespace duckdb {
 

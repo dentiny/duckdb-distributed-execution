@@ -5,7 +5,7 @@
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
-#include "server/distributed_executor.hpp"
+#include "server/driver/distributed_executor.hpp"
 
 #include <arrow/c/bridge.h>
 #include <arrow/io/memory.h>

@@ -2,7 +2,7 @@
 
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
-#include "server/worker_node.hpp"
+#include "server/worker/worker_node.hpp"
 #include <memory>
 #include <mutex>
 
