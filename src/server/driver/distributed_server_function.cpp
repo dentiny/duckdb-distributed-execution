@@ -58,7 +58,9 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
-			(void)serve_status;
+			if (!serve_status.ok() && g_server_started) {
+				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
+			}
 		}).detach();
 
 		// TODO(hjiang): Use readiness probe to validate server on.
