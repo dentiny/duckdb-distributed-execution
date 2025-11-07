@@ -35,6 +35,51 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 └─────────────────────────────────────────┘
 ```
 
+## Node-Based Distributed Execution Implementation Summary
+
+### DuckDB Parallel Execution → Distributed Execution
+
+| DuckDB Thread Model | Distributed Model | Implementation |
+|---------------------|-------------------|----------------|
+| Thread | Worker Node | Physical machine/process |
+| LocalSinkState | Worker Result | QueryResult → Arrow batches |
+| Sink() | Worker Execute | `HandleExecutePartition()` |
+| GlobalSinkState | ColumnDataCollection | Coordinator's result collection |
+| Combine() | CollectAndMergeResults() | Merging worker outputs |
+| Finalize() | Return MaterializedQueryResult | Final result to client |
+
+## 📊 Execution Flow
+
+```
+┌─────────────┐
+│ COORDINATOR │ Extract query plan
+└──────┬──────┘
+       │
+       ├─ Phase 1: Extract & validate logical plan
+       ├─ Phase 2: Create partition plans (one per worker)
+       ├─ Phase 3: Prepare result schema
+       │
+       ├──────────┬──────────┐
+       ▼          ▼          ▼
+   ┌────────┐ ┌────────┐ ┌────────┐
+   │WORKER 0│ │WORKER 1│ │WORKER N│  LocalState execution
+   └───┬────┘ └───┬────┘ └───┬────┘
+       │          │          │
+       │ Execute  │ Execute  │ Execute
+       │ partition│ partition│ partition
+       │ (Local)  │ (Local)  │ (Local)
+       │          │          │
+       └──────────┴──────────┘
+              │
+              ▼
+       ┌─────────────┐
+       │ COORDINATOR │  GlobalState aggregation
+       │   Combine   │  Merge LocalState outputs
+       │  Finalize   │  Return final result
+       └─────────────┘
+```
+
+
 ## Installation
 
 ### Building from Source

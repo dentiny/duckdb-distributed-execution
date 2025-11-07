@@ -125,36 +125,60 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
                                                  distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	auto &db_instance = *db->instance.get();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executing partition %llu/%llu (sql: %s)", worker_id,
-	                                                 req.partition_id(), req.total_partitions(), req.sql()));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executing partition %llu/%llu", worker_id,
+	                                                 req.partition_id(), req.total_partitions()));
 	unique_ptr<QueryResult> result;
 	arrow::Status exec_status = arrow::Status::OK();
 
-	// TODO: Plan-based execution for better optimization
-	// Currently we execute SQL directly because logical plan deserialization has issues:
-	// 1. Requires matching transaction context between driver and worker
-	// 2. Table/column bindings don't translate across different connection contexts
-	// 3. Catalog state must be synchronized
+	// Plan-based execution: Map node-based execution to DuckDB's thread-based parallel execution
+	// 
+	// DuckDB's parallel execution model:
+	// - Each thread has a LocalSinkState (per-partition execution state)
+	// - GlobalSinkState aggregates results from all LocalSinkStates
+	// - Combine() merges LocalState into GlobalState
+	// - Finalize() produces the final result
 	//
-	// Potential solutions for future:
-	// - Serialize physical plans instead of logical plans (more self-contained)
-	// - Use a custom serialization format that reconstructs bindings on worker side
-	// - Investigate sharing connection context or using a different binding mechanism
+	// Distributed execution mapping:
+	// - Each worker node acts as a "thread" in DuckDB's model
+	// - Worker executes a physical plan partition (LocalState semantics)
+	// - Coordinator collects results and combines them (GlobalState semantics)
+	// - This maintains DuckDB's partitioned execution model across nodes
 	//
-	// For now, SQL-based execution works well and is simpler.
-	//
-	// Execute the SQL directly - it already contains the partition predicate (e.g., WHERE rowid % 4 = 0)
-	result = conn->Query(req.sql());
+	// Execution strategy:
+	// 1. Try plan-based execution first (if serialized plan is provided)
+	// 2. Fall back to SQL-based execution for backward compatibility
+	// 
+	// Note: For plan-based execution, the partition predicate is already embedded
+	// in the physical plan (e.g., filter on rowid % total_partitions = partition_id)
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executed query: %s", worker_id, req.sql()));
-
-	if (!exec_status.ok()) {
-		resp.set_success(false);
-		resp.set_error_message(exec_status.message());
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s serialized plan execution failed: %s", worker_id,
-		                                                exec_status.ToString()));
-		return exec_status;
+	if (!req.serialized_plan().empty()) {
+		// Plan-based execution path
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("🔧 [PLAN-EXEC] Worker %s: Starting PLAN-BASED execution (plan size: %llu bytes)", 
+		                                  worker_id, static_cast<long long unsigned>(req.serialized_plan().size())));
+		exec_status = ExecuteSerializedPlan(req, result);
+		if (!exec_status.ok()) {
+			DUCKDB_LOG_WARN(db_instance, 
+			                StringUtil::Format("⚠️  [PLAN-EXEC] Worker %s: Plan execution FAILED: %s, falling back to SQL", 
+			                                  worker_id, exec_status.ToString()));
+			// Fall through to SQL-based execution
+			result.reset();
+		} else {
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("✅ [PLAN-EXEC] Worker %s: PLAN-BASED execution completed successfully", worker_id));
+		}
 	}
+
+	// SQL-based execution path (fallback or when no plan is provided)
+	if (!result && !req.sql().empty()) {
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("🔄 [SQL-EXEC] Worker %s: Using SQL-BASED execution: %s", worker_id, req.sql()));
+		result = conn->Query(req.sql());
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("✅ [SQL-EXEC] Worker %s: SQL-BASED execution completed", worker_id));
+	}
+
+	// Validate execution result
 	if (!result) {
 		resp.set_success(false);
 		resp.set_error_message("Worker produced no query result");
@@ -169,6 +193,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 		return arrow::Status::Invalid(StringUtil::Format("Query execution failed: %s", result->GetError()));
 	}
 
+	// Convert result to Arrow format
+	// This represents the LocalState output from this worker node
 	idx_t row_count = 0;
 	auto status = QueryResultToArrow(*result, reader, &row_count);
 	if (!status.ok()) {
@@ -195,6 +221,7 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 		return arrow::Status::Invalid("Mismatched column metadata in ExecutePartitionRequest");
 	}
 
+	// Extract column metadata
 	vector<string> names;
 	names.reserve(req.column_names_size());
 	for (const auto &name : req.column_names()) {
@@ -213,37 +240,85 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 		types.emplace_back(std::move(type));
 	}
 
-	// Begin a transaction before deserializing the plan (deserialization needs active transaction)
+	auto &db_instance = *db->instance.get();
+	
+	// Begin a transaction before deserializing the plan
+	// Note: Deserialization requires an active transaction to resolve table bindings
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("📦 [DESERIALIZE] Worker %s: Beginning transaction for plan deserialization", worker_id));
 	conn->BeginTransaction();
 
+	// Deserialize the logical plan
+	// This plan contains the partition predicate embedded in it by the coordinator
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("📦 [DESERIALIZE] Worker %s: Deserializing logical plan (%llu bytes)", 
+	                                  worker_id, static_cast<long long unsigned>(req.serialized_plan().size())));
 	MemoryStream plan_stream(reinterpret_cast<data_ptr_t>(const_cast<char *>(req.serialized_plan().data())),
 	                         req.serialized_plan().size());
 	bound_parameter_map_t parameters;
 	unique_ptr<LogicalOperator> logical_plan;
 	try {
 		logical_plan = BinaryDeserializer::Deserialize<LogicalOperator>(plan_stream, *conn->context, parameters);
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("✅ [DESERIALIZE] Worker %s: Logical plan deserialized successfully", worker_id));
 	} catch (std::exception &ex) {
+		DUCKDB_LOG_WARN(db_instance, 
+		                StringUtil::Format("❌ [DESERIALIZE] Worker %s: Deserialization failed: %s", worker_id, ex.what()));
 		conn->Rollback();
 		return arrow::Status::Invalid(StringUtil::Format("Failed to deserialize plan: %s", ex.what()));
 	}
 	if (!logical_plan) {
+		DUCKDB_LOG_WARN(db_instance, 
+		                StringUtil::Format("❌ [DESERIALIZE] Worker %s: Deserialized plan is null", worker_id));
 		conn->Rollback();
 		return arrow::Status::Invalid("Deserialized plan was null");
 	}
 
+	// Execute the plan using DuckDB's query execution infrastructure
+	// 
+	// Execution flow (mapping to parallel execution model):
+	// 1. LogicalPlanStatement is converted to a physical plan
+	// 2. Physical plan is executed via Executor/Pipeline infrastructure
+	// 3. Each physical operator has Source/Sink semantics:
+	//    - Source operators: Produce data chunks (e.g., TableScan with partition filter)
+	//    - Sink operators: Consume data chunks (e.g., ResultCollector)
+	// 4. For parallel operators:
+	//    - GetLocalSinkState() creates per-thread (now per-worker) state
+	//    - Sink() processes data chunks into LocalSinkState
+	//    - Combine() would merge LocalSinkState into GlobalSinkState (on coordinator)
+	//    - Finalize() produces final result (on coordinator)
+	// 
+	// In distributed mode:
+	// - This worker node acts as ONE thread/execution unit
+	// - We execute our partition and return LocalState output
+	// - Coordinator acts as the GlobalState aggregator
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("⚙️  [EXECUTE] Worker %s: Executing logical plan (LocalState execution)", worker_id));
 	auto statement = make_uniq<LogicalPlanStatement>(std::move(logical_plan));
 	auto materialized = conn->Query(std::move(statement));
 
 	// Commit the transaction
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("💾 [EXECUTE] Worker %s: Committing transaction", worker_id));
 	conn->Commit();
 
 	if (materialized->HasError()) {
+		DUCKDB_LOG_WARN(db_instance, 
+		                StringUtil::Format("❌ [EXECUTE] Worker %s: Query execution error: %s", worker_id, materialized->GetError()));
 		return arrow::Status::Invalid(materialized->GetError());
 	}
 
+	// Validate and fix column metadata
 	if (materialized->types.size() != types.size()) {
+		DUCKDB_LOG_WARN(db_instance, 
+		                StringUtil::Format("❌ [EXECUTE] Worker %s: Column count mismatch (expected: %llu, got: %llu)", 
+		                                  worker_id, static_cast<long long unsigned>(types.size()), 
+		                                  static_cast<long long unsigned>(materialized->types.size())));
 		return arrow::Status::Invalid("Worker result column count mismatch with expected types");
 	}
+	
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("✅ [EXECUTE] Worker %s: Plan execution completed, result ready for transmission", worker_id));
 	materialized->types = std::move(types);
 	if (materialized->names.size() == names.size()) {
 		materialized->names = std::move(names);
@@ -254,6 +329,22 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 
 arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
                                              idx_t *row_count) {
+	// Convert DuckDB QueryResult to Arrow RecordBatchReader
+	// 
+	// This method serializes the LocalState output from this worker node
+	// to Arrow format for transmission back to the coordinator.
+	//
+	// In DuckDB's parallel execution model:
+	// - Each thread produces results in its LocalSinkState
+	// - These results are typically DataChunks or ColumnDataCollections
+	// - The Combine() method would merge these into GlobalSinkState
+	//
+	// In distributed execution:
+	// - This worker's QueryResult represents LocalState output
+	// - We serialize it to Arrow for network transmission
+	// - Coordinator receives and combines all worker outputs (GlobalState semantics)
+	// - This maintains the same aggregation pattern as thread-level parallelism
+	
 	auto &db_instance = *db->instance.get();
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
@@ -262,6 +353,8 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	idx_t count = 0;
 
+	// Fetch and convert each chunk from the query result
+	// Each chunk represents a batch of rows processed by this worker node
 	while (true) {
 		auto chunk = result.Fetch();
 		if (!chunk || chunk->size() == 0) {

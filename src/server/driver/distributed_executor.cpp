@@ -20,6 +20,26 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 }
 
 unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sql) {
+	// Distributed execution coordinator implementing DuckDB's parallel execution model
+	//
+	// Architecture mapping (thread-based → node-based):
+	// 
+	// DuckDB Parallel Execution:
+	// 1. Query is compiled to a physical plan
+	// 2. Data is partitioned across multiple threads
+	// 3. Each thread executes with LocalSinkState
+	// 4. Results are combined into GlobalSinkState
+	// 5. Final result is produced
+	//
+	// Distributed Execution:
+	// 1. Query is compiled to a logical/physical plan [COORDINATOR]
+	// 2. Plan is partitioned and sent to worker nodes [COORDINATOR]
+	// 3. Each worker executes its partition (LocalState semantics) [WORKER]
+	// 4. Coordinator collects and combines results (GlobalState semantics) [COORDINATOR]
+	// 5. Final result is returned to client [COORDINATOR]
+	//
+	// Key insight: Workers are execution units (like threads), coordinator aggregates
+	
 	if (!CanDistribute(sql)) {
 		return nullptr;
 	}
@@ -31,6 +51,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		return nullptr;
 	}
 
+	// Phase 1: Plan extraction and validation
 	unique_ptr<LogicalOperator> logical_plan;
 	try {
 		logical_plan = conn.ExtractPlan(sql);
@@ -53,12 +74,18 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", sql,
 	                                                 static_cast<long long unsigned>(workers.size())));
+	
+	// Phase 2: Partition plan creation
+	// Create partitioned plans for each worker (each worker = one execution unit/thread)
+	// Partition predicate is injected into the plan (e.g., WHERE rowid % N = worker_id)
+	// This ensures data partitioning similar to how DuckDB partitions data across threads
 	vector<string> partition_sqls;
 	partition_sqls.reserve(workers.size());
 	vector<string> serialized_plans;
 	serialized_plans.reserve(workers.size());
 
 	for (idx_t partition_id = 0; partition_id < workers.size(); ++partition_id) {
+		// Create SQL with partition predicate embedded
 		auto partition_sql = CreatePartitionSQL(sql, partition_id, workers.size());
 		unique_ptr<LogicalOperator> partition_plan;
 		try {
@@ -82,6 +109,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 			    StringUtil::Format("Partition plan for query '%s' contains unsupported operators", partition_sql));
 			return nullptr;
 		}
+		// Serialize the plan for transmission to worker
 		serialized_plans.emplace_back(SerializeLogicalPlan(*partition_plan));
 		partition_sqls.emplace_back(std::move(partition_sql));
 		DUCKDB_LOG_DEBUG(db_instance,
@@ -90,6 +118,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		                                    static_cast<long long unsigned>(serialized_plans.back().size())));
 	}
 
+	// Phase 3: Prepare result schema and type information
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
 		DUCKDB_LOG_WARN(db_instance,
@@ -104,14 +133,20 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	for (auto &type : types) {
 		serialized_types.emplace_back(SerializeLogicalType(type));
 	}
+	
+	// Phase 4: Distribute execution to workers
+	// Each worker receives its partition plan and executes independently
+	// Similar to how DuckDB schedules pipeline tasks to threads
 	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> result_streams;
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributing query '%s' to %llu workers", sql,
-	                                                 static_cast<long long unsigned>(workers.size())));
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("🚀 [DISTRIBUTE] Coordinator: Distributing query to %llu workers (node-based parallel execution)", 
+	                                  static_cast<long long unsigned>(workers.size())));
 
 	for (idx_t idx = 0; idx < workers.size(); ++idx) {
 		auto *worker = workers[idx];
 		distributed::ExecutePartitionRequest req;
 
+		// Send both SQL (fallback) and serialized plan (preferred)
 		req.set_sql(partition_sqls[idx]);
 		req.set_partition_id(idx);
 		req.set_total_partitions(workers.size());
@@ -123,17 +158,30 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 			req.add_column_types(type_bytes);
 		}
 
+		// Execute on worker (worker acts as execution unit with LocalState)
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("📤 [DISTRIBUTE] Coordinator: Sending partition %llu/%llu to worker %s (plan: %llu bytes, sql: '%s')", 
+		                                  static_cast<long long unsigned>(idx + 1),
+		                                  static_cast<long long unsigned>(workers.size()),
+		                                  worker->worker_id,
+		                                  static_cast<long long unsigned>(serialized_plans[idx].size()),
+		                                  partition_sqls[idx]));
 		std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 		auto status = worker->client->ExecutePartition(req, stream);
 		if (!status.ok()) {
-			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed executing partition: %s",
-			                                                worker->worker_id, status.ToString()));
+			DUCKDB_LOG_WARN(db_instance, 
+			                StringUtil::Format("❌ [DISTRIBUTE] Coordinator: Worker %s failed executing partition: %s",
+			                                  worker->worker_id, status.ToString()));
 			continue;
 		}
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("✅ [DISTRIBUTE] Coordinator: Worker %s accepted partition %llu", 
+		                                  worker->worker_id, static_cast<long long unsigned>(idx)));
 		result_streams.emplace_back(std::move(stream));
 	}
 	D_ASSERT(!result_streams.empty());
 
+	// Phase 5: Combine results (GlobalState aggregation)
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Collecting and merging results from %llu workers",
 	                                                 static_cast<long long unsigned>(result_streams.size())));
 	auto result = CollectAndMergeResults(result_streams, names, types);
@@ -237,26 +285,59 @@ string DistributedExecutor::SerializeLogicalType(const LogicalType &type) {
 unique_ptr<QueryResult>
 DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
                                             const vector<string> &names, const vector<LogicalType> &types) {
+	// Coordinator acts as GlobalState aggregator in DuckDB's parallel execution model
+	//
+	// DuckDB's parallel execution pattern:
+	// 1. Multiple threads execute in parallel, each with LocalSinkState
+	// 2. Combine() merges LocalSinkState into GlobalSinkState
+	// 3. Finalize() produces the final result from GlobalSinkState
+	//
+	// Distributed execution mapping:
+	// 1. Multiple worker nodes execute in parallel (each = one thread)
+	// 2. Each worker returns LocalState output (as Arrow RecordBatches)
+	// 3. This method performs the Combine() operation:
+	//    - Collects LocalState outputs from all workers
+	//    - Merges them into a unified result (GlobalState)
+	// 4. The ColumnDataCollection acts as our GlobalSinkState
+	//
+	// This maintains the same aggregation semantics as thread-level parallelism,
+	// but distributed across network-connected nodes.
+	
 	auto &db_instance = *conn.context->db.get();
-	// Create a collection to store merged results.
+	// Create a collection to store merged results (acts as GlobalSinkState)
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("🔀 [COMBINE] Coordinator: Initializing GlobalSinkState (ColumnDataCollection)"));
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 
-	// Read results from each worker.
+	// Combine phase: Merge LocalState outputs from each worker
+	idx_t worker_idx = 0;
+	idx_t total_batches = 0;
+	idx_t total_rows_combined = 0;
+	
 	for (auto &stream : streams) {
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("🔀 [COMBINE] Coordinator: Processing results from worker %llu/%llu", 
+		                                  static_cast<long long unsigned>(worker_idx + 1), 
+		                                  static_cast<long long unsigned>(streams.size())));
+		idx_t worker_batches = 0;
+		idx_t worker_rows = 0;
+		
 		while (true) {
 			auto batch_result = stream->Next();
 			if (!batch_result.ok()) {
 				DUCKDB_LOG_WARN(db_instance,
-				                StringUtil::Format("Worker stream error: %s", batch_result.status().ToString()));
+				                StringUtil::Format("⚠️  [COMBINE] Coordinator: Worker %llu stream error: %s", 
+				                                  static_cast<long long unsigned>(worker_idx), 
+				                                  batch_result.status().ToString()));
 				break;
 			}
 
 			auto batch_with_metadata = batch_result.ValueOrDie();
 			if (!batch_with_metadata.data) {
-				break; // End of stream
+				break; // End of stream from this worker
 			}
 
-			// Convert Arrow batch to DuckDB DataChunk.
+			// Convert Arrow batch (LocalState output) to DuckDB DataChunk
 			DataChunk chunk;
 			chunk.Initialize(Allocator::DefaultAllocator(), types);
 
@@ -268,10 +349,36 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 			}
 
 			chunk.SetCardinality(arrow_batch->num_rows());
+			// Append to GlobalSinkState (ColumnDataCollection)
 			collection->Append(chunk);
+			
+			worker_batches++;
+			worker_rows += arrow_batch->num_rows();
+			total_batches++;
+			total_rows_combined += arrow_batch->num_rows();
 		}
+		
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("✅ [COMBINE] Coordinator: Worker %llu contributed %llu batches, %llu rows", 
+		                                  static_cast<long long unsigned>(worker_idx), 
+		                                  static_cast<long long unsigned>(worker_batches),
+		                                  static_cast<long long unsigned>(worker_rows)));
+		worker_idx++;
 	}
+	
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("🎯 [COMBINE] Coordinator: GlobalSinkState merge complete - %llu total batches, %llu total rows from %llu workers", 
+	                                  static_cast<long long unsigned>(total_batches),
+	                                  static_cast<long long unsigned>(total_rows_combined),
+	                                  static_cast<long long unsigned>(streams.size())));
 
+	// Finalize phase: Return the aggregated result
+	// In this simple case, we just return the merged collection
+	// For more complex operators (aggregates, sorts, etc.), additional
+	// finalization logic would go here (e.g., final aggregation, final sort)
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("🏁 [FINALIZE] Coordinator: Returning final result (%llu rows total)", 
+	                                  static_cast<long long unsigned>(total_rows_combined)));
 	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties {}, names,
 	                                          std::move(collection), ClientProperties {});
 }
