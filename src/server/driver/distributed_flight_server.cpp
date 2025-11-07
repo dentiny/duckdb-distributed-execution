@@ -1,12 +1,13 @@
-#include "distributed_flight_server.hpp"
+#include "server/driver/distributed_flight_server.hpp"
 
-#include "duckling_storage.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "query_common.hpp"
+#include "server/driver/duckling_storage.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -42,6 +43,10 @@ DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : ho
 		throw InternalException(error_message);
 	}
 	DUCKDB_LOG_DEBUG(db_instance, "Duckling attach and set as default catalog");
+
+	// Initialize worker manager and distributed executor
+	worker_manager = make_uniq<WorkerManager>(*db);
+	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
 }
 
 arrow::Status DistributedFlightServer::Start() {
@@ -55,6 +60,24 @@ arrow::Status DistributedFlightServer::Start() {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Server started on %s:%d", host, port));
 
 	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
+	auto &db_instance = *db->instance.get();
+
+	// Start local workers.
+	if (num_workers > 0) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Starting %llu local workers", num_workers));
+		try {
+			worker_manager->StartLocalWorkers(num_workers);
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Started %llu workers", num_workers));
+		} catch (std::exception &e) {
+			return arrow::Status::IOError("Failed to start workers: " + string(e.what()));
+		}
+	}
+
+	// Start the server.
+	return Start();
 }
 
 void DistributedFlightServer::Shutdown() {
@@ -128,6 +151,9 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
                                              const arrow::flight::Ticket &ticket,
                                              std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
+	auto &db_instance = *db->instance.get();
+	DUCKDB_LOG_DEBUG(db_instance, "DistributedFlightServer::DoGet called");
+
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
@@ -180,7 +206,16 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
                                                         distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	// Try distributed execution first if workers are available.
+	unique_ptr<QueryResult> result;
+	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
+		result = distributed_executor->ExecuteDistributed(req.sql());
+	}
+
+	// Fall back to local execution if not distributed.
+	if (result == nullptr) {
+		result = conn->Query(req.sql());
+	}
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -348,12 +383,34 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
-	string sql =
-	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
-	auto result = conn->Query(sql);
+	auto &db_instance = *db->instance.get();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
+
+	string sql = StringUtil::Format("SELECT * FROM %s", req.table_name());
+	if (req.limit() != NO_QUERY_LIMIT && req.limit() != STANDARD_VECTOR_SIZE) {
+		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
+	}
+	if (req.offset() != NO_QUERY_OFFSET) {
+		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
+	}
+
+	// Try distributed execution first if workers are available.
+	unique_ptr<QueryResult> result;
+	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
+		result = distributed_executor->ExecuteDistributed(sql);
+	}
+
+	// Fall back to local execution if not distributed.
+	if (result == nullptr) {
+		result = conn->Query(sql);
+	}
 
 	if (result->HasError()) {
 		return arrow::Status::Invalid("Query error: " + result->GetError());
+	}
+
+	if (!result->client_properties.client_context) {
+		result->client_properties.client_context = conn->context.get();
 	}
 
 	std::shared_ptr<arrow::RecordBatchReader> reader;
@@ -406,7 +463,8 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 }
 
 arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
-                                                          std::shared_ptr<arrow::RecordBatchReader> &reader) {
+                                                          std::shared_ptr<arrow::RecordBatchReader> &reader,
+                                                          idx_t *row_count) {
 	// Create Arrow schema from DuckDB types.
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
@@ -414,6 +472,7 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 
 	// Collect all data chunks and convert to Arrow RecordBatches.
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	idx_t count = 0;
 
 	while (true) {
 		auto chunk = result.Fetch();
@@ -434,11 +493,16 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 		}
 
 		// TODO(hjiang): Avoid exception thrown.
-		batches.emplace_back(batch_result.ValueOrDie());
+		auto batch = batch_result.ValueOrDie();
+		count += batch->num_rows();
+		batches.emplace_back(batch);
 	}
 
 	// Create RecordBatchReader from collected batches.
 	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(batches, schema));
+	if (row_count) {
+		*row_count = count;
+	}
 
 	return arrow::Status::OK();
 }

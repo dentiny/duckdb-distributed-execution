@@ -1,6 +1,6 @@
-#include "duckling_transaction_manager.hpp"
+#include "server/driver/duckling_transaction_manager.hpp"
 
-#include "duckling_transaction.hpp"
+#include "server/driver/duckling_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 
 namespace duckdb {

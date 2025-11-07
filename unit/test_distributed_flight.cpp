@@ -1,9 +1,9 @@
 #define CATCH_CONFIG_RUNNER
 
 #include "catch.hpp"
+#include "client/distributed_flight_client.hpp"
 #include "distributed.pb.h"
-#include "distributed_flight_server.hpp"
-#include "distributed_flight_client.hpp"
+#include "server/driver/distributed_flight_server.hpp"
 
 #include <chrono>
 #include <iostream>

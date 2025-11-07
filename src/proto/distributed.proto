@@ -16,6 +16,9 @@ enum RequestType {
   DROP_INDEX = 9;
   ALTER_TABLE = 10;
   LOAD_EXTENSION = 11;
+  EXECUTE_PARTITION = 12;
+  WORKER_REGISTER = 13;
+  WORKER_HEARTBEAT = 14;
 }
 
 // Execute SQL request.
@@ -83,6 +86,43 @@ message LoadExtensionRequest {
   string version = 3;
 }
 
+// Execute partition request, used for worker nodes.
+message ExecutePartitionRequest {
+  // SQL query to execute on partition.
+  string sql = 1;
+  // Serialized partition data (Arrow IPC format).
+  bytes partition_data = 2;
+  // Partition ID for tracking.
+  uint64 partition_id = 3;
+  // Total number of partitions.
+  uint64 total_partitions = 4;
+  // Serialized logical plan fragment (BinarySerializer format).
+  bytes serialized_plan = 5;
+  // Column names for the result.
+  repeated string column_names = 6;
+  // Serialized LogicalType definitions for the result columns.
+  repeated bytes column_types = 7;
+}
+
+// Worker registration request.
+message WorkerRegisterRequest {
+  // Worker unique identifier
+  string worker_id = 1;
+  // Worker host address
+  string host = 2;
+  // Worker port
+  uint32 port = 3;
+  // Number of threads available
+  uint32 num_threads = 4;
+}
+
+// Worker heartbeat request.
+message WorkerHeartbeatRequest {
+  string worker_id = 1;
+  // Current load (0.0 to 1.0)
+  double load = 2;
+}
+
 // Request message for distributed operations.
 message DistributedRequest {
   // Request-specific parameters.
@@ -97,6 +137,9 @@ message DistributedRequest {
     DropIndexRequest drop_index = 8;
     AlterTableRequest alter_table = 9;
     LoadExtensionRequest load_extension = 10;
+    ExecutePartitionRequest execute_partition = 11;
+    WorkerRegisterRequest worker_register = 12;
+    WorkerHeartbeatRequest worker_heartbeat = 13;
   }
 }
 
@@ -138,6 +181,23 @@ message AlterTableResponse {}
 // Load extension response.
 message LoadExtensionResponse {}
 
+// Execute partition response (returns results via Arrow Flight).
+message ExecutePartitionResponse {
+  uint64 partition_id = 1;
+  uint64 row_count = 2;
+}
+
+// Worker registration response.
+message WorkerRegisterResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+// Worker heartbeat response.
+message WorkerHeartbeatResponse {
+  bool healthy = 1;
+}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -157,5 +217,8 @@ message DistributedResponse {
     DropIndexResponse drop_index = 10;
     AlterTableResponse alter_table = 11;
     LoadExtensionResponse load_extension = 12;
+    ExecutePartitionResponse execute_partition = 13;
+    WorkerRegisterResponse worker_register = 14;
+    WorkerHeartbeatResponse worker_heartbeat = 15;
   }
 }

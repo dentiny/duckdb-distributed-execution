@@ -1,7 +1,7 @@
 // Implementation note: most of the functions are delegated to parent class DuckTableEntry instead of taking a
 // DuckTableEntry* entry. Because alter table would invalidate the pointer to the entry.
 
-#include "duckling_table_catalog_entry.hpp"
+#include "server/driver/duckling_table_catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -10,7 +10,7 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
-#include "duckling_catalog.hpp"
+#include "server/driver/duckling_catalog.hpp"
 
 namespace duckdb {
 
