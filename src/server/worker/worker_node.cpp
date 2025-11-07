@@ -18,23 +18,24 @@ namespace duckdb {
 
 WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *shared_db)
     : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p) {
-    if (shared_db != nullptr) {
-        db = shared_db;
-    } else {
+	if (shared_db != nullptr) {
+		db = shared_db;
+	} else {
 		// TODO(hjiang): Pass down db config (i.e., for logging).
-        owned_db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
-        db = owned_db.get();
-    }
-    conn = make_uniq<Connection>(*db);
-    
-    // If using shared DB, set the default catalog to "duckling" to match the server
-    if (shared_db != nullptr) {
-        auto use_result = conn->Query("USE duckling;");
-        if (use_result->HasError()) {
-            auto &db_instance = *db->instance.get();
-            DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed to USE duckling: %s", worker_id, use_result->GetError()));
-        }
-    }
+		owned_db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
+		db = owned_db.get();
+	}
+	conn = make_uniq<Connection>(*db);
+
+	// If using shared DB, set the default catalog to "duckling" to match the server
+	if (shared_db != nullptr) {
+		auto use_result = conn->Query("USE duckling;");
+		if (use_result->HasError()) {
+			auto &db_instance = *db->instance.get();
+			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed to USE duckling: %s", worker_id,
+			                                                use_result->GetError()));
+		}
+	}
 }
 
 arrow::Status WorkerNode::Start() {
@@ -44,7 +45,7 @@ arrow::Status WorkerNode::Start() {
 	arrow::flight::FlightServerOptions options(location);
 	ARROW_RETURN_NOT_OK(Init(options));
 
-    auto &db_instance = *db->instance.get();
+	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s started on %s:%d", worker_id, host, port));
 
 	return arrow::Status::OK();
@@ -135,25 +136,24 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	// 1. Requires matching transaction context between driver and worker
 	// 2. Table/column bindings don't translate across different connection contexts
 	// 3. Catalog state must be synchronized
-	// 
+	//
 	// Potential solutions for future:
 	// - Serialize physical plans instead of logical plans (more self-contained)
 	// - Use a custom serialization format that reconstructs bindings on worker side
 	// - Investigate sharing connection context or using a different binding mechanism
 	//
 	// For now, SQL-based execution works well and is simpler/more robust.
-	
+
 	// Execute the SQL directly - it already contains the partition predicate (e.g., WHERE rowid % 4 = 0)
 	result = conn->Query(req.sql());
-	
+
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executed query: %s", worker_id, req.sql()));
-	
+
 	if (!exec_status.ok()) {
 		resp.set_success(false);
 		resp.set_error_message(exec_status.message());
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("Worker %s serialized plan execution failed: %s", worker_id,
-		                                     exec_status.ToString()));
+		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s serialized plan execution failed: %s", worker_id,
+		                                                exec_status.ToString()));
 		return exec_status;
 	}
 	if (!result) {
@@ -182,16 +182,16 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	auto *exec_resp = resp.mutable_execute_partition();
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
-	
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s (partition %llu/%llu) returned %llu rows", 
-	                                                  worker_id, req.partition_id(), req.total_partitions(),
-	                                                  static_cast<long long unsigned>(row_count)));
-	
+
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s (partition %llu/%llu) returned %llu rows", worker_id,
+	                                                 req.partition_id(), req.total_partitions(),
+	                                                 static_cast<long long unsigned>(row_count)));
+
 	return arrow::Status::OK();
 }
 
 arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartitionRequest &req,
-                                               unique_ptr<QueryResult> &result) {
+                                                unique_ptr<QueryResult> &result) {
 	if (req.column_names_size() != req.column_types_size()) {
 		return arrow::Status::Invalid("Mismatched column metadata in ExecutePartitionRequest");
 	}
@@ -216,7 +216,7 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 
 	// Begin a transaction before deserializing the plan (deserialization needs active transaction)
 	conn->BeginTransaction();
-	
+
 	MemoryStream plan_stream(reinterpret_cast<data_ptr_t>(const_cast<char *>(req.serialized_plan().data())),
 	                         req.serialized_plan().size());
 	bound_parameter_map_t parameters;
@@ -234,14 +234,14 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 
 	auto statement = make_uniq<LogicalPlanStatement>(std::move(logical_plan));
 	auto materialized = conn->Query(std::move(statement));
-	
+
 	// Commit the transaction
 	conn->Commit();
-	
+
 	if (materialized->HasError()) {
 		return arrow::Status::Invalid(materialized->GetError());
 	}
-	
+
 	if (materialized->types.size() != types.size()) {
 		return arrow::Status::Invalid("Worker result column count mismatch with expected types");
 	}

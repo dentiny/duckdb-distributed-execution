@@ -24,8 +24,8 @@ struct WorkerInfo {
 // Manages a pool of worker nodes
 class WorkerManager {
 public:
-    explicit WorkerManager(DuckDB &db_ref) : db(db_ref) {
-    }
+	explicit WorkerManager(DuckDB &db_ref) : db(db_ref) {
+	}
 
 	// Register a worker node
 	void RegisterWorker(const string &worker_id, const string &location);
@@ -37,13 +37,13 @@ public:
 	idx_t GetWorkerCount() const;
 
 	// Start N local worker nodes for testing
-    void StartLocalWorkers(idx_t num_workers);
+	void StartLocalWorkers(idx_t num_workers);
 
 private:
 	vector<std::unique_ptr<WorkerInfo>> workers;
 	vector<std::unique_ptr<WorkerNode>> local_workers; // For testing
 	mutable std::mutex mutex;
-    DuckDB &db;
+	DuckDB &db;
 };
 
 } // namespace duckdb

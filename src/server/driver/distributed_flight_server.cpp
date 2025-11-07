@@ -383,12 +383,11 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 	auto &db_instance = *db->instance.get();
-	
+
 	// string sql =
 	//     StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
 
-	string sql =
-	    StringUtil::Format("SELECT * FROM %s", req.table_name());
+	string sql = StringUtil::Format("SELECT * FROM %s", req.table_name());
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;

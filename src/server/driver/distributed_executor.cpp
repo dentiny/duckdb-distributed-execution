@@ -30,7 +30,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
 
-
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
 		return nullptr;
 	}
@@ -39,22 +38,24 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	try {
 		logical_plan = conn.ExtractPlan(sql);
 	} catch (std::exception &ex) {
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Failed to extract logical plan for query '%s': %s", sql,
-		                                               ex.what()));
+		DUCKDB_LOG_WARN(db_instance,
+		                StringUtil::Format("Failed to extract logical plan for query '%s': %s", sql, ex.what()));
 		return nullptr;
 	}
 	if (logical_plan == nullptr) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("ExtractPlan returned null for query '%s', falling back to local execution", sql));
+		DUCKDB_LOG_WARN(
+		    db_instance,
+		    StringUtil::Format("ExtractPlan returned null for query '%s', falling back to local execution", sql));
 		return nullptr;
 	}
 	if (!IsSupportedPlan(*logical_plan)) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Logical plan for query '%s' contains unsupported operators", sql));
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 StringUtil::Format("Logical plan for query '%s' contains unsupported operators", sql));
 		return nullptr;
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", 
-	                                                  sql, static_cast<long long unsigned>(workers.size())));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", sql,
+	                                                 static_cast<long long unsigned>(workers.size())));
 	vector<string> partition_sqls;
 	partition_sqls.reserve(workers.size());
 	vector<string> serialized_plans;
@@ -68,33 +69,32 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		} catch (std::exception &ex) {
 			DUCKDB_LOG_WARN(db_instance,
 			                StringUtil::Format("Failed to extract logical plan for partition query '%s': %s",
-			                                     partition_sql, ex.what()));
+			                                   partition_sql, ex.what()));
 			return nullptr;
 		}
 		if (partition_plan == nullptr) {
 
-
-			DUCKDB_LOG_WARN(db_instance,
-			                StringUtil::Format("Partition plan extraction returned null for query '%s'", partition_sql));
+			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Partition plan extraction returned null for query '%s'",
+			                                                partition_sql));
 			return nullptr;
 		}
 		if (!IsSupportedPlan(*partition_plan)) {
 
-			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Partition plan for query '%s' contains unsupported operators",
-			                                             partition_sql));
+			DUCKDB_LOG_WARN(
+			    db_instance,
+			    StringUtil::Format("Partition plan for query '%s' contains unsupported operators", partition_sql));
 			return nullptr;
 		}
 		serialized_plans.emplace_back(SerializeLogicalPlan(*partition_plan));
 		partition_sqls.emplace_back(std::move(partition_sql));
 		DUCKDB_LOG_DEBUG(db_instance,
-		                StringUtil::Format("Prepared serialized plan for worker %llu (size: %llu bytes)",
-		                                     static_cast<long long unsigned>(partition_id),
-		                                     static_cast<long long unsigned>(serialized_plans.back().size())));
+		                 StringUtil::Format("Prepared serialized plan for worker %llu (size: %llu bytes)",
+		                                    static_cast<long long unsigned>(partition_id),
+		                                    static_cast<long long unsigned>(serialized_plans.back().size())));
 	}
 
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
-
 
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("Failed to prepare distributed query '%s': %s", sql, prepared->GetError()));
@@ -116,7 +116,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		auto *worker = workers[idx];
 		distributed::ExecutePartitionRequest req;
 
-
 		req.set_sql(partition_sqls[idx]);
 		req.set_partition_id(idx);
 		req.set_total_partitions(workers.size());
@@ -131,9 +130,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 		auto status = worker->client->ExecutePartition(req, stream);
 		if (!status.ok()) {
-			DUCKDB_LOG_WARN(db_instance,
-			                StringUtil::Format("Worker %s failed executing partition: %s", worker->worker_id,
-			                                     status.ToString()));
+			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed executing partition: %s",
+			                                                worker->worker_id, status.ToString()));
 			continue;
 		}
 		result_streams.emplace_back(std::move(stream));
@@ -141,20 +139,20 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	D_ASSERT(!result_streams.empty());
 
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Collecting and merging results from %llu workers",
-	                                                  static_cast<long long unsigned>(result_streams.size())));
+	                                                 static_cast<long long unsigned>(result_streams.size())));
 	auto result = CollectAndMergeResults(result_streams, names, types);
-	
+
 	if (result) {
 		// Count total rows returned
 		idx_t total_rows = 0;
-		auto materialized = dynamic_cast<MaterializedQueryResult*>(result.get());
+		auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
 		if (materialized) {
 			total_rows = materialized->RowCount();
 		}
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed query completed: %llu total rows returned",
-		                                                  static_cast<long long unsigned>(total_rows)));
+		                                                 static_cast<long long unsigned>(total_rows)));
 	}
-	
+
 	return result;
 }
 
@@ -163,22 +161,21 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 	StringUtil::Trim(sql_upper);
 	if (!StringUtil::StartsWith(sql_upper, "SELECT")) {
 
-
 		return false;
 	}
 	if (sql_upper.find(" FROM ") == string::npos) {
 
-
 		return false;
 	}
-	auto contains_token = [&](const char *token) { return sql_upper.find(token) != string::npos; };
+	auto contains_token = [&](const char *token) {
+		return sql_upper.find(token) != string::npos;
+	};
 	if (contains_token(" JOIN") || contains_token(" GROUP ") || contains_token(" HAVING") ||
 	    contains_token(" DISTINCT") || contains_token(" LIMIT ") || contains_token(" OFFSET ") ||
 	    contains_token(" UNION ") || contains_token(" EXCEPT ") || contains_token(" INTERSECT ")) {
 		return false;
 	}
 	if (contains_token(" ORDER BY")) {
-
 
 		return false;
 	}
@@ -188,7 +185,6 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 			return false;
 		}
 	}
-
 
 	return true;
 }
@@ -201,9 +197,8 @@ string DistributedExecutor::CreatePartitionSQL(const string &sql, idx_t partitio
 		trimmed.pop_back();
 		StringUtil::RTrim(trimmed);
 	}
-	string clause = StringUtil::Format("(rowid %% %llu) = %llu",
-	                                  static_cast<long long unsigned>(total_partitions),
-	                                  static_cast<long long unsigned>(partition_id));
+	string clause = StringUtil::Format("(rowid %% %llu) = %llu", static_cast<long long unsigned>(total_partitions),
+	                                   static_cast<long long unsigned>(partition_id));
 	string partition_sql = trimmed + " WHERE " + clause;
 	if (has_semicolon) {
 		partition_sql += ";";
@@ -284,8 +279,8 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 		}
 	}
 
-	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties{}, names,
-	                                          std::move(collection), ClientProperties{});
+	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties {}, names,
+	                                          std::move(collection), ClientProperties {});
 }
 
 } // namespace duckdb
