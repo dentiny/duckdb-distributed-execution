@@ -6,6 +6,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "server/driver/distributed_executor.hpp"
+#include "server/driver/worker_manager.hpp"
 
 #include <arrow/c/bridge.h>
 #include <arrow/io/memory.h>
@@ -15,17 +16,18 @@
 
 namespace duckdb {
 
-DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager, Connection &conn)
-    : worker_manager(worker_manager), local_conn(conn) {
+DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p)
+    : worker_manager(worker_manager_p), conn(conn_p) {
 }
 
 unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sql) {
-	// Simple check: only distribute SELECT queries
+	// If the given statement cannot be executed in distributed fashion, return nullptr and falls back to local
+	// execution.
 	if (!CanDistribute(sql)) {
-		return nullptr; // Fall back to local execution
+		return nullptr;
 	}
 
-	auto &db_instance = *local_conn.context->db.get();
+	auto &db_instance = *conn.context->db.get();
 
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
@@ -42,7 +44,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 
 	// Step 2: Scan the table locally to get all data
 	string scan_sql = "SELECT * FROM " + table_name;
-	auto scan_result = local_conn.Query(scan_sql);
+	auto scan_result = conn.Query(scan_sql);
 	if (scan_result->HasError()) {
 		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Local scan failed: %s", scan_result->GetError()));
 		return nullptr; // Error scanning, fall back to local
@@ -112,16 +114,16 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 }
 
 bool DistributedExecutor::CanDistribute(const string &sql) {
-	// Simple heuristic: check if it's a SELECT query
+	// Simple heuristic: check if it's a SELECT query.
 	string sql_upper = StringUtil::Upper(sql);
 	StringUtil::Trim(sql_upper);
 
-	// Must start with SELECT
+	// Must start with SELECT.
 	if (!StringUtil::StartsWith(sql_upper, "SELECT")) {
 		return false;
 	}
 
-	// Skip if it has ORDER BY (for now)
+	// Skip if it has ORDER BY (for now).
 	if (sql_upper.find("ORDER BY") != string::npos) {
 		return false;
 	}
@@ -159,7 +161,7 @@ string DistributedExecutor::ExtractTableName(const string &sql) {
 }
 
 vector<vector<unique_ptr<DataChunk>>> DistributedExecutor::PartitionData(QueryResult &result, idx_t num_partitions) {
-	auto &db_instance = *local_conn.context->db.get();
+	auto &db_instance = *conn.context->db.get();
 	vector<vector<unique_ptr<DataChunk>>> partitions(num_partitions);
 
 	idx_t row_idx = 0;
@@ -187,7 +189,7 @@ vector<vector<unique_ptr<DataChunk>>> DistributedExecutor::PartitionData(QueryRe
 string DistributedExecutor::SerializePartitionToArrowIPC(vector<unique_ptr<DataChunk>> &partition,
                                                          const vector<LogicalType> &types,
                                                          const vector<string> &names) {
-	auto &db_instance = *local_conn.context->db.get();
+	auto &db_instance = *conn.context->db.get();
 	if (partition.empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "SerializePartitionToArrowIPC called with empty partition");
 		return "";
@@ -196,7 +198,7 @@ string DistributedExecutor::SerializePartitionToArrowIPC(vector<unique_ptr<DataC
 	// Convert DuckDB types to Arrow schema
 	ArrowSchema arrow_schema;
 	ClientProperties client_props;
-	client_props.client_context = local_conn.context.get();
+	client_props.client_context = conn.context.get();
 	ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_props);
 	auto schema_result = arrow::ImportSchema(&arrow_schema);
 	if (!schema_result.ok()) {
@@ -211,7 +213,7 @@ string DistributedExecutor::SerializePartitionToArrowIPC(vector<unique_ptr<DataC
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Converting chunk size %llu",
 		                                                 static_cast<long long unsigned>(chunk->size())));
 		ArrowArray arrow_array;
-		auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*local_conn.context, types);
+		auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*conn.context, types);
 		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_props, extension_types);
 
 		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
@@ -257,7 +259,7 @@ unique_ptr<QueryResult>
 DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
                                             const vector<string> &names, const vector<LogicalType> &types) {
 
-	auto &db_instance = *local_conn.context->db.get();
+	auto &db_instance = *conn.context->db.get();
 	// Create a collection to store merged results
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 
@@ -292,23 +294,6 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 		}
 	}
 
-	ClientProperties client_props;
-	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), names,
-	                                          std::move(collection), client_props);
-}
-
-arrow::Status DistributedExecutor::PartitionAndDistribute(const string &sql,
-                                                          vector<std::shared_ptr<arrow::RecordBatch>> &all_batches) {
-	// Deprecated - using ExecuteDistributed instead
-	return arrow::Status::OK();
-}
-
-unique_ptr<QueryResult>
-DistributedExecutor::CollectAndMerge(const vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
-	// Deprecated - using CollectAndMergeResults instead
-	vector<string> names;
-	vector<LogicalType> types;
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 	ClientProperties client_props;
 	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), names,
 	                                          std::move(collection), client_props);
