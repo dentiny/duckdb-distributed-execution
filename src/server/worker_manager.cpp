@@ -1,7 +1,5 @@
 #include "worker_manager.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/logging/logger.hpp"
-#include <iostream>
 
 namespace duckdb {
 
@@ -16,7 +14,6 @@ void WorkerManager::RegisterWorker(const string &worker_id, const string &locati
 		throw IOException("Failed to connect to worker %s at %s: %s", worker_id, location, status.ToString());
 	}
 
-	std::cerr << "[WorkerManager] Registered worker " << worker_id << " at " << location << std::endl;
 	workers.push_back(std::move(worker_info));
 }
 
@@ -48,12 +45,10 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 		}
 
 		string location = worker->GetLocation();
-		std::cerr << "[WorkerManager] Started worker " << worker_id << " at " << location << std::endl;
 		RegisterWorker(worker_id, location);
 
 		local_workers.push_back(std::move(worker));
 	}
-	std::cerr << "[WorkerManager] Total workers: " << workers.size() << std::endl;
 }
 
 } // namespace duckdb

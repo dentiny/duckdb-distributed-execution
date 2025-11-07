@@ -6,7 +6,6 @@
 #include "utils/thread_utils.hpp"
 
 #include <thread>
-#include <iostream>
 
 namespace duckdb {
 
@@ -42,7 +41,6 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		worker_count = worker_data[0];
 	}
 
-	std::cerr << "[StartLocalServer] Requested port " << port << ", workers " << worker_count << std::endl;
 	try {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 		arrow::Status status;
@@ -61,9 +59,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
-			if (!serve_status.ok() && g_server_started) {
-				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
-			}
+			(void)serve_status;
 		}).detach();
 
 		// TODO(hjiang): Use readiness probe to validate server on.

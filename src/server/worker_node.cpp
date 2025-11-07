@@ -11,8 +11,6 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
-#include <iostream>
-
 namespace duckdb {
 
 // ============================================================================
@@ -34,7 +32,6 @@ arrow::Status WorkerNode::Start() {
 
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s started on %s:%d", worker_id, host, port));
-	std::cerr << "[WorkerNode " << worker_id << "] Started on " << host << ":" << port << std::endl;
 
 	return arrow::Status::OK();
 }
@@ -96,9 +93,10 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	// Execute the partition and return results
 	distributed::DistributedResponse response;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
-	std::cerr << "[WorkerNode " << worker_id << "] DoGet received partition request" << std::endl;
+	auto &db_instance = *db->instance.get();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s received partition request", worker_id));
 	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
-	std::cerr << "[WorkerNode " << worker_id << "] DoGet returning stream" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s returning partition stream", worker_id));
 
 	*stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
 
@@ -109,17 +107,15 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
                                                  distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	auto &db_instance = *db->instance.get();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executing partition %llu/%llu", worker_id,
-	                                                 req.partition_id(), req.total_partitions()));
-	std::cerr << "[WorkerNode " << worker_id << "] ExecutePartition id=" << req.partition_id()
-	          << " total=" << req.total_partitions() << " sql='" << req.sql() << "'" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executing partition %llu/%llu (sql: %s)", worker_id,
+	                                                 req.partition_id(), req.total_partitions(), req.sql()));
 
 	string temp_table = StringUtil::Format("temp_partition_%llu", req.partition_id());
 
 	// Step 1: Create a temporary table from the partition data
 	if (!req.partition_data().empty()) {
-		std::cerr << "[WorkerNode " << worker_id << "] Partition payload size " << req.partition_data().size()
-		          << " bytes" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s partition payload size %llu bytes", worker_id,
+		                                                 static_cast<long long unsigned>(req.partition_data().size())));
 		// Deserialize Arrow IPC data
 		auto buffer = std::make_shared<arrow::Buffer>(reinterpret_cast<const uint8_t *>(req.partition_data().data()),
 		                                              req.partition_data().size());
@@ -135,7 +131,7 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 			auto *exec_resp = resp.mutable_execute_partition();
 			exec_resp->set_partition_id(req.partition_id());
 			exec_resp->set_row_count(0);
-			std::cerr << "[WorkerNode " << worker_id << "] Empty partition received" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s received empty partition", worker_id));
 			return arrow::Status::OK();
 		}
 
@@ -169,8 +165,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 		if (create_result->HasError()) {
 			resp.set_success(false);
 			resp.set_error_message("Failed to create temp table: " + create_result->GetError());
-			std::cerr << "[WorkerNode " << worker_id << "] Failed to create temp table: " << create_result->GetError()
-			          << std::endl;
+			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed to create temp table: %s", worker_id,
+			                                                create_result->GetError()));
 			return arrow::Status::OK();
 		}
 
@@ -229,13 +225,12 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 
 			auto insert_result = conn->Query(insert_sql.str());
 			if (insert_result->HasError()) {
-				DUCKDB_LOG_DEBUG(db_instance, "Insert failed: " + insert_result->GetError());
-				std::cerr << "[WorkerNode " << worker_id << "] Insert failed: " << insert_result->GetError()
-				          << std::endl;
+				DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s insert failed: %s", worker_id,
+				                                                insert_result->GetError()));
 			}
 		}
-		std::cerr << "[WorkerNode " << worker_id << "] Loaded partition into temp table '" << temp_table << "'"
-		          << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 StringUtil::Format("Worker %s loaded partition into temp table %s", worker_id, temp_table));
 	}
 
 	// Step 2: Rewrite SQL to query the temp table instead
@@ -266,7 +261,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	if (result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
-		std::cerr << "[WorkerNode " << worker_id << "] Query execution failed: " << result->GetError() << std::endl;
+		DUCKDB_LOG_WARN(db_instance,
+		                StringUtil::Format("Worker %s query execution failed: %s", worker_id, result->GetError()));
 		return arrow::Status::OK();
 	}
 
@@ -274,12 +270,15 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	idx_t row_count = 0;
 	auto status = QueryResultToArrow(*result, reader, &row_count);
 	if (!status.ok()) {
-		std::cerr << "[WorkerNode " << worker_id << "] QueryResultToArrow error: " << status.ToString() << std::endl;
+		DUCKDB_LOG_WARN(db_instance,
+		                StringUtil::Format("Worker %s QueryResultToArrow error: %s", worker_id, status.ToString()));
 		return status;
 	}
 	conn->Query("DROP TABLE IF EXISTS " + temp_table);
-	std::cerr << "[WorkerNode " << worker_id << "] Query produced " << row_count << " rows" << std::endl;
-	std::cerr << "[WorkerNode " << worker_id << "] Finished partition " << req.partition_id() << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s query produced %llu rows", worker_id,
+	                                                 static_cast<long long unsigned>(row_count)));
+	DUCKDB_LOG_DEBUG(db_instance,
+	                 StringUtil::Format("Worker %s finished partition %llu", worker_id, req.partition_id()));
 
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_partition();
@@ -291,6 +290,7 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 
 arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
                                              idx_t *row_count) {
+	auto &db_instance = *db->instance.get();
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
@@ -304,7 +304,8 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 			break;
 		}
 
-		std::cerr << "[WorkerNode " << worker_id << "] Converting chunk size " << chunk->size() << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s converting chunk size %llu", worker_id,
+		                                                 static_cast<long long unsigned>(chunk->size())));
 		ArrowArray arrow_array;
 		auto extension_types =
 		    ArrowTypeExtensionData::GetExtensionTypes(*result.client_properties.client_context, result.types);
@@ -352,7 +353,6 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 	// DoAction now returns Result<unique_ptr<ResultStream>>
 	auto action_result = client->DoAction(action);
 	if (!action_result.ok()) {
-		std::cerr << "[WorkerNodeClient] DoAction failed: " << action_result.status().ToString() << std::endl;
 		return action_result.status();
 	}
 	auto result_stream = std::move(action_result).ValueOrDie();
@@ -360,7 +360,6 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 	// Get the response
 	auto next_result = result_stream->Next();
 	if (!next_result.ok()) {
-		std::cerr << "[WorkerNodeClient] DoAction Next failed: " << next_result.status().ToString() << std::endl;
 		return next_result.status();
 	}
 	auto result = std::move(next_result).ValueOrDie();
@@ -382,7 +381,6 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 	ticket.ticket = req_data;
 	auto doget_result = client->DoGet(ticket);
 	if (!doget_result.ok()) {
-		std::cerr << "[WorkerNodeClient] DoGet failed: " << doget_result.status().ToString() << std::endl;
 		return doget_result.status();
 	}
 	stream = std::move(doget_result).ValueOrDie();
