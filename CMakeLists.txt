@@ -51,13 +51,16 @@ set(CLIENT_SOURCES
 set(SERVER_SOURCES
     src/server/distributed_flight_server.cpp
     src/server/distributed_server_function.cpp
+    src/server/distributed_executor.cpp
     src/server/duckling_catalog.cpp
     src/server/duckling_index_catalog_entry.cpp
     src/server/duckling_schema_catalog_entry.cpp
     src/server/duckling_storage.cpp
     src/server/duckling_table_catalog_entry.cpp
     src/server/duckling_transaction.cpp
-    src/server/duckling_transaction_manager.cpp)
+    src/server/duckling_transaction_manager.cpp
+    src/server/worker_manager.cpp
+    src/server/worker_node.cpp)
 
 set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources

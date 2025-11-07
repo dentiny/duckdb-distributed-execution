@@ -6,6 +6,7 @@
 #include "utils/thread_utils.hpp"
 
 #include <thread>
+#include <iostream>
 
 namespace duckdb {
 
@@ -29,15 +30,27 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 
 	int port = DEFAULT_SERVER_PORT;
+	int worker_count = 0;
 	if (args.ColumnCount() > 0 && args.size() > 0) {
 		auto &port_vector = args.data[0];
 		auto port_data = FlatVector::GetData<int32_t>(port_vector);
 		port = port_data[0];
 	}
+	if (args.ColumnCount() > 1 && args.size() > 0) {
+		auto &worker_vector = args.data[1];
+		auto worker_data = FlatVector::GetData<int32_t>(worker_vector);
+		worker_count = worker_data[0];
+	}
 
+	std::cerr << "[StartLocalServer] Requested port " << port << ", workers " << worker_count << std::endl;
 	try {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
-		auto status = g_test_server->Start();
+		arrow::Status status;
+		if (worker_count > 0) {
+			status = g_test_server->StartWithWorkers(worker_count);
+		} else {
+			status = g_test_server->Start();
+		}
 		if (!status.ok()) {
 			throw Exception(ExceptionType::IO, "Failed to start local server: " + status.ToString());
 		}

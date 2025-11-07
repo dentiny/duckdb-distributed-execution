@@ -1,6 +1,8 @@
 #pragma once
 
 #include "distributed.pb.h"
+#include "worker_manager.hpp"
+#include "distributed_executor.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
@@ -19,6 +21,9 @@ public:
 
 	// Start the server.
 	arrow::Status Start();
+
+	// Start with worker nodes
+	arrow::Status StartWithWorkers(idx_t num_workers);
 
 	// Stop the server.
 	void Shutdown();
@@ -73,13 +78,16 @@ private:
 	                               distributed::DistributedResponse &resp);
 
 	// Convert DuckDB result to Arrow RecordBatch.
-	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader);
+	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
+	                                 idx_t *row_count = nullptr);
 
 private:
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
 	unique_ptr<Connection> conn;
+	unique_ptr<WorkerManager> worker_manager;
+	unique_ptr<DistributedExecutor> distributed_executor;
 };
 
 } // namespace duckdb

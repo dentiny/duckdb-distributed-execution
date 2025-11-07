@@ -1,0 +1,45 @@
+# name: test/sql/distributed_basic.test
+# description: Basic distributed execution round trip
+# group: [sql]
+
+require duckherder
+
+# Start distributed server in background thread
+statement ok
+SELECT duckherder_start_local_server(8815, 4);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+statement ok
+USE dh;
+
+statement ok
+PRAGMA duckherder_register_remote_table('distributed_basic_table', 'distributed_basic_table');
+
+statement ok
+DROP TABLE IF EXISTS distributed_basic_table;
+
+statement ok
+CREATE TABLE distributed_basic_table (id INTEGER, value VARCHAR);
+
+statement ok
+INSERT INTO distributed_basic_table VALUES
+    (1, 'hello'),
+    (2, 'world'),
+    (3, 'distributed'),
+    (4, 'duckdb');
+
+query IT
+SELECT id, value FROM distributed_basic_table ORDER BY id;
+----
+1	hello
+2	world
+3	distributed
+4	duckdb
+
+query IT
+SELECT COUNT(*), MAX(id) FROM distributed_basic_table;
+----
+4	4
+
