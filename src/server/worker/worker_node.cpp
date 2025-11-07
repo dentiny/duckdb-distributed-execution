@@ -6,11 +6,10 @@
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/enums/pending_execution_result.hpp"
 #include "duckdb/execution/executor.hpp"
-#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "server/worker/worker_node.hpp"
 
 #include <arrow/array.h>
@@ -27,6 +26,15 @@ WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *sh
         db = owned_db.get();
     }
     conn = make_uniq<Connection>(*db);
+    
+    // If using shared DB, set the default catalog to "duckling" to match the server
+    if (shared_db != nullptr) {
+        auto use_result = conn->Query("USE duckling;");
+        if (use_result->HasError()) {
+            auto &db_instance = *db->instance.get();
+            DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed to USE duckling: %s", worker_id, use_result->GetError()));
+        }
+    }
 }
 
 arrow::Status WorkerNode::Start() {
@@ -103,6 +111,11 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s returning partition stream", worker_id));
 
+	// Check if reader was properly initialized
+	if (!reader) {
+		return arrow::Status::Invalid("Failed to create RecordBatchReader: execution produced no reader");
+	}
+
 	*stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
 
 	return arrow::Status::OK();
@@ -117,40 +130,44 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	unique_ptr<QueryResult> result;
 	arrow::Status exec_status = arrow::Status::OK();
 
+	// TODO: Plan-based execution for better optimization
+	// Currently we execute SQL directly because logical plan deserialization has issues:
+	// 1. Requires matching transaction context between driver and worker
+	// 2. Table/column bindings don't translate across different connection contexts
+	// 3. Catalog state must be synchronized
+	// 
+	// Potential solutions for future:
+	// - Serialize physical plans instead of logical plans (more self-contained)
+	// - Use a custom serialization format that reconstructs bindings on worker side
+	// - Investigate sharing connection context or using a different binding mechanism
+	//
+	// For now, SQL-based execution works well and is simpler/more robust.
 	
-
-	if (!req.serialized_plan().empty()) {
-
-		std::cerr << "executed distributed query with plan" << std::endl;
-
-		exec_status = ExecuteSerializedPlan(req, result);
-	} else {
-
-		std::cerr << "executed distributed query with sql" << std::endl;
-
-
-		result = conn->Query(req.sql());
-	}
+	// Execute the SQL directly - it already contains the partition predicate (e.g., WHERE rowid % 4 = 0)
+	result = conn->Query(req.sql());
+	
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executed query: %s", worker_id, req.sql()));
+	
 	if (!exec_status.ok()) {
 		resp.set_success(false);
 		resp.set_error_message(exec_status.message());
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("Worker %s serialized plan execution failed: %s", worker_id,
 		                                     exec_status.ToString()));
-		return arrow::Status::OK();
+		return exec_status;
 	}
 	if (!result) {
 		resp.set_success(false);
 		resp.set_error_message("Worker produced no query result");
 		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s produced no result", worker_id));
-		return arrow::Status::OK();
+		return arrow::Status::Invalid("Worker produced no query result");
 	}
 	if (result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("Worker %s query execution failed: %s", worker_id, result->GetError()));
-		return arrow::Status::OK();
+		return arrow::Status::Invalid(StringUtil::Format("Query execution failed: %s", result->GetError()));
 	}
 
 	idx_t row_count = 0;
@@ -165,10 +182,19 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	auto *exec_resp = resp.mutable_execute_partition();
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s query produced %llu rows", worker_id,
+	
+	// Log worker execution - visible to user
+	printf("[WORKER %s] Partition %llu/%llu executed, returned %llu rows\n", 
+	       worker_id.c_str(), 
+	       static_cast<long long unsigned>(req.partition_id()), 
+	       static_cast<long long unsigned>(req.total_partitions()),
+	       static_cast<long long unsigned>(row_count));
+	fflush(stdout);
+	
+	DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Worker %s (partition %llu/%llu) returned %llu rows", 
+	                                                 worker_id, req.partition_id(), req.total_partitions(),
 	                                                 static_cast<long long unsigned>(row_count)));
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("Worker %s finished partition %llu", worker_id, req.partition_id()));
+	
 	return arrow::Status::OK();
 }
 
@@ -196,6 +222,9 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 		types.emplace_back(std::move(type));
 	}
 
+	// Begin a transaction before deserializing the plan (deserialization needs active transaction)
+	conn->BeginTransaction();
+	
 	MemoryStream plan_stream(reinterpret_cast<data_ptr_t>(const_cast<char *>(req.serialized_plan().data())),
 	                         req.serialized_plan().size());
 	bound_parameter_map_t parameters;
@@ -203,56 +232,36 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 	try {
 		logical_plan = BinaryDeserializer::Deserialize<LogicalOperator>(plan_stream, *conn->context, parameters);
 	} catch (std::exception &ex) {
+		conn->Rollback();
 		return arrow::Status::Invalid(StringUtil::Format("Failed to deserialize plan: %s", ex.what()));
 	}
 	if (!logical_plan) {
+		conn->Rollback();
 		return arrow::Status::Invalid("Deserialized plan was null");
 	}
 
-	PhysicalPlanGenerator plan_gen(*conn->context);
-	unique_ptr<PhysicalPlan> physical_plan;
-	try {
-		physical_plan = plan_gen.Plan(std::move(logical_plan));
-	} catch (std::exception &ex) {
-		return arrow::Status::Invalid(StringUtil::Format("Failed to generate physical plan: %s", ex.what()));
+	std::cerr << "Worker executing plan, SQL was: " << req.sql() << std::endl;
+	
+	auto statement = make_uniq<LogicalPlanStatement>(std::move(logical_plan));
+	auto materialized = conn->Query(std::move(statement));
+	
+	// Commit the transaction
+	conn->Commit();
+	
+	if (materialized->HasError()) {
+		return arrow::Status::Invalid(materialized->GetError());
 	}
-
-	auto statement_data = make_uniq<PreparedStatementData>(StatementType::SELECT_STATEMENT);
-	statement_data->names = std::move(names);
-	statement_data->types = std::move(types);
-	statement_data->physical_plan = std::move(physical_plan);
-
-	auto &context = *conn->context;
-	auto &collector = PhysicalResultCollector::GetResultCollector(context, *statement_data);
-	Executor executor(context);
-	executor.Initialize(collector);
-
-	PendingExecutionResult exec_result = PendingExecutionResult::RESULT_NOT_READY;
-	while (true) {
-		exec_result = executor.ExecuteTask();
-		if (exec_result == PendingExecutionResult::RESULT_READY ||
-		    exec_result == PendingExecutionResult::EXECUTION_FINISHED) {
-			break;
-		}
-		if (exec_result == PendingExecutionResult::EXECUTION_ERROR) {
-			break;
-		}
-		if (exec_result == PendingExecutionResult::BLOCKED ||
-		    exec_result == PendingExecutionResult::NO_TASKS_AVAILABLE) {
-			executor.WorkOnTasks();
-		}
+	
+	std::cerr << "Worker query returned " << materialized->RowCount() << " rows" << std::endl;
+	
+	if (materialized->types.size() != types.size()) {
+		return arrow::Status::Invalid("Worker result column count mismatch with expected types");
 	}
-
-	if (executor.HasError()) {
-		auto error = executor.GetError();
-		return arrow::Status::Invalid(error.Message());
+	materialized->types = std::move(types);
+	if (materialized->names.size() == names.size()) {
+		materialized->names = std::move(names);
 	}
-
-	result = executor.GetResult();
-	if (!result) {
-		return arrow::Status::Invalid("Executor returned no result");
-	}
-
+	result = std::move(materialized);
 	return arrow::Status::OK();
 }
 

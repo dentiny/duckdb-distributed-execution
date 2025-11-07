@@ -20,10 +20,8 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 }
 
 unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sql) {
-	std::cerr << "distr!!!" << std::endl;
 
 	if (!CanDistribute(sql)) {
-		std::cerr << "cannot distribyte for " << sql << std::endl;
 
 		return nullptr;
 	}
@@ -32,7 +30,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
 
-		std::cerr << "no worker" << std::endl;
 
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
 		return nullptr;
@@ -56,7 +53,12 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		return nullptr;
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute query '%s' in distributed fashion.", sql));
+	printf("[DISTRIBUTED EXECUTOR] Executing query across %llu workers\n", 
+	       static_cast<long long unsigned>(workers.size()));
+	fflush(stdout);
+	
+	DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", 
+	                                                sql, static_cast<long long unsigned>(workers.size())));
 	vector<string> partition_sqls;
 	partition_sqls.reserve(workers.size());
 	vector<string> serialized_plans;
@@ -75,14 +77,12 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		}
 		if (partition_plan == nullptr) {
 
-			std::cerr << "failed to extract plan" << std::endl;
 
 			DUCKDB_LOG_WARN(db_instance,
 			                StringUtil::Format("Partition plan extraction returned null for query '%s'", partition_sql));
 			return nullptr;
 		}
 		if (!IsSupportedPlan(*partition_plan)) {
-			std::cerr << "not supported plan" << std::endl;
 
 			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Partition plan for query '%s' contains unsupported operators",
 			                                             partition_sql));
@@ -99,7 +99,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
 
-		std::cerr << "error" << std::endl;
 
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("Failed to prepare distributed query '%s': %s", sql, prepared->GetError()));
@@ -121,7 +120,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		auto *worker = workers[idx];
 		distributed::ExecutePartitionRequest req;
 
-		std::cerr << "set parttion " << partition_sqls[idx] << std::endl;
 
 		req.set_sql(partition_sqls[idx]);
 		req.set_partition_id(idx);
@@ -146,9 +144,22 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	}
 	D_ASSERT(!result_streams.empty());
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Collecting results from %llu worker streams",
+	DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Collecting and merging results from %llu workers",
 	                                                 static_cast<long long unsigned>(result_streams.size())));
-	return CollectAndMergeResults(result_streams, names, types);
+	auto result = CollectAndMergeResults(result_streams, names, types);
+	
+	if (result) {
+		// Count total rows returned
+		idx_t total_rows = 0;
+		auto materialized = dynamic_cast<MaterializedQueryResult*>(result.get());
+		if (materialized) {
+			total_rows = materialized->RowCount();
+		}
+		DUCKDB_LOG_INFO(db_instance, StringUtil::Format("Distributed query completed: %llu total rows returned",
+		                                                 static_cast<long long unsigned>(total_rows)));
+	}
+	
+	return result;
 }
 
 bool DistributedExecutor::CanDistribute(const string &sql) {
@@ -156,13 +167,11 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 	StringUtil::Trim(sql_upper);
 	if (!StringUtil::StartsWith(sql_upper, "SELECT")) {
 
-		std::cerr << "not start with select" << std::endl;
 
 		return false;
 	}
 	if (sql_upper.find(" FROM ") == string::npos) {
 
-		std::cerr << "not from" << std::endl;
 
 		return false;
 	}
@@ -174,7 +183,6 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 	}
 	if (contains_token(" ORDER BY")) {
 
-		std::cerr << "not start with order by" << std::endl;
 
 		return false;
 	}
@@ -185,7 +193,6 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 		}
 	}
 
-	std::cerr << "should true" << std::endl;
 
 	return true;
 }
