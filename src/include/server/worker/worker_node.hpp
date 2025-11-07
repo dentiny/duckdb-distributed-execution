@@ -13,7 +13,8 @@ namespace duckdb {
 // Simple worker node that executes queries on partitioned data
 class WorkerNode : public arrow::flight::FlightServerBase {
 public:
-	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0);
+    explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0,
+                        DuckDB *shared_db = nullptr);
 	~WorkerNode() override = default;
 
 	arrow::Status Start();
@@ -37,13 +38,16 @@ private:
 	arrow::Status HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
 	                                     distributed::DistributedResponse &resp,
 	                                     std::shared_ptr<arrow::RecordBatchReader> &reader);
+	arrow::Status ExecuteSerializedPlan(const distributed::ExecutePartitionRequest &req,
+	                                   unique_ptr<QueryResult> &result);
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
 	                                 idx_t *row_count = nullptr);
 
 	string worker_id;
 	string host;
 	int port;
-	unique_ptr<DuckDB> db;
+    DuckDB *db;
+    unique_ptr<DuckDB> owned_db;
 	unique_ptr<Connection> conn;
 };
 

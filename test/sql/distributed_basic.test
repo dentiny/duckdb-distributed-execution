@@ -39,6 +39,20 @@ SELECT id, value FROM distributed_basic_table ORDER BY id;
 4	duckdb
 
 query IT
+SELECT id, value FROM distributed_basic_table;
+----
+1	hello
+2	world
+3	distributed
+4	duckdb
+
+query IT
+SELECT id, value FROM distributed_basic_table WHERE id > 2;
+----
+3	distributed
+4	duckdb
+
+query IT
 SELECT COUNT(*), MAX(id) FROM distributed_basic_table;
 ----
 4	4

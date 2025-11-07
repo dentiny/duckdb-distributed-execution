@@ -12,6 +12,7 @@ namespace duckdb {
 // Forward declaration.
 class Connection;
 class WorkerManager;
+class LogicalOperator;
 
 // Simple distributed executor that partitions data and sends to workers
 class DistributedExecutor {
@@ -27,16 +28,14 @@ private:
 	// TODO(hjiang): currently it's purely heuristic SELECT query.
 	bool CanDistribute(const string &sql);
 
-	// Extract table name from SQL query.
-	// TODO(hjiang): currently it's parsed out in string, it's better to get table name from table catalog entry.
-	string ExtractTableName(const string &sql);
+	// Create per-partition SQL statement.
+	string CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions);
 
-	// Partition data across N workers (round-robin).
-	vector<vector<unique_ptr<DataChunk>>> PartitionData(QueryResult &result, idx_t num_partitions);
+	// Validate that the logical plan only contains operators we can currently distribute.
+	bool IsSupportedPlan(LogicalOperator &op);
 
-	// Serialize partition to Arrow IPC format.
-	string SerializePartitionToArrowIPC(vector<unique_ptr<DataChunk>> &partition, const vector<LogicalType> &types,
-	                                    const vector<string> &names);
+	string SerializeLogicalPlan(LogicalOperator &op);
+	string SerializeLogicalType(const LogicalType &type);
 
 	// Collect and merge results from worker streams.
 	unique_ptr<QueryResult> CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,

@@ -43,7 +43,7 @@ DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : ho
 	DUCKDB_LOG_DEBUG(db_instance, "Duckling attach and set as default catalog");
 
 	// Initialize worker manager and distributed executor
-	worker_manager = make_uniq<WorkerManager>();
+	worker_manager = make_uniq<WorkerManager>(*db);
 	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
 }
 

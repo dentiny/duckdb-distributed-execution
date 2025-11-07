@@ -37,7 +37,7 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 	constexpr int WORKER_BASE_PORT = 9000;
 	for (idx_t i = 0; i < num_workers; i++) {
 		string worker_id = StringUtil::Format("worker_%llu", i);
-		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", WORKER_BASE_PORT + i);
+        auto worker = make_uniq<WorkerNode>(worker_id, "localhost", WORKER_BASE_PORT + i, &db);
 
 		auto status = worker->Start();
 		if (!status.ok()) {

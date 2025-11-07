@@ -1,18 +1,16 @@
 #include "arrow_utils.hpp"
-#include "duckdb/common/arrow/arrow_converter.hpp"
-#include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/worker_manager.hpp"
-
-#include <arrow/c/bridge.h>
-#include <arrow/io/memory.h>
-#include <arrow/ipc/writer.h>
-#include <arrow/ipc/reader.h>
-#include <thread>
+#include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/common/serializer/binary_serializer.hpp"
+#include "duckdb/common/serializer/memory_stream.hpp"
 
 namespace duckdb {
 
@@ -21,238 +19,200 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 }
 
 unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sql) {
-	// If the given statement cannot be executed in distributed fashion, return nullptr and falls back to local
-	// execution.
 	if (!CanDistribute(sql)) {
 		return nullptr;
 	}
 
-	auto &db_instance = *conn.context->db.get();
-
+	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
-		return nullptr; // No workers available
+		return nullptr;
 	}
 
-	// Step 1: Extract table name from SQL (simple parsing)
-	string table_name = ExtractTableName(sql);
-	if (table_name.empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, "Failed to extract table name, falling back to local execution");
-		return nullptr; // Can't determine table, fall back to local
+	unique_ptr<LogicalOperator> logical_plan;
+	try {
+		logical_plan = conn.ExtractPlan(sql);
+	} catch (std::exception &ex) {
+		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Failed to extract logical plan for query '%s': %s", sql,
+		                                               ex.what()));
+		return nullptr;
+	}
+	if (!logical_plan) {
+		DUCKDB_LOG_WARN(db_instance,
+		                StringUtil::Format("ExtractPlan returned null for query '%s', falling back to local execution", sql));
+		return nullptr;
+	}
+	if (!IsSupportedPlan(*logical_plan)) {
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Logical plan for query '%s' contains unsupported operators", sql));
+		return nullptr;
 	}
 
-	// Step 2: Scan the table locally to get all data
-	string scan_sql = "SELECT * FROM " + table_name;
-	auto scan_result = conn.Query(scan_sql);
-	if (scan_result->HasError()) {
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Local scan failed: %s", scan_result->GetError()));
-		return nullptr; // Error scanning, fall back to local
-	}
+	vector<string> partition_sqls;
+	partition_sqls.reserve(workers.size());
+	vector<string> serialized_plans;
+	serialized_plans.reserve(workers.size());
 
-	// Step 3: Partition the data across workers (round-robin by row)
-	auto partitions = PartitionData(*scan_result, workers.size());
-	if (partitions.empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, "Partitioning produced no data");
-		return nullptr; // No data to partition
-	}
-	for (size_t i = 0; i < partitions.size(); i++) {
-		size_t rows = 0;
-		for (auto &chunk : partitions[i]) {
-			rows += chunk->size();
+	for (idx_t partition_id = 0; partition_id < workers.size(); partition_id++) {
+		auto partition_sql = CreatePartitionSQL(sql, partition_id, workers.size());
+		unique_ptr<LogicalOperator> partition_plan;
+		try {
+			partition_plan = conn.ExtractPlan(partition_sql);
+		} catch (std::exception &ex) {
+			DUCKDB_LOG_WARN(db_instance,
+			                StringUtil::Format("Failed to extract logical plan for partition query '%s': %s",
+			                                     partition_sql, ex.what()));
+			return nullptr;
 		}
+		if (!partition_plan) {
+			DUCKDB_LOG_WARN(db_instance,
+			                StringUtil::Format("Partition plan extraction returned null for query '%s'", partition_sql));
+			return nullptr;
+		}
+		if (!IsSupportedPlan(*partition_plan)) {
+			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Partition plan for query '%s' contains unsupported operators",
+			                                             partition_sql));
+			return nullptr;
+		}
+		serialized_plans.emplace_back(SerializeLogicalPlan(*partition_plan));
+		partition_sqls.emplace_back(std::move(partition_sql));
 		DUCKDB_LOG_DEBUG(db_instance,
-		                 StringUtil::Format("Partition %llu has %llu rows", static_cast<long long unsigned>(i),
-		                                    static_cast<long long unsigned>(rows)));
+		                StringUtil::Format("Prepared serialized plan for worker %llu (size: %llu bytes)",
+		                                     static_cast<long long unsigned>(partition_id),
+		                                     static_cast<long long unsigned>(serialized_plans.back().size())));
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributing query '%s' to %llu workers (table: %s)", sql,
-	                                                 static_cast<long long unsigned>(workers.size()), table_name));
+	auto prepared = conn.Prepare(sql);
+	if (prepared->HasError()) {
+		DUCKDB_LOG_WARN(db_instance,
+		                StringUtil::Format("Failed to prepare distributed query '%s': %s", sql, prepared->GetError()));
+		return nullptr;
+	}
 
-	// Step 4: Send each partition to its worker and collect results
+	vector<string> names = prepared->GetNames();
+	vector<LogicalType> types = prepared->GetTypes();
+	vector<string> serialized_types;
+	serialized_types.reserve(types.size());
+	for (auto &type : types) {
+		serialized_types.emplace_back(SerializeLogicalType(type));
+	}
 	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> result_streams;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributing query '%s' to %llu workers", sql,
+	                                                 static_cast<long long unsigned>(workers.size())));
 
-	for (size_t i = 0; i < workers.size(); i++) {
+	for (idx_t i = 0; i < workers.size(); i++) {
 		auto *worker = workers[i];
-
-		// Serialize partition to Arrow IPC
-		string partition_data = SerializePartitionToArrowIPC(partitions[i], scan_result->types, scan_result->names);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s partition payload %llu bytes", worker->worker_id,
-		                                                 static_cast<long long unsigned>(partition_data.size())));
-		if (partition_data.empty()) {
-			DUCKDB_LOG_DEBUG(db_instance,
-			                 StringUtil::Format("Skipping worker %s due to empty partition", worker->worker_id));
-			continue;
-		}
-
-		// Create partition request
 		distributed::ExecutePartitionRequest req;
-		req.set_sql(sql);
+		req.set_sql(partition_sqls[i]);
 		req.set_partition_id(i);
 		req.set_total_partitions(workers.size());
-		req.set_partition_data(partition_data);
-
-		// Execute on worker
-		std::unique_ptr<arrow::flight::FlightStreamReader> stream;
-		auto status = worker->client->ExecutePartition(req, stream);
-
-		if (!status.ok()) {
-			DUCKDB_LOG_WARN(db_instance,
-			                StringUtil::Format("Worker %s failed: %s", worker->worker_id, status.ToString()));
-			// Worker failed, continue with others
-			continue;
+		req.set_serialized_plan(serialized_plans[i]);
+		for (const auto &name : names) {
+			req.add_column_names(name);
+		}
+		for (const auto &type_bytes : serialized_types) {
+			req.add_column_types(type_bytes);
 		}
 
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s stream ready", worker->worker_id));
+		std::unique_ptr<arrow::flight::FlightStreamReader> stream;
+		auto status = worker->client->ExecutePartition(req, stream);
+		if (!status.ok()) {
+			DUCKDB_LOG_WARN(db_instance,
+			                StringUtil::Format("Worker %s failed executing partition: %s", worker->worker_id,
+			                                     status.ToString()));
+			continue;
+		}
 		result_streams.push_back(std::move(stream));
 	}
 
-	// Step 5: Collect and merge results from all workers
+	if (result_streams.empty()) {
+		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("No worker streams produced results for query '%s'", sql));
+		return nullptr;
+	}
+
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Collecting results from %llu worker streams",
 	                                                 static_cast<long long unsigned>(result_streams.size())));
-	return CollectAndMergeResults(result_streams, scan_result->names, scan_result->types);
+	return CollectAndMergeResults(result_streams, names, types);
 }
 
 bool DistributedExecutor::CanDistribute(const string &sql) {
-	// Simple heuristic: check if it's a SELECT query.
 	string sql_upper = StringUtil::Upper(sql);
 	StringUtil::Trim(sql_upper);
-
-	// Must start with SELECT.
 	if (!StringUtil::StartsWith(sql_upper, "SELECT")) {
 		return false;
 	}
-
-	// Skip if it has ORDER BY (for now).
-	if (sql_upper.find("ORDER BY") != string::npos) {
+	if (sql_upper.find(" FROM ") == string::npos) {
 		return false;
 	}
-
+	auto contains_token = [&](const char *token) { return sql_upper.find(token) != string::npos; };
+	if (contains_token(" JOIN") || contains_token(" GROUP ") || contains_token(" HAVING") ||
+	    contains_token(" DISTINCT") || contains_token(" LIMIT ") || contains_token(" OFFSET ") ||
+	    contains_token(" UNION ") || contains_token(" EXCEPT ") || contains_token(" INTERSECT ")) {
+		return false;
+	}
+	if (contains_token(" ORDER BY")) {
+		return false;
+	}
+	static const char *aggregate_tokens[] = {"COUNT(", "SUM(", "AVG(", "MIN(", "MAX("};
+	for (auto token : aggregate_tokens) {
+		if (sql_upper.find(token) != string::npos) {
+			return false;
+		}
+	}
 	return true;
 }
 
-string DistributedExecutor::ExtractTableName(const string &sql) {
-	// Simple parser: extract table name from "SELECT ... FROM table_name ..."
-	string sql_upper = StringUtil::Upper(sql);
-
-	auto from_pos = sql_upper.find("FROM");
-	if (from_pos == string::npos) {
-		return "";
+string DistributedExecutor::CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions) {
+	string trimmed = sql;
+	StringUtil::RTrim(trimmed);
+	bool has_semicolon = !trimmed.empty() && trimmed.back() == ';';
+	if (has_semicolon) {
+		trimmed.pop_back();
+		StringUtil::RTrim(trimmed);
 	}
-
-	// Start after "FROM "
-	size_t start = from_pos + 4;
-	while (start < sql.length() && std::isspace(sql[start])) {
-		start++;
+	string clause = StringUtil::Format("(rowid %% %llu) = %llu",
+	                                  static_cast<long long unsigned>(total_partitions),
+	                                  static_cast<long long unsigned>(partition_id));
+	string partition_sql = trimmed + " WHERE " + clause;
+	if (has_semicolon) {
+		partition_sql += ";";
 	}
-
-	// Find end of table name (space, comma, semicolon, or end of string)
-	size_t end = start;
-	while (end < sql.length() && !std::isspace(sql[end]) && sql[end] != ',' && sql[end] != ';' && sql[end] != '(' &&
-	       sql[end] != ')') {
-		end++;
-	}
-
-	if (end > start) {
-		return sql.substr(start, end - start);
-	}
-
-	return "";
+	return partition_sql;
 }
 
-vector<vector<unique_ptr<DataChunk>>> DistributedExecutor::PartitionData(QueryResult &result, idx_t num_partitions) {
-	auto &db_instance = *conn.context->db.get();
-	vector<vector<unique_ptr<DataChunk>>> partitions(num_partitions);
-
-	idx_t row_idx = 0;
-	while (true) {
-		auto chunk = result.Fetch();
-		if (!chunk || chunk->size() == 0) {
-			break;
+bool DistributedExecutor::IsSupportedPlan(LogicalOperator &op) {
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_PROJECTION:
+	case LogicalOperatorType::LOGICAL_FILTER: {
+		if (op.children.size() != 1) {
+			return false;
 		}
-
-		// For simplicity, assign whole chunks in round-robin fashion
-		// In production, we'd split chunks by rows for better balance
-		idx_t partition_id = row_idx % num_partitions;
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Assigning chunk size %llu to partition %llu",
-		                                                 static_cast<long long unsigned>(chunk->size()),
-		                                                 static_cast<long long unsigned>(partition_id)));
-		partitions[partition_id].push_back(std::move(chunk));
-		row_idx++;
+		return IsSupportedPlan(*op.children[0]);
 	}
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("Partitioned total rows %llu", static_cast<long long unsigned>(row_idx)));
-
-	return partitions;
+	case LogicalOperatorType::LOGICAL_GET:
+		return true;
+	default:
+		return false;
+	}
 }
 
-string DistributedExecutor::SerializePartitionToArrowIPC(vector<unique_ptr<DataChunk>> &partition,
-                                                         const vector<LogicalType> &types,
-                                                         const vector<string> &names) {
-	auto &db_instance = *conn.context->db.get();
-	if (partition.empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, "SerializePartitionToArrowIPC called with empty partition");
-		return "";
-	}
+string DistributedExecutor::SerializeLogicalPlan(LogicalOperator &op) {
+	MemoryStream stream;
+	BinarySerializer serializer(stream);
+	serializer.Begin();
+	op.Serialize(serializer);
+	serializer.End();
+	auto data_ptr = stream.GetData();
+	return string(reinterpret_cast<const char *>(data_ptr), stream.GetPosition());
+}
 
-	// Convert DuckDB types to Arrow schema
-	ArrowSchema arrow_schema;
-	ClientProperties client_props;
-	client_props.client_context = conn.context.get();
-	ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_props);
-	auto schema_result = arrow::ImportSchema(&arrow_schema);
-	if (!schema_result.ok()) {
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("ImportSchema failed: %s", schema_result.status().ToString()));
-		return "";
-	}
-	auto schema = schema_result.ValueOrDie();
-
-	// Convert each chunk to Arrow RecordBatch
-	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	for (auto &chunk : partition) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Converting chunk size %llu",
-		                                                 static_cast<long long unsigned>(chunk->size())));
-		ArrowArray arrow_array;
-		auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*conn.context, types);
-		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_props, extension_types);
-
-		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
-		if (!batch_result.ok()) {
-			DUCKDB_LOG_WARN(db_instance,
-			                StringUtil::Format("ImportRecordBatch failed: %s", batch_result.status().ToString()));
-			continue;
-		}
-		batches.push_back(batch_result.ValueOrDie());
-	}
-
-	// Serialize to Arrow IPC format
-	auto buffer_output = arrow::io::BufferOutputStream::Create().ValueOrDie();
-	auto writer_result = arrow::ipc::MakeStreamWriter(buffer_output, schema);
-	if (!writer_result.ok()) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("MakeStreamWriter failed: %s", writer_result.status().ToString()));
-		return "";
-	}
-	auto writer = writer_result.ValueOrDie();
-
-	for (const auto &batch : batches) {
-		auto status = writer->WriteRecordBatch(*batch);
-		if (!status.ok()) {
-			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Failed to write batch: %s", status.ToString()));
-			return "";
-		}
-	}
-
-	auto close_status = writer->Close();
-	if (!close_status.ok()) {
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Failed to close writer: %s", close_status.ToString()));
-		return "";
-	}
-	auto buffer = buffer_output->Finish().ValueOrDie();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Serialized partition size %llu bytes",
-	                                                 static_cast<long long unsigned>(buffer->size())));
-
-	return std::string(reinterpret_cast<const char *>(buffer->data()), buffer->size());
+string DistributedExecutor::SerializeLogicalType(const LogicalType &type) {
+	MemoryStream stream;
+	BinarySerializer serializer(stream);
+	serializer.Begin();
+	type.Serialize(serializer);
+	serializer.End();
+	return string(reinterpret_cast<const char *>(stream.GetData()), stream.GetPosition());
 }
 
 unique_ptr<QueryResult>

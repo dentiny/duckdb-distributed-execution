@@ -96,6 +96,12 @@ message ExecutePartitionRequest {
   uint64 partition_id = 3;
   // Total number of partitions
   uint64 total_partitions = 4;
+  // Serialized logical plan fragment (BinarySerializer format)
+  bytes serialized_plan = 5;
+  // Column names for the result
+  repeated string column_names = 6;
+  // Serialized LogicalType definitions for the result columns
+  repeated bytes column_types = 7;
 }
 
 // Worker registration request.
