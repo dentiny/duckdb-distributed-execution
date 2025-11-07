@@ -81,7 +81,8 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s", bind_data.remote_table_name));
 	// Get the expected types from the table schema to handle special types like ENUM
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
-	auto result = client.ScanTable(bind_data.remote_table_name, output.GetCapacity(), 0, &expected_types);
+	auto result =
+	    client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), /*offset=*/0, &expected_types);
 
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL, "Distributed table scan error: " + result->GetError());

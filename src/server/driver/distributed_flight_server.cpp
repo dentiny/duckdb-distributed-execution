@@ -6,6 +6,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "query_common.hpp"
 #include "server/driver/duckling_storage.hpp"
 
 #include <arrow/array.h>
@@ -383,17 +384,18 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 	auto &db_instance = *db->instance.get();
-
-	// string sql =
-	//     StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
 
 	string sql = StringUtil::Format("SELECT * FROM %s", req.table_name());
+	if (req.limit() != NO_QUERY_LIMIT && req.limit() != STANDARD_VECTOR_SIZE) {
+		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
+	}
+	if (req.offset() != NO_QUERY_OFFSET) {
+		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
+	}
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
-
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		result = distributed_executor->ExecuteDistributed(sql);
 	}

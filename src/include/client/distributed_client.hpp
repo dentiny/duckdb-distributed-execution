@@ -6,6 +6,7 @@
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+#include "query_common.hpp"
 
 namespace duckdb {
 
@@ -45,7 +46,8 @@ public:
 
 	// Get table data.
 	// If [`expected_types`] is unassigned, type information is deduced from arrow schema.
-	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = 1000, idx_t offset = 0,
+	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = NO_QUERY_LIMIT,
+	                                  idx_t offset = NO_QUERY_OFFSET,
 	                                  const vector<LogicalType> *expected_types = nullptr);
 
 private:

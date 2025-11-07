@@ -20,16 +20,13 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 }
 
 unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sql) {
-
 	if (!CanDistribute(sql)) {
-
 		return nullptr;
 	}
 
 	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
-
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
 		return nullptr;
 	}
@@ -95,7 +92,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
-
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("Failed to prepare distributed query '%s': %s", sql, prepared->GetError()));
 		return nullptr;
@@ -143,7 +139,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	auto result = CollectAndMergeResults(result_streams, names, types);
 
 	if (result) {
-		// Count total rows returned
+		// Count total rows returned.
 		idx_t total_rows = 0;
 		auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
 		if (materialized) {
@@ -160,23 +156,20 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 	string sql_upper = StringUtil::Upper(sql);
 	StringUtil::Trim(sql_upper);
 	if (!StringUtil::StartsWith(sql_upper, "SELECT")) {
-
 		return false;
 	}
 	if (sql_upper.find(" FROM ") == string::npos) {
-
 		return false;
 	}
 	auto contains_token = [&](const char *token) {
 		return sql_upper.find(token) != string::npos;
 	};
 	if (contains_token(" JOIN") || contains_token(" GROUP ") || contains_token(" HAVING") ||
-	    contains_token(" DISTINCT") || contains_token(" LIMIT ") || contains_token(" OFFSET ") ||
-	    contains_token(" UNION ") || contains_token(" EXCEPT ") || contains_token(" INTERSECT ")) {
+	    contains_token(" DISTINCT") || contains_token(" OFFSET ") || contains_token(" UNION ") ||
+	    contains_token(" EXCEPT ") || contains_token(" INTERSECT ")) {
 		return false;
 	}
 	if (contains_token(" ORDER BY")) {
-
 		return false;
 	}
 	static const char *aggregate_tokens[] = {"COUNT(", "SUM(", "AVG(", "MIN(", "MAX("};

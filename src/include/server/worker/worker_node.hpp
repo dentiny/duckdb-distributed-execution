@@ -10,10 +10,10 @@
 
 namespace duckdb {
 
-// Simple worker node that executes queries on partitioned data
+// Simple worker node that executes queries on partitioned data.
 class WorkerNode : public arrow::flight::FlightServerBase {
 public:
-	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0, DuckDB *shared_db = nullptr);
+	WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0, DuckDB *shared_db = nullptr);
 	~WorkerNode() override = default;
 
 	arrow::Status Start();
@@ -50,7 +50,7 @@ private:
 	unique_ptr<Connection> conn;
 };
 
-// Simple client for worker communication
+// Simple client for worker communication.
 class WorkerNodeClient {
 public:
 	explicit WorkerNodeClient(const string &location);

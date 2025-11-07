@@ -86,21 +86,21 @@ message LoadExtensionRequest {
   string version = 3;
 }
 
-// Execute partition request (for worker nodes).
+// Execute partition request, used for worker nodes.
 message ExecutePartitionRequest {
-  // SQL query to execute on partition
+  // SQL query to execute on partition.
   string sql = 1;
-  // Serialized partition data (Arrow IPC format)
+  // Serialized partition data (Arrow IPC format).
   bytes partition_data = 2;
-  // Partition ID for tracking
+  // Partition ID for tracking.
   uint64 partition_id = 3;
-  // Total number of partitions
+  // Total number of partitions.
   uint64 total_partitions = 4;
-  // Serialized logical plan fragment (BinarySerializer format)
+  // Serialized logical plan fragment (BinarySerializer format).
   bytes serialized_plan = 5;
-  // Column names for the result
+  // Column names for the result.
   repeated string column_names = 6;
-  // Serialized LogicalType definitions for the result columns
+  // Serialized LogicalType definitions for the result columns.
   repeated bytes column_types = 7;
 }
 

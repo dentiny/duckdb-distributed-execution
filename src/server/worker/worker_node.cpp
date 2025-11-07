@@ -14,6 +14,7 @@
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
+
 namespace duckdb {
 
 WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *shared_db)
@@ -21,19 +22,17 @@ WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *sh
 	if (shared_db != nullptr) {
 		db = shared_db;
 	} else {
-		// TODO(hjiang): Pass down db config (i.e., for logging).
 		owned_db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
 		db = owned_db.get();
 	}
 	conn = make_uniq<Connection>(*db);
 
-	// If using shared DB, set the default catalog to "duckling" to match the server
+	// If using shared DB, set the default catalog to "duckling" to match the server.
 	if (shared_db != nullptr) {
 		auto use_result = conn->Query("USE duckling;");
 		if (use_result->HasError()) {
-			auto &db_instance = *db->instance.get();
-			DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s failed to USE duckling: %s", worker_id,
-			                                                use_result->GetError()));
+			throw InternalException(
+			    StringUtil::Format("Worker %s failed to USE duckling: %s", worker_id, use_result->GetError()));
 		}
 	}
 }
@@ -79,7 +78,8 @@ arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &conte
 		break;
 	}
 	default:
-		return arrow::Status::Invalid("Unknown request type for worker");
+		return arrow::Status::Invalid(
+		    StringUtil::Format("Unknown request type for worker: %d", static_cast<int>(request.request_case())));
 	}
 
 	std::string response_data = response.SerializeAsString();
@@ -112,7 +112,6 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s returning partition stream", worker_id));
 
-	// Check if reader was properly initialized
 	if (!reader) {
 		return arrow::Status::Invalid("Failed to create RecordBatchReader: execution produced no reader");
 	}
@@ -142,8 +141,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	// - Use a custom serialization format that reconstructs bindings on worker side
 	// - Investigate sharing connection context or using a different binding mechanism
 	//
-	// For now, SQL-based execution works well and is simpler/more robust.
-
+	// For now, SQL-based execution works well and is simpler.
+	//
 	// Execute the SQL directly - it already contains the partition predicate (e.g., WHERE rowid % 4 = 0)
 	result = conn->Query(req.sql());
 
@@ -292,10 +291,6 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 	}
 	return arrow::Status::OK();
 }
-
-// ============================================================================
-// WorkerNodeClient Implementation
-// ============================================================================
 
 WorkerNodeClient::WorkerNodeClient(const string &location) : location(location) {
 }
