@@ -70,7 +70,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	// TODO(hjiang): Currently fake the interaction with server, should replace with client impl.
 	auto &client = DistributedClient::GetInstance();
 	if (!client.TableExists(bind_data.remote_table_name)) {
 		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Table %s does not exist on server", bind_data.remote_table_name));

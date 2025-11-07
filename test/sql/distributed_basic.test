@@ -1,10 +1,12 @@
 # name: test/sql/distributed_basic.test
 # description: Basic distributed execution round trip
 # group: [sql]
+#
+# TODO(hjiang): Add large scale dataset.
 
 require duckherder
 
-# Start distributed server in background thread
+# Start distributed server and workers in background thread
 statement ok
 SELECT duckherder_start_local_server(8815, 4);
 

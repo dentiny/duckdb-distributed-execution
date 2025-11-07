@@ -17,16 +17,13 @@
 #include <arrow/c/bridge.h>
 namespace duckdb {
 
-// ============================================================================
-// WorkerNode Implementation
-// ============================================================================
-
 WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *shared_db)
     : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p) {
-    if (shared_db) {
+    if (shared_db != nullptr) {
         db = shared_db;
     } else {
-        owned_db = make_uniq<DuckDB>(nullptr, nullptr);
+		// TODO(hjiang): Pass down db config (i.e., for logging).
+        owned_db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
         db = owned_db.get();
     }
     conn = make_uniq<Connection>(*db);
@@ -46,8 +43,7 @@ arrow::Status WorkerNode::Start() {
 }
 
 void WorkerNode::Shutdown() {
-	auto status = FlightServerBase::Shutdown();
-	(void)status; // Ignore shutdown errors
+	[[maybe_unused]] auto status = FlightServerBase::Shutdown();
 }
 
 string WorkerNode::GetLocation() const {
@@ -89,7 +85,7 @@ arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &conte
 
 arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
                                 std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
-	// Ticket contains partition_id for retrieving results
+	// Ticket contains partition_id for retrieving results.
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse ticket");
@@ -99,7 +95,7 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 		return arrow::Status::Invalid("DoGet expects ExecutePartition request");
 	}
 
-	// Execute the partition and return results
+	// Execute the partition and return results.
 	distributed::DistributedResponse response;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
 	auto &db_instance = *db->instance.get();
@@ -120,9 +116,19 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	                                                 req.partition_id(), req.total_partitions(), req.sql()));
 	unique_ptr<QueryResult> result;
 	arrow::Status exec_status = arrow::Status::OK();
+
+	
+
 	if (!req.serialized_plan().empty()) {
+
+		std::cerr << "executed distributed query with plan" << std::endl;
+
 		exec_status = ExecuteSerializedPlan(req, result);
 	} else {
+
+		std::cerr << "executed distributed query with sql" << std::endl;
+
+
 		result = conn->Query(req.sql());
 	}
 	if (!exec_status.ok()) {
@@ -312,14 +318,12 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 	std::string req_data = req.SerializeAsString();
 	arrow::flight::Action action {"execute_partition", arrow::Buffer::FromString(req_data)};
 
-	// DoAction now returns Result<unique_ptr<ResultStream>>
 	auto action_result = client->DoAction(action);
 	if (!action_result.ok()) {
 		return action_result.status();
 	}
 	auto result_stream = std::move(action_result).ValueOrDie();
 
-	// Get the response
 	auto next_result = result_stream->Next();
 	if (!next_result.ok()) {
 		return next_result.status();
@@ -338,7 +342,7 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 		return arrow::Status::Invalid("Worker execution failed: " + response.error_message());
 	}
 
-	// Now get the actual data stream using DoGet with the request as ticket
+	// Now get the actual data stream using DoGet with the request as ticket.
 	arrow::flight::Ticket ticket;
 	ticket.ticket = req_data;
 	auto doget_result = client->DoGet(ticket);

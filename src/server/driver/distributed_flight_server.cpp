@@ -1,10 +1,11 @@
+#include "server/driver/distributed_flight_server.hpp"
+
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
-#include "server/driver/distributed_flight_server.hpp"
 #include "server/driver/duckling_storage.hpp"
 
 #include <arrow/array.h>
@@ -63,7 +64,7 @@ arrow::Status DistributedFlightServer::Start() {
 arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
 	auto &db_instance = *db->instance.get();
 
-	// Start local workers first
+	// Start local workers.
 	if (num_workers > 0) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Starting %llu local workers", num_workers));
 		try {
@@ -74,7 +75,7 @@ arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
 		}
 	}
 
-	// Start the server
+	// Start the server.
 	return Start();
 }
 
@@ -149,6 +150,11 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
                                              const arrow::flight::Ticket &ticket,
                                              std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
+
+
+
+	std::cerr << "DistributedFlightServer::DoGet" << std::endl;
+
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
@@ -201,14 +207,14 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
                                                         distributed::DistributedResponse &resp) {
-	// Try distributed execution first if workers are available
+	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	if (worker_manager && worker_manager->GetWorkerCount() > 0) {
+	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		result = distributed_executor->ExecuteDistributed(req.sql());
 	}
 
-	// Fall back to local execution if not distributed
-	if (!result) {
+	// Fall back to local execution if not distributed.
+	if (result == nullptr) {
 		result = conn->Query(req.sql());
 	}
 
@@ -378,17 +384,23 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
-	string sql =
-	    StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
+	// string sql =
+	//     StringUtil::Format("SELECT * FROM %s LIMIT %llu OFFSET %llu", req.table_name(), req.limit(), req.offset());
 
-	// Try distributed execution first if workers are available
+	string sql =
+	    StringUtil::Format("SELECT * FROM %s", req.table_name());
+
+	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	if (worker_manager && worker_manager->GetWorkerCount() > 0) {
+
+	std::cerr << "hanle scan table" << std::endl;
+
+	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		result = distributed_executor->ExecuteDistributed(sql);
 	}
 
-	// Fall back to local execution if not distributed
-	if (!result) {
+	// Fall back to local execution if not distributed.
+	if (result == nullptr) {
 		result = conn->Query(sql);
 	}
 

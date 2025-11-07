@@ -8,7 +8,7 @@ void WorkerManager::RegisterWorker(const string &worker_id, const string &locati
 
 	auto worker_info = make_uniq<WorkerInfo>(worker_id, location);
 
-	// Connect to the worker
+	// Connect to the worker.
 	auto status = worker_info->client->Connect();
 	if (!status.ok()) {
 		throw IOException("Failed to connect to worker %s at %s: %s", worker_id, location, status.ToString());
@@ -35,9 +35,9 @@ idx_t WorkerManager::GetWorkerCount() const {
 
 void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 	constexpr int WORKER_BASE_PORT = 9000;
-	for (idx_t i = 0; i < num_workers; i++) {
-		string worker_id = StringUtil::Format("worker_%llu", i);
-        auto worker = make_uniq<WorkerNode>(worker_id, "localhost", WORKER_BASE_PORT + i, &db);
+	for (idx_t idx = 0; idx < num_workers; ++idx) {
+		string worker_id = StringUtil::Format("worker_%llu", idx);
+        auto worker = make_uniq<WorkerNode>(worker_id, "localhost", WORKER_BASE_PORT + idx, &db);
 
 		auto status = worker->Start();
 		if (!status.ok()) {
@@ -47,7 +47,7 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 		string location = worker->GetLocation();
 		RegisterWorker(worker_id, location);
 
-		local_workers.push_back(std::move(worker));
+		local_workers.emplace_back(std::move(worker));
 	}
 }
 

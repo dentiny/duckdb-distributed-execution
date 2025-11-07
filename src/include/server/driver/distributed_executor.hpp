@@ -19,7 +19,7 @@ class DistributedExecutor {
 public:
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p);
 
-	// Execute a query in distributed manner
+	// Execute a query in distributed manner.
 	// Returns nullptr if query cannot be distributed, which will fall back to local execution.
 	unique_ptr<QueryResult> ExecuteDistributed(const string &sql);
 
@@ -31,7 +31,8 @@ private:
 	// Create per-partition SQL statement.
 	string CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions);
 
-	// Validate that the logical plan only contains operators we can currently distribute.
+	// Check whether that the logical plan only contains operators we can currently distribute.
+	// TODO(hjiang): Currently we only support limited operator based on heuristics.
 	bool IsSupportedPlan(LogicalOperator &op);
 
 	string SerializeLogicalPlan(LogicalOperator &op);
