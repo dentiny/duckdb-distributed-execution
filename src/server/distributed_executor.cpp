@@ -1,11 +1,11 @@
-#include "distributed_executor.hpp"
 #include "arrow_utils.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
-#include "duckdb/common/types/column/column_data_collection.hpp"
+#include "server/distributed_executor.hpp"
 
 #include <arrow/c/bridge.h>
 #include <arrow/io/memory.h>

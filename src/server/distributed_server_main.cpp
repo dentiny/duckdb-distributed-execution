@@ -2,7 +2,7 @@
 #include <iostream>
 #include <memory>
 
-#include "distributed_flight_server.hpp"
+#include "server/distributed_flight_server.hpp"
 
 using namespace duckdb;
 

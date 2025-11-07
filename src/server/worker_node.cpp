@@ -1,10 +1,9 @@
-#include "worker_node.hpp"
-
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "server/worker_node.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "worker_manager.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/main/query_result.hpp"
+#include "server/worker_manager.hpp"
 
 #include <arrow/record_batch.h>
 

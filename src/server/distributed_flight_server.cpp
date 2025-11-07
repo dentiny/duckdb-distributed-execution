@@ -1,12 +1,11 @@
-#include "distributed_flight_server.hpp"
-
-#include "duckling_storage.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "server/distributed_flight_server.hpp"
+#include "server/duckling_storage.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>

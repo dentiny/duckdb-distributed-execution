@@ -1,11 +1,11 @@
 #pragma once
 
 #include "distributed.pb.h"
-#include "worker_manager.hpp"
-#include "distributed_executor.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+#include "server/distributed_executor.hpp"
+#include "server/worker_manager.hpp"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>

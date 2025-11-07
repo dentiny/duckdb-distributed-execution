@@ -1,8 +1,8 @@
 #pragma once
 
-#include "worker_node.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
+#include "server/worker_node.hpp"
 #include <memory>
 #include <mutex>
 
