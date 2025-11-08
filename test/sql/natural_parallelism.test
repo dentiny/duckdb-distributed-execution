@@ -1,0 +1,45 @@
+# name: test/sql/natural_parallelism.test
+# description: Test Step 1 - Query DuckDB's natural parallelism decisions
+# group: [sql]
+
+require duckherder
+
+# Start distributed server with 2 workers
+statement ok
+SELECT duckherder_start_local_server(8830, 2);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8830);
+
+statement ok
+USE dh;
+
+statement ok
+PRAGMA duckherder_register_remote_table('parallelism_test', 'parallelism_test');
+
+statement ok
+CREATE TABLE parallelism_test (id INTEGER, value INTEGER);
+
+# Insert enough data to potentially trigger parallelism
+statement ok
+INSERT INTO parallelism_test SELECT i, i * 10 FROM range(1000) t(i);
+
+# Query that should trigger distributed execution
+# Check debug logs for 📊 [STEP1] markers showing DuckDB's parallelism decision
+query II
+SELECT COUNT(*), SUM(value) FROM parallelism_test;
+----
+1000	4995000
+
+# Test with filter
+query II
+SELECT COUNT(*), SUM(value) FROM parallelism_test WHERE id > 500;
+----
+499	3742500
+
+# Test with simple select (should also show natural parallelism logging)
+query I
+SELECT COUNT(*) FROM parallelism_test WHERE value < 5000;
+----
+500
+

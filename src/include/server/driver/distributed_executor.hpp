@@ -13,6 +13,33 @@ namespace duckdb {
 class Connection;
 class WorkerManager;
 class LogicalOperator;
+class PhysicalOperator;
+
+// STEP 2: Structure to hold partition information extracted from physical plan
+struct PlanPartitionInfo {
+	// The type of physical operator
+	PhysicalOperatorType operator_type;
+	
+	// Estimated cardinality (row count)
+	idx_t estimated_cardinality;
+	
+	// Natural parallelism (from EstimatedThreadCount)
+	idx_t natural_parallelism;
+	
+	// Whether we can use intelligent partitioning for this plan
+	bool supports_intelligent_partitioning;
+	
+	// For table scans: estimated rows per partition
+	idx_t rows_per_partition;
+	
+	PlanPartitionInfo() 
+		: operator_type(PhysicalOperatorType::INVALID),
+		  estimated_cardinality(0),
+		  natural_parallelism(0),
+		  supports_intelligent_partitioning(false),
+		  rows_per_partition(0) {
+	}
+};
 
 // Simple distributed executor that partitions data and sends to workers
 class DistributedExecutor {
@@ -29,11 +56,21 @@ private:
 	bool CanDistribute(const string &sql);
 
 	// Create per-partition SQL statement.
-	string CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions);
+	// STEP 6: Now uses PlanPartitionInfo for intelligent partitioning
+	string CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions,
+	                         const PlanPartitionInfo &partition_info);
 
 	// Check whether that the logical plan only contains operators we can currently distribute.
 	// TODO(hjiang): Currently we only support limited operator based on heuristics.
 	bool IsSupportedPlan(LogicalOperator &op);
+
+	// STEP 1: Query DuckDB's natural parallelization decision
+	// Returns the number of parallel tasks DuckDB would naturally create for this query
+	idx_t QueryNaturalParallelism(LogicalOperator &logical_plan);
+
+	// STEP 2: Extract partition information from physical plan
+	// Analyzes the plan structure to get hints about intelligent partitioning
+	PlanPartitionInfo ExtractPartitionInfo(LogicalOperator &logical_plan, idx_t num_workers);
 
 	string SerializeLogicalPlan(LogicalOperator &op);
 	string SerializeLogicalType(const LogicalType &type);

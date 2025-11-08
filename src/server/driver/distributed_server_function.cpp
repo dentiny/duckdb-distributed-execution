@@ -22,11 +22,6 @@ constexpr int DEFAULT_SERVER_PORT = 8815;
 void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	const std::lock_guard<std::mutex> lock(g_server_mutex);
 
-	if (g_server_started) {
-		result.Reference(Value(SUCCESS));
-		return;
-	}
-
 	int port = DEFAULT_SERVER_PORT;
 	int worker_count = 0;
 	if (args.ColumnCount() > 0 && args.size() > 0) {
@@ -39,6 +34,14 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto worker_data = FlatVector::GetData<int32_t>(worker_vector);
 		worker_count = worker_data[0];
 	}
+
+	if (g_server_started) {
+		std::cerr << "[SERVER] Server already running, ignoring request to start on port " << port << std::endl;
+		result.Reference(Value(SUCCESS));
+		return;
+	}
+
+	std::cerr << "[SERVER] Starting server on port " << port << " with " << worker_count << " workers" << std::endl;
 
 	try {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
@@ -67,6 +70,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 		g_server_started = true;
+		std::cerr << "[SERVER] Server successfully started on port " << port << std::endl;
 		result.Reference(Value(SUCCESS));
 	} catch (const std::exception &ex) {
 		throw Exception(ExceptionType::IO, "Failed to start local server: " + string(ex.what()));

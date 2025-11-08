@@ -5,13 +5,17 @@
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "server/driver/worker_manager.hpp"
+
+#include <functional>
 
 namespace duckdb {
 
@@ -72,10 +76,42 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		return nullptr;
 	}
 
+	// STEP 1: Query what DuckDB would naturally do for parallelism
+	// This helps us understand DuckDB's intelligent parallelization decisions
+	idx_t natural_parallelism = QueryNaturalParallelism(*logical_plan);
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("📊 [STEP1] DuckDB would naturally use %llu parallel tasks", 
+	                                  static_cast<long long unsigned>(natural_parallelism)));
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("📊 [STEP1] We have %llu workers available", 
+	                                  static_cast<long long unsigned>(workers.size())));
+	if (natural_parallelism > 0 && natural_parallelism != workers.size()) {
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("📊 [STEP1] NOTE: Mismatch between natural parallelism (%llu) and worker count (%llu)",
+		                                  static_cast<long long unsigned>(natural_parallelism),
+		                                  static_cast<long long unsigned>(workers.size())));
+	}
+
+	// STEP 2: Extract partition information from physical plan
+	// This analyzes the plan to determine if we can use intelligent partitioning
+	PlanPartitionInfo partition_info = ExtractPartitionInfo(*logical_plan, workers.size());
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("📊 [STEP2] Plan analysis complete - intelligent partitioning: %s", 
+	                                  partition_info.supports_intelligent_partitioning ? "YES" : "NO (using rowid %%)"));
+
+	std::cerr << "\n========== DISTRIBUTED EXECUTION START ==========" << std::endl;
+	std::cerr << "Query: " << sql << std::endl;
+	std::cerr << "Workers: " << workers.size() << std::endl;
+	std::cerr << "Natural Parallelism: " << natural_parallelism << std::endl;
+	std::cerr << "Intelligent Partitioning: " << (partition_info.supports_intelligent_partitioning ? "YES" : "NO") << std::endl;
+	std::cerr << "Estimated Cardinality: " << partition_info.estimated_cardinality << std::endl;
+	std::cerr << "=================================================" << std::endl;
+
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", sql,
 	                                                 static_cast<long long unsigned>(workers.size())));
 	
-	// Phase 2: Partition plan creation
+	// Phase 2: Partition plan creation (CURRENT - manual rowid partitioning)
+	// TODO: Replace with natural DuckDB parallelism in next steps
 	// Create partitioned plans for each worker (each worker = one execution unit/thread)
 	// Partition predicate is injected into the plan (e.g., WHERE rowid % N = worker_id)
 	// This ensures data partitioning similar to how DuckDB partitions data across threads
@@ -86,7 +122,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 
 	for (idx_t partition_id = 0; partition_id < workers.size(); ++partition_id) {
 		// Create SQL with partition predicate embedded
-		auto partition_sql = CreatePartitionSQL(sql, partition_id, workers.size());
+		// STEP 6: Now uses partition_info for intelligent range-based or modulo partitioning
+		auto partition_sql = CreatePartitionSQL(sql, partition_id, workers.size(), partition_info);
 		unique_ptr<LogicalOperator> partition_plan;
 		try {
 			partition_plan = conn.ExtractPlan(partition_sql);
@@ -117,6 +154,18 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		                                    static_cast<long long unsigned>(partition_id),
 		                                    static_cast<long long unsigned>(serialized_plans.back().size())));
 	}
+	
+	// Log partition strategy summary
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("✅ [PARTITION] Created %llu partitions using %s strategy",
+	                                  static_cast<long long unsigned>(workers.size()),
+	                                  partition_info.supports_intelligent_partitioning ? "RANGE-BASED" : "MODULO"));
+	
+	std::cerr << "\n========== PARTITION SQLS ==========" << std::endl;
+	for (idx_t i = 0; i < partition_sqls.size(); i++) {
+		std::cerr << "Worker " << i << ": " << partition_sqls[i] << std::endl;
+	}
+	std::cerr << "====================================" << std::endl;
 
 	// Phase 3: Prepare result schema and type information
 	auto prepared = conn.Prepare(sql);
@@ -184,6 +233,10 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	// Phase 5: Combine results (GlobalState aggregation)
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Collecting and merging results from %llu workers",
 	                                                 static_cast<long long unsigned>(result_streams.size())));
+	
+	std::cerr << "\n========== MERGE PHASE ==========" << std::endl;
+	std::cerr << "Collecting results from " << result_streams.size() << " workers..." << std::endl;
+	
 	auto result = CollectAndMergeResults(result_streams, names, types);
 
 	if (result) {
@@ -195,42 +248,64 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		}
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed query completed: %llu total rows returned",
 		                                                 static_cast<long long unsigned>(total_rows)));
+		
+		std::cerr << "FINAL RESULT: " << total_rows << " total rows" << std::endl;
+		std::cerr << "=================================" << std::endl;
 	}
 
 	return result;
 }
 
 bool DistributedExecutor::CanDistribute(const string &sql) {
+	// With plan-based execution, we can be much more permissive!
+	// We serialize and send entire logical plans, not just modified SQL strings.
+	// DuckDB handles complex operators (aggregations, joins, etc.) in the plan execution.
+	//
+	// Keep only essential restrictions:
+	// 1. Must be a SELECT query
+	// 2. Must have a FROM clause (need data source to partition)
+	// 3. Cannot have ORDER BY (would require global ordering across workers)
+	//
+	// Previously blocked but now should work:
+	// ✓ Aggregations (COUNT, SUM, AVG) - workers produce partial results, coordinator merges
+	// ✓ GROUP BY - each worker groups its partition
+	// ✓ JOINs - can be executed on each partition
+	// ✓ Subqueries - included in the plan
+	// ✓ DISTINCT - can be handled per-partition then globally
+	
 	string sql_upper = StringUtil::Upper(sql);
 	StringUtil::Trim(sql_upper);
+	
+	// Must be a SELECT query
 	if (!StringUtil::StartsWith(sql_upper, "SELECT")) {
 		return false;
 	}
+	
+	// Must have a data source to partition
 	if (sql_upper.find(" FROM ") == string::npos) {
 		return false;
 	}
-	auto contains_token = [&](const char *token) {
-		return sql_upper.find(token) != string::npos;
-	};
-	if (contains_token(" JOIN") || contains_token(" GROUP ") || contains_token(" HAVING") ||
-	    contains_token(" DISTINCT") || contains_token(" OFFSET ") || contains_token(" UNION ") ||
-	    contains_token(" EXCEPT ") || contains_token(" INTERSECT ")) {
+	
+	// ORDER BY requires global ordering - problematic for distributed execution
+	// (would need to collect all data, then sort)
+	if (sql_upper.find(" ORDER BY") != string::npos) {
 		return false;
 	}
-	if (contains_token(" ORDER BY")) {
+	
+	// LIMIT without ORDER BY could work, but OFFSET is tricky in distributed context
+	// TODO: Could support LIMIT by having coordinator stop after N rows collected
+	if (sql_upper.find(" OFFSET ") != string::npos) {
 		return false;
 	}
-	static const char *aggregate_tokens[] = {"COUNT(", "SUM(", "AVG(", "MIN(", "MAX("};
-	for (auto token : aggregate_tokens) {
-		if (sql_upper.find(token) != string::npos) {
-			return false;
-		}
-	}
-
+	
+	// Everything else should work with plan-based execution!
 	return true;
 }
 
-string DistributedExecutor::CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions) {
+string DistributedExecutor::CreatePartitionSQL(const string &sql, idx_t partition_id, idx_t total_partitions,
+                                               const PlanPartitionInfo &partition_info) {
+	auto &db_instance = *conn.context->db;
+	
 	string trimmed = sql;
 	StringUtil::RTrim(trimmed);
 	bool has_semicolon = !trimmed.empty() && trimmed.back() == ';';
@@ -238,8 +313,46 @@ string DistributedExecutor::CreatePartitionSQL(const string &sql, idx_t partitio
 		trimmed.pop_back();
 		StringUtil::RTrim(trimmed);
 	}
-	string clause = StringUtil::Format("(rowid %% %llu) = %llu", static_cast<long long unsigned>(total_partitions),
-	                                   static_cast<long long unsigned>(partition_id));
+	
+	string clause;
+	
+	// STEP 6: Use intelligent partitioning based on plan analysis
+	if (partition_info.supports_intelligent_partitioning) {
+		// Range-based partitioning: more cache-friendly and aligned with row groups
+		// Each worker gets a contiguous range of rowids
+		idx_t row_start = partition_id * partition_info.rows_per_partition;
+		idx_t row_end = (partition_id + 1) * partition_info.rows_per_partition - 1;
+		
+		// For the last partition, extend to include any remainder rows
+		if (partition_id == total_partitions - 1) {
+			row_end = partition_info.estimated_cardinality;
+		}
+		
+		clause = StringUtil::Format("rowid BETWEEN %llu AND %llu",
+		                            static_cast<long long unsigned>(row_start),
+		                            static_cast<long long unsigned>(row_end));
+		
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🎯 [PARTITION] Worker %llu/%llu: Range partitioning [%llu, %llu]",
+		                                  static_cast<long long unsigned>(partition_id),
+		                                  static_cast<long long unsigned>(total_partitions),
+		                                  static_cast<long long unsigned>(row_start),
+		                                  static_cast<long long unsigned>(row_end)));
+	} else {
+		// Fallback: Modulo-based partitioning
+		// This is used for small tables, non-table-scan operators, or when cardinality is unknown
+		clause = StringUtil::Format("(rowid %% %llu) = %llu",
+		                            static_cast<long long unsigned>(total_partitions),
+		                            static_cast<long long unsigned>(partition_id));
+		
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🎯 [PARTITION] Worker %llu/%llu: Modulo partitioning (rowid %% %llu = %llu)",
+		                                  static_cast<long long unsigned>(partition_id),
+		                                  static_cast<long long unsigned>(total_partitions),
+		                                  static_cast<long long unsigned>(total_partitions),
+		                                  static_cast<long long unsigned>(partition_id)));
+	}
+	
 	string partition_sql = trimmed + " WHERE " + clause;
 	if (has_semicolon) {
 		partition_sql += ";";
@@ -260,6 +373,173 @@ bool DistributedExecutor::IsSupportedPlan(LogicalOperator &op) {
 		return true;
 	default:
 		return false;
+	}
+}
+
+// STEP 1: Helper method to understand DuckDB's natural parallelization decisions
+// This extracts information about how DuckDB would naturally parallelize the query
+idx_t DistributedExecutor::QueryNaturalParallelism(LogicalOperator &logical_plan) {
+	auto &db_instance = *conn.context->db;
+	idx_t estimated_threads = 0;
+	
+	try {
+		// Wrap physical plan generation in a transaction (mimicking DuckDB's internal behavior)
+		// This is necessary because physical plan generation requires an active transaction context
+		conn.context->RunFunctionInTransaction([&]() {
+			// Clone the logical plan since Plan() takes ownership
+			auto cloned_plan = logical_plan.Copy(*conn.context);
+			
+			// Create a physical plan from the logical plan using the proper API
+			PhysicalPlanGenerator generator(*conn.context);
+			auto physical_plan = generator.Plan(std::move(cloned_plan));
+			
+			// Query the estimated thread count
+			// This tells us how many parallel tasks DuckDB would naturally create
+			estimated_threads = physical_plan->Root().EstimatedThreadCount();
+			
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("📊 [PARALLELISM] DuckDB's natural parallelism decision:"));
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("   - Estimated thread count: %llu", 
+			                                  static_cast<long long unsigned>(estimated_threads)));
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("   - Physical plan type: %s", 
+			                                  PhysicalOperatorToString(physical_plan->Root().type)));
+		});
+		
+		return estimated_threads;
+		
+	} catch (std::exception &ex) {
+		DUCKDB_LOG_WARN(db_instance, 
+		                StringUtil::Format("📊 [PARALLELISM] Failed to query natural parallelism: %s", ex.what()));
+		return 0;
+	}
+}
+
+// STEP 2: Extract partition information from physical plan
+// This analyzes the plan structure to provide hints for intelligent partitioning
+//
+// KEY INSIGHT: Physical plan generation requires a transaction context, which we
+// provide by wrapping the generation in RunFunctionInTransaction() (mimicking DuckDB's
+// internal behavior in ClientContext::ExtractPlan).
+PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &logical_plan, idx_t num_workers) {
+	auto &db_instance = *conn.context->db;
+	PlanPartitionInfo info;
+	
+	std::cerr << "\n[PLAN DEBUG] ExtractPartitionInfo called" << std::endl;
+	std::cerr << "  Logical Plan Type: " << LogicalOperatorToString(logical_plan.type) << std::endl;
+	std::cerr << "  Num Workers: " << num_workers << std::endl;
+	std::cerr << "  Logical Plan has children: " << logical_plan.children.size() << std::endl;
+	
+	// Walk through the logical plan to see what's there
+	std::function<void(LogicalOperator&, int)> inspect_plan = [&](LogicalOperator &op, int depth) {
+		string indent(depth * 2, ' ');
+		std::cerr << indent << "- " << LogicalOperatorToString(op.type);
+		if (op.type == LogicalOperatorType::LOGICAL_GET) {
+			// This is a table scan - let's see what table it references
+			std::cerr << " (GET operator - table scan)";
+		}
+		std::cerr << std::endl;
+		for (auto &child : op.children) {
+			inspect_plan(*child, depth + 1);
+		}
+	};
+	
+	std::cerr << "  Logical Plan Structure:" << std::endl;
+	inspect_plan(logical_plan, 2);
+	
+	try {
+		std::cerr << "  Generating physical plan..." << std::endl;
+		
+		// Wrap physical plan generation in a transaction (mimicking DuckDB's internal behavior)
+		conn.context->RunFunctionInTransaction([&]() {
+			// Clone the logical plan since Plan() takes ownership
+			auto cloned_plan = logical_plan.Copy(*conn.context);
+			
+			// Generate physical plan using the proper API
+			PhysicalPlanGenerator generator(*conn.context);
+			auto physical_plan_ptr = generator.Plan(std::move(cloned_plan));
+			auto &physical_plan = physical_plan_ptr->Root();
+			
+			std::cerr << "  ✓ Physical plan generated successfully!" << std::endl;
+			
+			// Extract basic information
+			info.operator_type = physical_plan.type;
+			info.estimated_cardinality = physical_plan.estimated_cardinality;
+			info.natural_parallelism = physical_plan.EstimatedThreadCount();
+			
+			std::cerr << "\n[PLAN DEBUG] Physical Plan Details:" << std::endl;
+			std::cerr << "  Physical Operator Type: " << PhysicalOperatorToString(info.operator_type) << std::endl;
+			std::cerr << "  Estimated Cardinality: " << info.estimated_cardinality << std::endl;
+			std::cerr << "  Natural Parallelism (EstimatedThreadCount): " << info.natural_parallelism << std::endl;
+			std::cerr << "  Has Statistics: " << (physical_plan.estimated_cardinality > 0 ? "YES" : "NO") << std::endl;
+			std::cerr << "  Logical Plan Type: " << LogicalOperatorToString(logical_plan.type) << std::endl;
+			std::cerr << "  Estimated Cardinality Source: " << (physical_plan.estimated_cardinality > 0 ? "Physical Plan" : "MISSING!") << std::endl;
+			
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("🔍 [PLAN ANALYSIS] Physical plan analysis:"));
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("   - Operator type: %s", 
+			                                  PhysicalOperatorToString(info.operator_type)));
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("   - Estimated cardinality: %llu rows", 
+			                                  static_cast<long long unsigned>(info.estimated_cardinality)));
+			DUCKDB_LOG_DEBUG(db_instance, 
+			                StringUtil::Format("   - Natural parallelism: %llu tasks", 
+			                                  static_cast<long long unsigned>(info.natural_parallelism)));
+			
+			// Analyze if we can use intelligent partitioning
+			// For now, we support intelligent partitioning for:
+			// 1. Table scans with sufficient cardinality
+			// 2. Plans where natural parallelism matches or exceeds worker count
+			if (info.estimated_cardinality > 0 && num_workers > 0) {
+				info.rows_per_partition = (info.estimated_cardinality + num_workers - 1) / num_workers;
+				
+				// We can use intelligent partitioning if:
+				// - It's a table scan (most common case)
+				// - We have enough rows per partition (at least 100 rows per worker)
+				if (info.operator_type == PhysicalOperatorType::TABLE_SCAN && 
+				    info.rows_per_partition >= 100) {
+					info.supports_intelligent_partitioning = true;
+					
+					DUCKDB_LOG_DEBUG(db_instance, 
+					                StringUtil::Format("✅ [PLAN ANALYSIS] Intelligent partitioning enabled:"));
+					DUCKDB_LOG_DEBUG(db_instance, 
+					                StringUtil::Format("   - Rows per partition: ~%llu", 
+					                                  static_cast<long long unsigned>(info.rows_per_partition)));
+				} else {
+					DUCKDB_LOG_DEBUG(db_instance, 
+					                StringUtil::Format("ℹ️  [PLAN ANALYSIS] Using fallback partitioning (rowid %%)"));
+					if (info.operator_type != PhysicalOperatorType::TABLE_SCAN) {
+						DUCKDB_LOG_DEBUG(db_instance, 
+						                StringUtil::Format("   - Reason: Not a table scan"));
+					} else {
+						DUCKDB_LOG_DEBUG(db_instance, 
+						                StringUtil::Format("   - Reason: Insufficient rows per partition (%llu < 100)", 
+						                                  static_cast<long long unsigned>(info.rows_per_partition)));
+					}
+				}
+			} else {
+				DUCKDB_LOG_DEBUG(db_instance, 
+				                StringUtil::Format("ℹ️  [PLAN ANALYSIS] Cannot determine partitioning strategy"));
+			}
+		}); // End of RunFunctionInTransaction lambda
+		
+		return info;
+		
+	} catch (std::exception &ex) {
+		// Physical plan generation failed - investigate why
+		std::cerr << "  ✗ Physical plan generation failed!" << std::endl;
+		std::cerr << "  Error: " << ex.what() << std::endl;
+		std::cerr << "  Falling back to manual partitioning strategy (rowid % N)" << std::endl;
+		
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("🔍 [PLAN ANALYSIS] Cannot generate physical plan: %s", ex.what()));
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("   - Using fallback partitioning strategy (rowid %%)"));
+		
+		// Return empty info, which triggers fallback partitioning
+		return info;
 	}
 }
 
@@ -304,10 +584,10 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 	// but distributed across network-connected nodes.
 	
 	auto &db_instance = *conn.context->db.get();
-	// Create a collection to store merged results (acts as GlobalSinkState)
-	DUCKDB_LOG_DEBUG(db_instance, 
-	                StringUtil::Format("🔀 [COMBINE] Coordinator: Initializing GlobalSinkState (ColumnDataCollection)"));
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	
+	// Collection will be created lazily after we see the first batch's schema
+	unique_ptr<ColumnDataCollection> collection;
+	vector<LogicalType> actual_types; // Types from actual Arrow data
 
 	// Combine phase: Merge LocalState outputs from each worker
 	idx_t worker_idx = 0;
@@ -338,14 +618,43 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 			}
 
 			// Convert Arrow batch (LocalState output) to DuckDB DataChunk
-			DataChunk chunk;
-			chunk.Initialize(Allocator::DefaultAllocator(), types);
-
 			auto arrow_batch = batch_with_metadata.data;
+			
+			// Use Arrow schema to get actual types from the batch
+			vector<LogicalType> batch_types;
+			batch_types.reserve(arrow_batch->num_columns());
+			
+			std::cerr << "[DEBUG] Arrow batch has " << arrow_batch->num_columns() << " columns:" << std::endl;
+			for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
+				auto arrow_field = arrow_batch->schema()->field(col_idx);
+				auto arrow_type = arrow_field->type();
+				auto duckdb_type = ArrowTypeToDuckDBType(arrow_type);
+				batch_types.push_back(duckdb_type);
+				std::cerr << "  Column " << col_idx << ": " << arrow_field->name() 
+				          << " (Arrow: " << arrow_type->ToString() 
+				          << " -> DuckDB: " << duckdb_type.ToString() << ")" << std::endl;
+			}
+			
+			// Initialize collection with actual schema from first batch
+			if (!collection) {
+				actual_types = batch_types;
+				collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), actual_types);
+				std::cerr << "[DEBUG] Created ColumnDataCollection with types:" << std::endl;
+				for (idx_t i = 0; i < actual_types.size(); i++) {
+					std::cerr << "  Column " << i << ": " << actual_types[i].ToString() << std::endl;
+				}
+				DUCKDB_LOG_DEBUG(db_instance, 
+				                StringUtil::Format("🔀 [COMBINE] Coordinator: Initialized GlobalSinkState with %llu columns", 
+				                                  static_cast<long long unsigned>(actual_types.size())));
+			}
+			
+			DataChunk chunk;
+			chunk.Initialize(Allocator::DefaultAllocator(), batch_types);
+
 			for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
 				auto arrow_array = arrow_batch->column(col_idx);
 				auto &duckdb_vector = chunk.data[col_idx];
-				ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, types[col_idx], arrow_batch->num_rows());
+				ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, batch_types[col_idx], arrow_batch->num_rows());
 			}
 
 			chunk.SetCardinality(arrow_batch->num_rows());
@@ -361,8 +670,11 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 		DUCKDB_LOG_DEBUG(db_instance, 
 		                StringUtil::Format("✅ [COMBINE] Coordinator: Worker %llu contributed %llu batches, %llu rows", 
 		                                  static_cast<long long unsigned>(worker_idx), 
-		                                  static_cast<long long unsigned>(worker_batches),
+		                                  static_cast<long long unsigned>(worker_batches), 
 		                                  static_cast<long long unsigned>(worker_rows)));
+		
+		std::cerr << "  Worker " << worker_idx << " returned: " << worker_rows << " rows in " << worker_batches << " batches" << std::endl;
+		
 		worker_idx++;
 	}
 	

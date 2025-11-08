@@ -90,20 +90,26 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	auto data_chunk = result->Fetch();
 	if (data_chunk && data_chunk->size() > 0) {
-		// Handle projection pushdown: output may have fewer columns than the fetched data
-		// We need to only reference the columns that are requested
-		if (local_state.column_ids.empty() || output.ColumnCount() == data_chunk->ColumnCount()) {
-			// No projection or all columns requested
-			output.Reference(*data_chunk);
+		// Handle projection pushdown: copy data from fetched chunk to output
+		// Note: We use Copy instead of Reference to handle column reordering correctly.
+		// The output DataChunk schema is determined by the query projection,
+		// while data_chunk has the table's natural column order.
+		
+		output.SetCardinality(data_chunk->size());
+		
+		if (local_state.column_ids.empty()) {
+			// No projection - copy all columns in order
+			for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); col_idx++) {
+				VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(), 0, 0);
+			}
 		} else {
-			// Projection pushdown: only reference the requested columns
-			for (idx_t out_idx = 0; out_idx < output.ColumnCount(); out_idx++) {
+			// Projection pushdown - copy only requested columns in correct order
+			for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size(); out_idx++) {
 				auto col_idx = local_state.column_ids[out_idx];
 				if (col_idx < data_chunk->ColumnCount()) {
-					output.data[out_idx].Reference(data_chunk->data[col_idx]);
+					VectorOperations::Copy(data_chunk->data[col_idx], output.data[out_idx], data_chunk->size(), 0, 0);
 				}
 			}
-			output.SetCardinality(data_chunk->size());
 		}
 
 		// TODO(hjiang): For simplicity, we only return one chunk.

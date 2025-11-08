@@ -125,8 +125,21 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
                                                  distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	auto &db_instance = *db->instance.get();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s executing partition %llu/%llu", worker_id,
-	                                                 req.partition_id(), req.total_partitions()));
+	
+	// Log the partition assignment - this is the "LocalState" this worker is responsible for
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("🔨 [WORKER-START] Worker %s: Received partition %llu/%llu", 
+	                                  worker_id, req.partition_id(), req.total_partitions()));
+	
+	std::cerr << "\n[WORKER " << worker_id << "] Received partition " << req.partition_id() << "/" << req.total_partitions() << std::endl;
+	
+	if (!req.sql().empty()) {
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("🔨 [WORKER-START] Worker %s: SQL partition predicate: %s", 
+		                                  worker_id, req.sql()));
+		std::cerr << "[WORKER " << worker_id << "] SQL: " << req.sql() << std::endl;
+	}
+	
 	unique_ptr<QueryResult> result;
 	arrow::Status exec_status = arrow::Status::OK();
 
@@ -208,9 +221,15 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s (partition %llu/%llu) returned %llu rows", worker_id,
-	                                                 req.partition_id(), req.total_partitions(),
-	                                                 static_cast<long long unsigned>(row_count)));
+	// Log LocalState output - this data will be sent to coordinator for merge (Combine operation)
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("✅ [WORKER-DONE] Worker %s: Partition %llu/%llu COMPLETE", 
+	                                  worker_id, req.partition_id(), req.total_partitions()));
+	DUCKDB_LOG_DEBUG(db_instance, 
+	                StringUtil::Format("📤 [WORKER-DONE] Worker %s: Sending %llu rows back to coordinator for merge", 
+	                                  worker_id, static_cast<long long unsigned>(row_count)));
+	
+	std::cerr << "[WORKER " << worker_id << "] COMPLETE: Returning " << row_count << " rows" << std::endl;
 
 	return arrow::Status::OK();
 }
