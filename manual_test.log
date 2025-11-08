@@ -1,7 +1,0 @@
-SELECT duckherder_start_local_server(8835, 2);
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8835);
-USE dh;
-PRAGMA duckherder_register_remote_table('test_manual', 'test_manual');
-CREATE TABLE test_manual (id INTEGER, value INTEGER);
-INSERT INTO test_manual SELECT i, i * 10 FROM range(10000) t(i);
-SELECT COUNT(*), SUM(value), AVG(value) FROM test_manual;
