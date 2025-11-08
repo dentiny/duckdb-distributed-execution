@@ -2,6 +2,8 @@
 #include <iostream>
 #include <memory>
 
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "server/driver/distributed_flight_server.hpp"
 
 using namespace duckdb;
@@ -46,6 +48,13 @@ int main(int argc, char *argv[]) {
 		// Create and start Flight server.
 		g_server = std::make_unique<DistributedFlightServer>(host, port);
 
+		auto LogServerError = [&](const string &message) {
+			if (g_server) {
+				auto &db_instance = g_server->GetDatabaseInstance();
+				DUCKDB_LOG_ERROR(db_instance, message);
+			}
+		};
+
 		arrow::Status status;
 		if (num_workers > 0) {
 			status = g_server->StartWithWorkers(num_workers);
@@ -54,7 +63,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (!status.ok()) {
-			std::cerr << "Failed to start server: " << status.ToString() << std::endl;
+			LogServerError(StringUtil::Format("Failed to start server: %s", status.ToString()));
 			return 1;
 		}
 
@@ -70,11 +79,16 @@ int main(int argc, char *argv[]) {
 		// Keep server running.
 		auto serve_status = g_server->Serve();
 		if (!serve_status.ok()) {
-			std::cerr << "Server error: " << serve_status.ToString() << std::endl;
+			LogServerError(StringUtil::Format("Server error: %s", serve_status.ToString()));
 			return 1;
 		}
 	} catch (const std::exception &ex) {
-		std::cerr << "Fatal error: " << ex.what() << std::endl;
+		if (g_server) {
+			auto &db_instance = g_server->GetDatabaseInstance();
+			DUCKDB_LOG_ERROR(db_instance, StringUtil::Format("Fatal error: %s", ex.what()));
+		} else {
+			std::cout << "Fatal error: " << ex.what() << std::endl;
+		}
 		return 1;
 	}
 

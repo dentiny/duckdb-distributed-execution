@@ -49,6 +49,10 @@ DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : ho
 	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
 }
 
+DatabaseInstance &DistributedFlightServer::GetDatabaseInstance() {
+	return *db->instance;
+}
+
 arrow::Status DistributedFlightServer::Start() {
 	arrow::flight::Location location;
 	ARROW_ASSIGN_OR_RAISE(location, arrow::flight::Location::ForGrpcTcp(host, port));

@@ -3,6 +3,8 @@
 #include "catch.hpp"
 #include "client/distributed_flight_client.hpp"
 #include "distributed.pb.h"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "server/driver/distributed_flight_server.hpp"
 
 #include <chrono>
@@ -32,7 +34,10 @@ void StartServerInBackground() {
 	// Run server (blocking)
 	auto serve_status = g_server->Serve();
 	if (!serve_status.ok()) {
-		std::cerr << "Server error: " << serve_status.ToString() << std::endl;
+		if (g_server) {
+			auto &db_instance = g_server->GetDatabaseInstance();
+			DUCKDB_LOG_ERROR(db_instance, StringUtil::Format("Server error: %s", serve_status.ToString()));
+		}
 	}
 }
 
