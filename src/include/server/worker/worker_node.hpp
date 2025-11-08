@@ -10,6 +10,23 @@
 
 namespace duckdb {
 
+// STEP 3: Task execution state tracking
+// This represents the execution state for a pipeline task on a worker
+struct TaskExecutionState {
+	idx_t task_id;
+	idx_t total_tasks;
+	string task_sql;
+	idx_t rows_processed;
+	idx_t execution_time_ms;
+	bool completed;
+	string error_message;
+	
+	TaskExecutionState()
+		: task_id(0), total_tasks(0), rows_processed(0),
+		  execution_time_ms(0), completed(false) {
+	}
+};
+
 // Simple worker node that executes queries on partitioned data.
 class WorkerNode : public arrow::flight::FlightServerBase {
 public:
@@ -41,6 +58,11 @@ private:
 	                                    unique_ptr<QueryResult> &result);
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
 	                                 idx_t *row_count = nullptr);
+	
+	// STEP 3: Execute a pipeline task with state tracking
+	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
+	                                   TaskExecutionState &task_state,
+	                                   unique_ptr<QueryResult> &result);
 
 	string worker_id;
 	string host;
@@ -48,6 +70,9 @@ private:
 	DuckDB *db;
 	unique_ptr<DuckDB> owned_db;
 	unique_ptr<Connection> conn;
+	
+	// STEP 3: Track currently executing task (for monitoring/debugging)
+	unique_ptr<TaskExecutionState> current_task;
 };
 
 // Simple client for worker communication.

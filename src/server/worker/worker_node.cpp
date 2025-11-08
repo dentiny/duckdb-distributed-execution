@@ -13,6 +13,7 @@
 #include "server/worker/worker_node.hpp"
 
 #include <arrow/array.h>
+#include <chrono>
 #include <arrow/c/bridge.h>
 
 namespace duckdb {
@@ -121,89 +122,134 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	return arrow::Status::OK();
 }
 
+// STEP 3: Execute a pipeline task with state tracking and metrics
+arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
+                                               TaskExecutionState &task_state,
+                                               unique_ptr<QueryResult> &result) {
+	auto &db_instance = *db->instance.get();
+	auto start_time = std::chrono::high_resolution_clock::now();
+	
+	// Initialize task state
+	task_state.task_id = req.partition_id();
+	task_state.total_tasks = req.total_partitions();
+	task_state.task_sql = req.sql();
+	task_state.completed = false;
+	task_state.rows_processed = 0;
+	
+	std::cerr << "\n[STEP 3] Worker " << worker_id << ": Executing pipeline task " 
+	          << task_state.task_id << "/" << task_state.total_tasks << std::endl;
+	
+	arrow::Status exec_status = arrow::Status::OK();
+	
+	// STEP 3 NOTE: Plan-based execution temporarily disabled
+	// 
+	// Issue: We're currently serializing LOGICAL plans (which have already been optimized
+	// on the coordinator). When workers deserialize and try to execute them, DuckDB
+	// runs the optimizer again, which fails on already-bound expressions.
+	// 
+	// Solution (for future steps): Serialize and deserialize PHYSICAL plans instead,
+	// which can be executed directly without re-optimization.
+	// 
+	// For now, we rely on SQL-based execution which works perfectly.
+	
+	// Disabled plan-based execution:
+	// if (!req.serialized_plan().empty()) {
+	//     exec_status = ExecuteSerializedPlan(req, result);
+	//     ...
+	// }
+	
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("🔧 [STEP3] Worker %s: Task %llu - Using SQL-BASED execution (plan-based execution disabled until physical plan support)",
+	                                  worker_id, task_state.task_id));
+	
+	// Execute task using SQL-based execution
+	if (!result && !req.sql().empty()) {
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("🔄 [STEP3] Worker %s: Task %llu - SQL-BASED execution", 
+		                                  worker_id, task_state.task_id));
+		std::cerr << "  Execution Mode: SQL-BASED" << std::endl;
+		std::cerr << "  SQL: " << req.sql() << std::endl;
+		
+		result = conn->Query(req.sql());
+		
+		DUCKDB_LOG_DEBUG(db_instance, 
+		                StringUtil::Format("✅ [STEP3] Worker %s: Task %llu - SQL-BASED execution completed", 
+		                                  worker_id, task_state.task_id));
+	}
+	
+	// Record execution time
+	auto end_time = std::chrono::high_resolution_clock::now();
+	task_state.execution_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		end_time - start_time).count();
+	
+	// Validate result
+	if (!result) {
+		task_state.completed = false;
+		task_state.error_message = "No query result produced";
+		std::cerr << "  Status: FAILED (no result)" << std::endl;
+		return arrow::Status::Invalid("Worker produced no query result for task");
+	}
+	
+	if (result->HasError()) {
+		task_state.completed = false;
+		task_state.error_message = result->GetError();
+		std::cerr << "  Status: FAILED (" << result->GetError() << ")" << std::endl;
+		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
+	}
+	
+	// Task completed successfully
+	task_state.completed = true;
+	
+	// Record row count (will be updated after Arrow conversion)
+	auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
+	if (materialized) {
+		task_state.rows_processed = materialized->RowCount();
+	}
+	
+	std::cerr << "  Status: SUCCESS" << std::endl;
+	std::cerr << "  Rows Processed: " << task_state.rows_processed << std::endl;
+	std::cerr << "  Execution Time: " << task_state.execution_time_ms << "ms" << std::endl;
+	
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("✅ [STEP3] Worker %s: Task %llu completed - %llu rows in %llu ms",
+	                                  worker_id, task_state.task_id,
+	                                  static_cast<long long unsigned>(task_state.rows_processed),
+	                                  static_cast<long long unsigned>(task_state.execution_time_ms)));
+	
+	return arrow::Status::OK();
+}
+
 arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
                                                  distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	auto &db_instance = *db->instance.get();
 	
-	// Log the partition assignment - this is the "LocalState" this worker is responsible for
+	// STEP 3: Create task execution state
+	TaskExecutionState task_state;
+	task_state.task_id = req.partition_id();
+	task_state.total_tasks = req.total_partitions();
+	current_task = make_uniq<TaskExecutionState>(task_state);
+	
+	// Log the task assignment
 	DUCKDB_LOG_DEBUG(db_instance, 
-	                StringUtil::Format("🔨 [WORKER-START] Worker %s: Received partition %llu/%llu", 
+	                StringUtil::Format("🔨 [STEP3-START] Worker %s: Received task %llu/%llu", 
 	                                  worker_id, req.partition_id(), req.total_partitions()));
 	
 	std::cerr << "\n[WORKER " << worker_id << "] Received partition " << req.partition_id() << "/" << req.total_partitions() << std::endl;
 	
 	if (!req.sql().empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, 
-		                StringUtil::Format("🔨 [WORKER-START] Worker %s: SQL partition predicate: %s", 
-		                                  worker_id, req.sql()));
 		std::cerr << "[WORKER " << worker_id << "] SQL: " << req.sql() << std::endl;
 	}
 	
+	// STEP 3: Execute the pipeline task with state tracking
 	unique_ptr<QueryResult> result;
-	arrow::Status exec_status = arrow::Status::OK();
-
-	// Plan-based execution: Map node-based execution to DuckDB's thread-based parallel execution
-	// 
-	// DuckDB's parallel execution model:
-	// - Each thread has a LocalSinkState (per-partition execution state)
-	// - GlobalSinkState aggregates results from all LocalSinkStates
-	// - Combine() merges LocalState into GlobalState
-	// - Finalize() produces the final result
-	//
-	// Distributed execution mapping:
-	// - Each worker node acts as a "thread" in DuckDB's model
-	// - Worker executes a physical plan partition (LocalState semantics)
-	// - Coordinator collects results and combines them (GlobalState semantics)
-	// - This maintains DuckDB's partitioned execution model across nodes
-	//
-	// Execution strategy:
-	// 1. Try plan-based execution first (if serialized plan is provided)
-	// 2. Fall back to SQL-based execution for backward compatibility
-	// 
-	// Note: For plan-based execution, the partition predicate is already embedded
-	// in the physical plan (e.g., filter on rowid % total_partitions = partition_id)
-
-	if (!req.serialized_plan().empty()) {
-		// Plan-based execution path
-		DUCKDB_LOG_DEBUG(db_instance, 
-		                StringUtil::Format("🔧 [PLAN-EXEC] Worker %s: Starting PLAN-BASED execution (plan size: %llu bytes)", 
-		                                  worker_id, static_cast<long long unsigned>(req.serialized_plan().size())));
-		exec_status = ExecuteSerializedPlan(req, result);
-		if (!exec_status.ok()) {
-			DUCKDB_LOG_WARN(db_instance, 
-			                StringUtil::Format("⚠️  [PLAN-EXEC] Worker %s: Plan execution FAILED: %s, falling back to SQL", 
-			                                  worker_id, exec_status.ToString()));
-			// Fall through to SQL-based execution
-			result.reset();
-		} else {
-			DUCKDB_LOG_DEBUG(db_instance, 
-			                StringUtil::Format("✅ [PLAN-EXEC] Worker %s: PLAN-BASED execution completed successfully", worker_id));
-		}
-	}
-
-	// SQL-based execution path (fallback or when no plan is provided)
-	if (!result && !req.sql().empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, 
-		                StringUtil::Format("🔄 [SQL-EXEC] Worker %s: Using SQL-BASED execution: %s", worker_id, req.sql()));
-		result = conn->Query(req.sql());
-		DUCKDB_LOG_DEBUG(db_instance, 
-		                StringUtil::Format("✅ [SQL-EXEC] Worker %s: SQL-BASED execution completed", worker_id));
-	}
-
-	// Validate execution result
-	if (!result) {
+	auto exec_status = ExecutePipelineTask(req, task_state, result);
+	
+	if (!exec_status.ok()) {
 		resp.set_success(false);
-		resp.set_error_message("Worker produced no query result");
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("Worker %s produced no result", worker_id));
-		return arrow::Status::Invalid("Worker produced no query result");
-	}
-	if (result->HasError()) {
-		resp.set_success(false);
-		resp.set_error_message(result->GetError());
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("Worker %s query execution failed: %s", worker_id, result->GetError()));
-		return arrow::Status::Invalid(StringUtil::Format("Query execution failed: %s", result->GetError()));
+		resp.set_error_message(task_state.error_message);
+		current_task.reset();
+		return exec_status;
 	}
 
 	// Convert result to Arrow format
@@ -216,21 +262,29 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 		return status;
 	}
 
+	// Update task state with final row count
+	task_state.rows_processed = row_count;
+	
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_partition();
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
 
-	// Log LocalState output - this data will be sent to coordinator for merge (Combine operation)
+	// STEP 3: Log task completion with metrics
 	DUCKDB_LOG_DEBUG(db_instance, 
-	                StringUtil::Format("✅ [WORKER-DONE] Worker %s: Partition %llu/%llu COMPLETE", 
-	                                  worker_id, req.partition_id(), req.total_partitions()));
+	                StringUtil::Format("✅ [STEP3-DONE] Worker %s: Task %llu/%llu COMPLETE - %llu rows in %llu ms", 
+	                                  worker_id, req.partition_id(), req.total_partitions(),
+	                                  static_cast<long long unsigned>(row_count),
+	                                  static_cast<long long unsigned>(task_state.execution_time_ms)));
 	DUCKDB_LOG_DEBUG(db_instance, 
 	                StringUtil::Format("📤 [WORKER-DONE] Worker %s: Sending %llu rows back to coordinator for merge", 
 	                                  worker_id, static_cast<long long unsigned>(row_count)));
 	
 	std::cerr << "[WORKER " << worker_id << "] COMPLETE: Returning " << row_count << " rows" << std::endl;
 
+	// STEP 3: Clear current task state
+	current_task.reset();
+	
 	return arrow::Status::OK();
 }
 

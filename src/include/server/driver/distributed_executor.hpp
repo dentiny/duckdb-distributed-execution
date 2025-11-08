@@ -41,6 +41,28 @@ struct PlanPartitionInfo {
 	}
 };
 
+// STEP 1 (Pipeline Tasks): Structure representing a distributed pipeline task
+// This represents one unit of work that will be executed on a worker
+struct DistributedPipelineTask {
+	// Unique task identifier
+	idx_t task_id;
+	
+	// Total number of parallel tasks
+	idx_t total_tasks;
+	
+	// The SQL query to execute (for now, we'll start with SQL-based approach)
+	// Future: serialize actual Pipeline structure
+	string task_sql;
+	
+	// Task-specific metadata
+	idx_t row_group_start;  // Starting row group for this task
+	idx_t row_group_end;    // Ending row group for this task
+	
+	DistributedPipelineTask()
+		: task_id(0), total_tasks(0), row_group_start(0), row_group_end(0) {
+	}
+};
+
 // Simple distributed executor that partitions data and sends to workers
 class DistributedExecutor {
 public:
@@ -72,12 +94,53 @@ private:
 	// Analyzes the plan structure to get hints about intelligent partitioning
 	PlanPartitionInfo ExtractPartitionInfo(LogicalOperator &logical_plan, idx_t num_workers);
 
+	// STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan
+	// This queries DuckDB's natural parallelization and creates task assignments
+	vector<DistributedPipelineTask> ExtractPipelineTasks(LogicalOperator &logical_plan, 
+	                                                      const string &base_sql,
+	                                                      idx_t num_workers);
+
+	// STEP 4: Query analysis for smart merging
+	enum class MergeStrategy {
+		CONCATENATE,      // Simple scans - just concatenate results
+		AGGREGATE_MERGE,  // Aggregations - need to merge partial aggregates
+		DISTINCT_MERGE,   // DISTINCT - need to eliminate duplicates
+		GROUP_BY_MERGE    // GROUP BY - need to merge grouped results
+	};
+	
+	struct QueryAnalysis {
+		MergeStrategy merge_strategy;
+		bool has_aggregates;
+		bool has_group_by;
+		bool has_distinct;
+		vector<string> aggregate_functions;  // e.g., "count", "sum", "avg"
+		vector<string> group_by_columns;
+		
+		QueryAnalysis() 
+			: merge_strategy(MergeStrategy::CONCATENATE),
+			  has_aggregates(false),
+			  has_group_by(false),
+			  has_distinct(false) {
+		}
+	};
+	
+	QueryAnalysis AnalyzeQuery(LogicalOperator &logical_plan);
+	
+	// STEP 4B: Helper methods for building merge SQL
+	string BuildAggregateMergeSQL(const string &temp_table, const vector<string> &column_names, const QueryAnalysis &analysis);
+	string BuildGroupByMergeSQL(const string &temp_table, const vector<string> &column_names, const QueryAnalysis &analysis);
+
 	string SerializeLogicalPlan(LogicalOperator &op);
 	string SerializeLogicalType(const LogicalType &type);
 
 	// Collect and merge results from worker streams.
 	unique_ptr<QueryResult> CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
 	                                               const vector<string> &names, const vector<LogicalType> &types);
+	
+	// STEP 4: Smart result merging with aggregation support
+	unique_ptr<QueryResult> CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
+	                                               const vector<string> &names, const vector<LogicalType> &types,
+	                                               const QueryAnalysis &query_analysis);
 
 	WorkerManager &worker_manager;
 	Connection &conn;

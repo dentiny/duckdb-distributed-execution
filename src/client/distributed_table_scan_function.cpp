@@ -17,10 +17,11 @@ struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 };
 
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
-	DistributedTableScanLocalState() : finished(false) {
+	DistributedTableScanLocalState() : finished(false), offset(0) {
 	}
 	bool finished;
 	vector<column_t> column_ids;
+	idx_t offset;  // Track current offset for fetching data
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
@@ -78,11 +79,13 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s", bind_data.remote_table_name));
+	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s (offset: %llu)", 
+	                                        bind_data.remote_table_name, 
+	                                        static_cast<long long unsigned>(local_state.offset)));
 	// Get the expected types from the table schema to handle special types like ENUM
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
 	auto result =
-	    client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), /*offset=*/0, &expected_types);
+	    client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), /*offset=*/local_state.offset, &expected_types);
 
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL, "Distributed table scan error: " + result->GetError());
@@ -112,11 +115,20 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 			}
 		}
 
-		// TODO(hjiang): For simplicity, we only return one chunk.
-		local_state.finished = true;
+		// FIX: Increment offset to fetch next chunk on next call
+		// Don't mark as finished yet - keep fetching until we get an empty chunk
+		local_state.offset += data_chunk->size();
+		
+		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetched %llu rows, new offset: %llu", 
+		                                        static_cast<long long unsigned>(data_chunk->size()),
+		                                        static_cast<long long unsigned>(local_state.offset)));
 	} else {
+		// No more data - mark as finished
 		output.SetCardinality(0);
 		local_state.finished = true;
+		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Scan finished for table: %s (total rows: %llu)", 
+		                                        bind_data.remote_table_name,
+		                                        static_cast<long long unsigned>(local_state.offset)));
 	}
 }
 

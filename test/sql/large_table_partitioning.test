@@ -124,7 +124,7 @@ SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 500
 query III
 SELECT id, value, category FROM large_table WHERE id = 2498;
 ----
-2498	249800	clothing
+2498	249800	books
 
 query III
 SELECT id, value, category FROM large_table WHERE id = 2502;

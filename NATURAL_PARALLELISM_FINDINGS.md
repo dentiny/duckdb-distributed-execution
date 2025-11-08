@@ -1,7 +1,9 @@
 # Natural Parallelism Investigation - Key Findings
 
 ## Summary
-After extensive investigation, we've identified fundamental architectural limitations that prevent us from leveraging DuckDB's natural parallelism hints for distributed queries in the current architecture.
+✅ **SUCCESS!** We've successfully implemented statistics-informed partitioning by wrapping physical plan generation in a transaction context (mimicking DuckDB's internal behavior). We can now extract cardinality and parallelism hints from physical plans!
+
+The next level (true natural parallelism) requires mapping DuckDB's PipelineTasks to distributed workers. See `TRUE_NATURAL_PARALLELISM_PLAN.md` for the detailed implementation plan.
 
 ## The Goal
 We wanted to query DuckDB's physical plan to understand:
@@ -18,7 +20,7 @@ We wanted to query DuckDB's physical plan to understand:
 
 **Fix**: Use `PhysicalPlanGenerator::Plan()` instead, which properly initializes internal state. We clone the logical plan using `logical_plan.Copy(context)` since `Plan()` takes ownership.
 
-### Issue #2: Transaction Context (CURRENT BLOCKER)
+### Issue #2: Transaction Context (SOLVED!)
 **Problem**: Physical plan generation requires an active transaction context.
 
 **Error**: `"TransactionContext::ActiveTransaction called without active transaction"`
@@ -27,6 +29,22 @@ We wanted to query DuckDB's physical plan to understand:
 - `conn.ExtractPlan(sql)` creates a logical plan, possibly within its own transaction
 - When we later try to generate a physical plan for analysis, we're outside that transaction
 - Physical plan generation needs transaction context to access table statistics and metadata
+
+**Solution**: Wrap physical plan generation in `RunFunctionInTransaction()` - exactly like DuckDB does internally in `ClientContext::ExtractPlan()`!
+
+```cpp
+conn.context->RunFunctionInTransaction([&]() {
+    auto cloned_plan = logical_plan.Copy(*conn.context);
+    PhysicalPlanGenerator generator(*conn.context);
+    auto physical_plan = generator.Plan(std::move(cloned_plan));
+    
+    // Now we can extract statistics!
+    info.estimated_cardinality = physical_plan->Root().estimated_cardinality;
+    info.natural_parallelism = physical_plan->Root().EstimatedThreadCount();
+});
+```
+
+This mimics DuckDB's internal behavior and provides the necessary transaction context!
 
 ## Why This Matters for Distributed Execution
 
@@ -43,41 +61,44 @@ In our distributed architecture:
 
 ## Current Status
 
-**The tests are passing!** Distributed execution works correctly:
-- ✅ 10,000 rows inserted
-- ✅ Queries distributed across 4 workers
-- ✅ Results correctly merged
-- ✅ All data accounts for
+**✅ MAJOR SUCCESS!** All systems working with intelligent partitioning:
+- ✅ 10,000 rows inserted and distributed
+- ✅ Physical plan generation **working** (transaction context fixed!)
+- ✅ **Estimated Cardinality: 10,000** (was 0)
+- ✅ **Natural Parallelism: 1** (was 0)
+- ✅ **Intelligent Partitioning: YES** (was NO)
+- ✅ **Range-based partitioning** (`rowid BETWEEN X AND Y`) instead of modulo!
+- ✅ All tests passing
 
-The limitation is only in **optimization/analysis**:
-- ❌ Cannot query DuckDB's natural parallelism hints
-- ❌ Cannot use table statistics for intelligent range-based partitioning
-- ✅ Manual mod-based partitioning `(rowid % N)` works reliably
+**What We Achieved Today**:
+1. Fixed API misuse (`Plan()` instead of `CreatePlan()`)
+2. Added transaction context wrapper (`RunFunctionInTransaction()`)
+3. Successfully extract cardinality and parallelism from physical plans
+4. Enabled intelligent range-based partitioning for large tables
 
-## Possible Solutions (Future Work)
+## Next Level: True Natural Parallelism
 
-### Option 1: Query Workers for Statistics
-Instead of trying to analyze on the coordinator, ask workers for their table statistics:
-```
-Coordinator: "What's the row count for table X?"
-Worker: "10,000 rows"
-Coordinator: Uses this to decide: Range partitioning [0-2500], [2501-5000], etc.
-```
+**Current Approach** (Statistics-Informed Manual Partitioning):
+- ✅ Query physical plan for cardinality
+- ✅ Calculate rows per worker
+- ✅ Generate SQL with `rowid BETWEEN X AND Y`
+- ✅ Works great for simple queries!
 
-### Option 2: Metadata Cache
-Maintain a metadata cache on the coordinator with table statistics from workers.
+**Next Level** (DuckDB Pipeline Task Mapping):
+- 🔲 Extract DuckDB's internal PipelineTasks
+- 🔲 Distribute tasks across workers (not just SQL)
+- 🔲 Workers execute tasks using LocalState/GlobalState
+- 🔲 Coordinator merges using Combine()/Finalize()
+- 🔲 True natural parallelism!
 
-### Option 3: Accept Current Limitation
-The current `(rowid % N)` partitioning is:
-- Simple and reliable
-- Works for any table
-- Distributes load evenly
-- Requires no statistics
+**See `TRUE_NATURAL_PARALLELISM_PLAN.md` for detailed implementation steps!**
 
-For many workloads, this is sufficient!
-
-### Option 4: Transaction Management
-Wrap the entire distributed execution flow in a proper transaction context. This is complex and would require significant architectural changes.
+This involves:
+1. Serializing Pipeline structures (not just plans)
+2. Distributing PipelineTasks to workers
+3. Workers executing with LocalSourceState/LocalSinkState
+4. Coordinator combining results via GlobalSinkState
+5. Supporting multi-pipeline queries (joins, complex aggregations)
 
 ## Recommendation
 
