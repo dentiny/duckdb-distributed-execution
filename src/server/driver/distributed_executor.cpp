@@ -106,6 +106,9 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	
 	// STEP 4: Analyze query to determine merge strategy
 	QueryAnalysis query_analysis = AnalyzeQuery(*logical_plan);
+	
+	// STEP 6: Analyze pipeline complexity
+	PipelineInfo pipeline_info = AnalyzePipelines(*logical_plan);
 
 	std::cerr << "\n========== DISTRIBUTED EXECUTION START ==========" << std::endl;
 	std::cerr << "Query: " << sql << std::endl;
@@ -113,6 +116,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	std::cerr << "Natural Parallelism: " << natural_parallelism << std::endl;
 	std::cerr << "Intelligent Partitioning: " << (partition_info.supports_intelligent_partitioning ? "YES" : "NO") << std::endl;
 	std::cerr << "Estimated Cardinality: " << partition_info.estimated_cardinality << std::endl;
+	std::cerr << "Pipeline Count: " << pipeline_info.pipeline_count << std::endl;
+	std::cerr << "Pipeline Complexity: " << (pipeline_info.is_simple_scan ? "SIMPLE" : "COMPLEX") << std::endl;
 	std::cerr << "=================================================" << std::endl;
 
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", sql,
@@ -677,6 +682,119 @@ DistributedExecutor::RowGroupPartitionInfo DistributedExecutor::ExtractRowGroupI
 	}
 	
 	return row_group_info;
+}
+
+// STEP 6: Analyze query to determine pipeline complexity
+DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalOperator &logical_plan) {
+	auto &db_instance = *conn.context->db;
+	PipelineInfo info;
+	
+	std::cerr << "\n[STEP 6] Analyzing query pipeline complexity..." << std::endl;
+	
+	try {
+		conn.context->RunFunctionInTransaction([&]() {
+			// Generate physical plan to analyze pipelines
+			auto cloned_plan = logical_plan.Copy(*conn.context);
+			PhysicalPlanGenerator generator(*conn.context);
+			auto physical_plan_ptr = generator.Plan(std::move(cloned_plan));
+			auto &physical_plan = physical_plan_ptr->Root();
+			
+			// Recursively analyze the physical plan structure
+			std::function<void(PhysicalOperator&)> analyze_operator = [&](PhysicalOperator &op) {
+				auto op_type = op.type;
+				
+				// Check for operators that typically create multiple pipelines
+				switch (op_type) {
+					case PhysicalOperatorType::HASH_JOIN:
+					case PhysicalOperatorType::NESTED_LOOP_JOIN:
+					case PhysicalOperatorType::PIECEWISE_MERGE_JOIN:
+					case PhysicalOperatorType::CROSS_PRODUCT:
+					case PhysicalOperatorType::IE_JOIN:
+					case PhysicalOperatorType::ASOF_JOIN:
+						info.has_joins = true;
+						info.is_simple_scan = false;
+						info.pipeline_types.push_back("JOIN");
+						std::cerr << "  Found: " << PhysicalOperatorToString(op_type) << std::endl;
+						break;
+						
+					case PhysicalOperatorType::WINDOW:
+					case PhysicalOperatorType::STREAMING_WINDOW:
+						info.has_complex_operators = true;
+						info.is_simple_scan = false;
+						info.pipeline_types.push_back("WINDOW");
+						std::cerr << "  Found: WINDOW operator" << std::endl;
+						break;
+						
+					case PhysicalOperatorType::RECURSIVE_CTE:
+					case PhysicalOperatorType::CTE:
+						info.has_complex_operators = true;
+						info.is_simple_scan = false;
+						info.pipeline_types.push_back("CTE");
+						std::cerr << "  Found: CTE operator" << std::endl;
+						break;
+						
+					case PhysicalOperatorType::HASH_GROUP_BY:
+					case PhysicalOperatorType::PERFECT_HASH_GROUP_BY:
+						info.pipeline_types.push_back("HASH_AGG");
+						std::cerr << "  Found: Hash aggregation" << std::endl;
+						break;
+						
+					case PhysicalOperatorType::ORDER_BY:
+						info.pipeline_types.push_back("ORDER_BY");
+						std::cerr << "  Found: ORDER BY" << std::endl;
+						break;
+						
+					case PhysicalOperatorType::TABLE_SCAN:
+						info.pipeline_types.push_back("TABLE_SCAN");
+						break;
+						
+					default:
+						break;
+				}
+				
+				// Recurse into children
+				for (auto &child : op.children) {
+					analyze_operator(child.get());
+				}
+			};
+			
+			analyze_operator(physical_plan);
+			
+			// Estimate pipeline count based on operators found
+			// Simple heuristic: each join/window/CTE creates additional pipelines
+			info.pipeline_count = 1;  // Base pipeline
+			if (info.has_joins) {
+				info.pipeline_count += 1;  // Build + probe = 2 phases
+				info.has_dependencies = true;
+			}
+			if (info.has_complex_operators) {
+				info.pipeline_count += 1;
+				info.has_dependencies = true;
+			}
+			
+			std::cerr << "  Pipeline Analysis:" << std::endl;
+			std::cerr << "    Estimated pipelines: " << info.pipeline_count << std::endl;
+			std::cerr << "    Has dependencies: " << (info.has_dependencies ? "YES" : "NO") << std::endl;
+			std::cerr << "    Is simple scan: " << (info.is_simple_scan ? "YES" : "NO") << std::endl;
+			std::cerr << "    Has joins: " << (info.has_joins ? "YES" : "NO") << std::endl;
+			std::cerr << "    Has complex operators: " << (info.has_complex_operators ? "YES" : "NO") << std::endl;
+			
+			DUCKDB_LOG_DEBUG(db_instance,
+			                StringUtil::Format("🔀 [STEP6] Pipeline analysis: %llu pipelines, dependencies=%d, simple=%d",
+			                                  static_cast<long long unsigned>(info.pipeline_count),
+			                                  info.has_dependencies,
+			                                  info.is_simple_scan));
+		});
+	} catch (std::exception &ex) {
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("⚠️  [STEP6] Failed to analyze pipelines: %s", ex.what()));
+		std::cerr << "  Failed to analyze pipelines: " << ex.what() << std::endl;
+		// Default to assuming complex query
+		info.pipeline_count = 1;
+		info.is_simple_scan = false;
+	}
+	
+	return info;
 }
 
 // STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan

@@ -105,6 +105,22 @@ private:
 	};
 	
 	RowGroupPartitionInfo ExtractRowGroupInfo(LogicalOperator &logical_plan);
+	
+	// STEP 6: Multi-pipeline query support
+	struct PipelineInfo {
+		idx_t pipeline_count;         // Number of pipelines
+		bool has_dependencies;         // Whether pipelines have dependencies
+		bool is_simple_scan;          // Single pipeline, simple scan
+		bool has_joins;               // Has join operators
+		bool has_complex_operators;   // Has window, CTE, etc.
+		vector<string> pipeline_types; // Types of each pipeline
+		
+		PipelineInfo() 
+			: pipeline_count(0), has_dependencies(false), is_simple_scan(true),
+			  has_joins(false), has_complex_operators(false) {}
+	};
+	
+	PipelineInfo AnalyzePipelines(LogicalOperator &logical_plan);
 
 	// STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan
 	// This queries DuckDB's natural parallelization and creates task assignments
