@@ -24,8 +24,6 @@
 
 namespace duckdb {
 
-static constexpr bool DISTRIBUTED_VERBOSE_LOGGING = false;
-
 DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p)
     : worker_manager(worker_manager_p), conn(conn_p) {
 }
@@ -131,11 +129,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		return nullptr;
 	}
 	
-	std::cerr << "\n========== STEP 2: TASK DISTRIBUTION ==========" << std::endl;
-	std::cerr << "Total Tasks: " << tasks.size() << std::endl;
-	std::cerr << "Available Workers: " << workers.size() << std::endl;
-	std::cerr << "Distribution Strategy: Round-Robin" << std::endl;
-	
 	// STEP 2: Map tasks to workers using round-robin
 	// This allows M tasks to be distributed across N workers (M >= N)
 	vector<vector<idx_t>> worker_to_tasks(workers.size());  // worker_id → [task_indices]
@@ -143,18 +136,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		idx_t worker_id = i % workers.size();
 		worker_to_tasks[worker_id].push_back(i);
 	}
-	
-	// Log the distribution
-	std::cerr << "\nTask Assignment:" << std::endl;
-	for (idx_t worker_id = 0; worker_id < workers.size(); worker_id++) {
-		std::cerr << "  Worker " << worker_id << ": " << worker_to_tasks[worker_id].size() << " tasks [";
-		for (idx_t j = 0; j < worker_to_tasks[worker_id].size(); j++) {
-			if (j > 0) std::cerr << ", ";
-			std::cerr << worker_to_tasks[worker_id][j];
-		}
-		std::cerr << "]" << std::endl;
-	}
-	std::cerr << "===============================================" << std::endl;
 	
 	DUCKDB_LOG_DEBUG(db_instance,
 	                StringUtil::Format("🔧 [STEP2] Distributing %llu tasks across %llu workers (round-robin)",
@@ -205,12 +186,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		                                    static_cast<long long unsigned>(serialized_task_plans.back().size())));
 	}
 	
-	std::cerr << "\n========== TASK SQLS ==========" << std::endl;
-	for (idx_t i = 0; i < task_sqls.size(); i++) {
-		std::cerr << "Task " << i << ": " << task_sqls[i] << std::endl;
-	}
-	std::cerr << "===============================" << std::endl;
-
 	// Phase 3: Prepare result schema and type information
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
@@ -236,7 +211,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	                                  static_cast<long long unsigned>(tasks.size()),
 	                                  static_cast<long long unsigned>(workers.size())));
 	
-	std::cerr << "\n========== STEP 2: TASK EXECUTION ==========" << std::endl;
 	idx_t total_tasks_sent = 0;
 
 	// Execute tasks on workers (round-robin assignment)
@@ -248,7 +222,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 			continue;
 		}
 		
-		std::cerr << "Worker " << worker_id << ": Executing " << task_indices.size() << " task(s)..." << std::endl;
 		
 		// For now, send tasks sequentially to each worker
 		// Future optimization: batch multiple tasks in single request
@@ -292,17 +265,11 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 			                StringUtil::Format("✅ [STEP2] Worker %s accepted task %llu", 
 			                                  worker->worker_id,
 			                                  static_cast<long long unsigned>(task.task_id)));
-			std::cerr << "  Task " << task.task_id << ": SENT" << std::endl;
 			
 			result_streams.emplace_back(std::move(stream));
 			total_tasks_sent += task_indices.size();
 		}
-		
-		std::cerr << "Worker " << worker_id << ": ✓ Sent " << task_indices.size() << " task(s)" << std::endl;
 	}
-	
-	std::cerr << "\nTotal tasks sent: " << total_tasks_sent << "/" << tasks.size() << std::endl;
-	std::cerr << "============================================" << std::endl;
 	
 	DUCKDB_LOG_DEBUG(db_instance,
 	                StringUtil::Format("✅ [STEP2] Successfully sent %llu/%llu tasks to workers",
@@ -319,38 +286,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔄 [STEP4] Collecting and merging results from %llu tasks",
 	                                                 static_cast<long long unsigned>(result_streams.size())));
 	
-	std::cerr << "\n========== STEP 4: MERGE PHASE ==========" << std::endl;
-	std::cerr << "Collecting results from " << result_streams.size() << " task(s)..." << std::endl;
-	
 	auto result = CollectAndMergeResults(result_streams, names, types, query_analysis);
-	
-	// DEBUGGING: Print aggregated results
-	if (result) {
-		auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
-		if (materialized && materialized->RowCount() > 0) {
-			std::cerr << "\n[DEBUG] COORDINATOR AGGREGATED RESULTS:" << std::endl;
-			std::cerr << "  Total rows after merge: " << materialized->RowCount() << std::endl;
-			std::cerr << "  First few rows:" << std::endl;
-			
-			auto &collection = materialized->Collection();
-			ColumnDataScanState scan_state;
-			collection.InitializeScan(scan_state);
-			DataChunk debug_chunk;
-			debug_chunk.Initialize(Allocator::DefaultAllocator(), materialized->types);
-			
-			if (collection.Scan(scan_state, debug_chunk) && debug_chunk.size() > 0) {
-				idx_t rows_to_show = std::min(static_cast<idx_t>(5), debug_chunk.size());
-				for (idx_t row = 0; row < rows_to_show; row++) {
-					std::cerr << "    Row " << row << ": ";
-					for (idx_t col = 0; col < debug_chunk.ColumnCount(); col++) {
-						if (col > 0) std::cerr << ", ";
-						std::cerr << debug_chunk.GetValue(col, row).ToString();
-					}
-					std::cerr << std::endl;
-				}
-			}
-		}
-	}
 
 	idx_t total_rows = 0;
 	if (result) {
@@ -539,31 +475,13 @@ PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &log
 	auto &db_instance = *conn.context->db;
 	PlanPartitionInfo info;
 	
-	std::cerr << "\n[PLAN DEBUG] ExtractPartitionInfo called" << std::endl;
-	std::cerr << "  Logical Plan Type: " << LogicalOperatorToString(logical_plan.type) << std::endl;
-	std::cerr << "  Num Workers: " << num_workers << std::endl;
-	std::cerr << "  Logical Plan has children: " << logical_plan.children.size() << std::endl;
-	
-	// Walk through the logical plan to see what's there
-	std::function<void(LogicalOperator&, int)> inspect_plan = [&](LogicalOperator &op, int depth) {
-		string indent(depth * 2, ' ');
-		std::cerr << indent << "- " << LogicalOperatorToString(op.type);
-		if (op.type == LogicalOperatorType::LOGICAL_GET) {
-			// This is a table scan - let's see what table it references
-			std::cerr << " (GET operator - table scan)";
-		}
-		std::cerr << std::endl;
-		for (auto &child : op.children) {
-			inspect_plan(*child, depth + 1);
-		}
-	};
-	
-	std::cerr << "  Logical Plan Structure:" << std::endl;
-	inspect_plan(logical_plan, 2);
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("🔍 [PLAN] ExtractPartitionInfo logical=%s workers=%llu children=%llu",
+	                                   LogicalOperatorToString(logical_plan.type),
+	                                   static_cast<long long unsigned>(num_workers),
+	                                   static_cast<long long unsigned>(logical_plan.children.size())));
 	
 	try {
-		std::cerr << "  Generating physical plan..." << std::endl;
-		
 		// Wrap physical plan generation in a transaction (mimicking DuckDB's internal behavior)
 		conn.context->RunFunctionInTransaction([&]() {
 			// Clone the logical plan since Plan() takes ownership
@@ -574,32 +492,16 @@ PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &log
 			auto physical_plan_ptr = generator.Plan(std::move(cloned_plan));
 			auto &physical_plan = physical_plan_ptr->Root();
 			
-			std::cerr << "  ✓ Physical plan generated successfully!" << std::endl;
-			
 			// Extract basic information
 			info.operator_type = physical_plan.type;
 			info.estimated_cardinality = physical_plan.estimated_cardinality;
 			info.natural_parallelism = physical_plan.EstimatedThreadCount();
 			
-			std::cerr << "\n[PLAN DEBUG] Physical Plan Details:" << std::endl;
-			std::cerr << "  Physical Operator Type: " << PhysicalOperatorToString(info.operator_type) << std::endl;
-			std::cerr << "  Estimated Cardinality: " << info.estimated_cardinality << std::endl;
-			std::cerr << "  Natural Parallelism (EstimatedThreadCount): " << info.natural_parallelism << std::endl;
-			std::cerr << "  Has Statistics: " << (physical_plan.estimated_cardinality > 0 ? "YES" : "NO") << std::endl;
-			std::cerr << "  Logical Plan Type: " << LogicalOperatorToString(logical_plan.type) << std::endl;
-			std::cerr << "  Estimated Cardinality Source: " << (physical_plan.estimated_cardinality > 0 ? "Physical Plan" : "MISSING!") << std::endl;
-			
 			DUCKDB_LOG_DEBUG(db_instance, 
-			                StringUtil::Format("🔍 [PLAN ANALYSIS] Physical plan analysis:"));
-			DUCKDB_LOG_DEBUG(db_instance, 
-			                StringUtil::Format("   - Operator type: %s", 
-			                                  PhysicalOperatorToString(info.operator_type)));
-			DUCKDB_LOG_DEBUG(db_instance, 
-			                StringUtil::Format("   - Estimated cardinality: %llu rows", 
-			                                  static_cast<long long unsigned>(info.estimated_cardinality)));
-			DUCKDB_LOG_DEBUG(db_instance, 
-			                StringUtil::Format("   - Natural parallelism: %llu tasks", 
-			                                  static_cast<long long unsigned>(info.natural_parallelism)));
+			                StringUtil::Format("🔍 [PLAN ANALYSIS] operator=%s estimated_cardinality=%llu natural_parallelism=%llu",
+			                                   PhysicalOperatorToString(info.operator_type),
+			                                   static_cast<long long unsigned>(info.estimated_cardinality),
+			                                   static_cast<long long unsigned>(info.natural_parallelism)));
 			
 			// Analyze if we can use intelligent partitioning
 			// For now, we support intelligent partitioning for:
@@ -616,21 +518,14 @@ PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &log
 					info.supports_intelligent_partitioning = true;
 					
 					DUCKDB_LOG_DEBUG(db_instance, 
-					                StringUtil::Format("✅ [PLAN ANALYSIS] Intelligent partitioning enabled:"));
-					DUCKDB_LOG_DEBUG(db_instance, 
-					                StringUtil::Format("   - Rows per partition: ~%llu", 
-					                                  static_cast<long long unsigned>(info.rows_per_partition)));
+					                StringUtil::Format("✅ [PLAN ANALYSIS] Intelligent partitioning enabled rows_per_partition=%llu",
+					                                   static_cast<long long unsigned>(info.rows_per_partition)));
 				} else {
-					DUCKDB_LOG_DEBUG(db_instance, 
-					                StringUtil::Format("ℹ️  [PLAN ANALYSIS] Using fallback partitioning (rowid %%)"));
-					if (info.operator_type != PhysicalOperatorType::TABLE_SCAN) {
-						DUCKDB_LOG_DEBUG(db_instance, 
-						                StringUtil::Format("   - Reason: Not a table scan"));
-					} else {
-						DUCKDB_LOG_DEBUG(db_instance, 
-						                StringUtil::Format("   - Reason: Insufficient rows per partition (%llu < 100)", 
-						                                  static_cast<long long unsigned>(info.rows_per_partition)));
-					}
+					DUCKDB_LOG_DEBUG(db_instance,
+					                StringUtil::Format("ℹ️  [PLAN ANALYSIS] Using fallback partitioning reason=%s",
+					                                   info.operator_type != PhysicalOperatorType::TABLE_SCAN
+					                                       ? "not_table_scan"
+					                                       : "insufficient_rows"));
 				}
 			} else {
 				DUCKDB_LOG_DEBUG(db_instance, 
@@ -641,11 +536,6 @@ PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &log
 		return info;
 		
 	} catch (std::exception &ex) {
-		// Physical plan generation failed - investigate why
-		std::cerr << "  ✗ Physical plan generation failed!" << std::endl;
-		std::cerr << "  Error: " << ex.what() << std::endl;
-		std::cerr << "  Falling back to manual partitioning strategy (rowid % N)" << std::endl;
-		
 		DUCKDB_LOG_DEBUG(db_instance, 
 		                StringUtil::Format("🔍 [PLAN ANALYSIS] Cannot generate physical plan: %s", ex.what()));
 		DUCKDB_LOG_DEBUG(db_instance, 
@@ -660,8 +550,6 @@ PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &log
 DistributedExecutor::RowGroupPartitionInfo DistributedExecutor::ExtractRowGroupInfo(LogicalOperator &logical_plan) {
 	auto &db_instance = *conn.context->db;
 	RowGroupPartitionInfo row_group_info;
-	
-	std::cerr << "\n[STEP 5] Extracting row group information from physical plan..." << std::endl;
 	
 	try {
 		conn.context->RunFunctionInTransaction([&]() {
@@ -684,11 +572,6 @@ DistributedExecutor::RowGroupPartitionInfo DistributedExecutor::ExtractRowGroupI
 				// If we have at least one row group, mark as valid
 				if (row_group_info.total_row_groups > 0) {
 					row_group_info.valid = true;
-					
-					std::cerr << "  Estimated row groups: " << row_group_info.total_row_groups << std::endl;
-					std::cerr << "  Rows per row group: " << row_group_info.rows_per_row_group << std::endl;
-					std::cerr << "  Total cardinality: " << physical_plan.estimated_cardinality << std::endl;
-					
 					DUCKDB_LOG_DEBUG(db_instance,
 					                StringUtil::Format("🗂️  [STEP5] Row group info: %llu row groups, %llu rows/group",
 					                                  static_cast<long long unsigned>(row_group_info.total_row_groups),
@@ -699,11 +582,6 @@ DistributedExecutor::RowGroupPartitionInfo DistributedExecutor::ExtractRowGroupI
 	} catch (std::exception &ex) {
 		DUCKDB_LOG_DEBUG(db_instance,
 		                StringUtil::Format("⚠️  [STEP5] Failed to extract row group info: %s", ex.what()));
-		std::cerr << "  Failed to extract row group info: " << ex.what() << std::endl;
-	}
-	
-	if (!row_group_info.valid) {
-		std::cerr << "  No row group information available" << std::endl;
 	}
 	
 	return row_group_info;
@@ -713,8 +591,6 @@ DistributedExecutor::RowGroupPartitionInfo DistributedExecutor::ExtractRowGroupI
 DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalOperator &logical_plan) {
 	auto &db_instance = *conn.context->db;
 	PipelineInfo info;
-	
-	std::cerr << "\n[STEP 6] Analyzing query pipeline complexity..." << std::endl;
 	
 	try {
 		conn.context->RunFunctionInTransaction([&]() {
@@ -739,7 +615,6 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 						info.has_joins = true;
 						info.is_simple_scan = false;
 						info.pipeline_types.push_back("JOIN");
-						std::cerr << "  Found: " << PhysicalOperatorToString(op_type) << std::endl;
 						break;
 						
 					case PhysicalOperatorType::WINDOW:
@@ -747,7 +622,6 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 						info.has_complex_operators = true;
 						info.is_simple_scan = false;
 						info.pipeline_types.push_back("WINDOW");
-						std::cerr << "  Found: WINDOW operator" << std::endl;
 						break;
 						
 					case PhysicalOperatorType::RECURSIVE_CTE:
@@ -755,18 +629,15 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 						info.has_complex_operators = true;
 						info.is_simple_scan = false;
 						info.pipeline_types.push_back("CTE");
-						std::cerr << "  Found: CTE operator" << std::endl;
 						break;
 						
 					case PhysicalOperatorType::HASH_GROUP_BY:
 					case PhysicalOperatorType::PERFECT_HASH_GROUP_BY:
 						info.pipeline_types.push_back("HASH_AGG");
-						std::cerr << "  Found: Hash aggregation" << std::endl;
 						break;
 						
 					case PhysicalOperatorType::ORDER_BY:
 						info.pipeline_types.push_back("ORDER_BY");
-						std::cerr << "  Found: ORDER BY" << std::endl;
 						break;
 						
 					case PhysicalOperatorType::TABLE_SCAN:
@@ -797,13 +668,6 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 				info.has_dependencies = true;
 			}
 			
-			std::cerr << "  Pipeline Analysis:" << std::endl;
-			std::cerr << "    Estimated pipelines: " << info.pipeline_count << std::endl;
-			std::cerr << "    Has dependencies: " << (info.has_dependencies ? "YES" : "NO") << std::endl;
-			std::cerr << "    Is simple scan: " << (info.is_simple_scan ? "YES" : "NO") << std::endl;
-			std::cerr << "    Has joins: " << (info.has_joins ? "YES" : "NO") << std::endl;
-			std::cerr << "    Has complex operators: " << (info.has_complex_operators ? "YES" : "NO") << std::endl;
-			
 			DUCKDB_LOG_DEBUG(db_instance,
 			                StringUtil::Format("🔀 [STEP6] Pipeline analysis: %llu pipelines, dependencies=%d, simple=%d",
 			                                  static_cast<long long unsigned>(info.pipeline_count),
@@ -813,7 +677,6 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 	} catch (std::exception &ex) {
 		DUCKDB_LOG_DEBUG(db_instance,
 		                StringUtil::Format("⚠️  [STEP6] Failed to analyze pipelines: %s", ex.what()));
-		std::cerr << "  Failed to analyze pipelines: " << ex.what() << std::endl;
 		// Default to assuming complex query
 		info.pipeline_count = 1;
 		info.is_simple_scan = false;
@@ -825,9 +688,6 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 // Helper function to inject WHERE clause into SQL at the correct position
 // Handles queries with GROUP BY, HAVING, ORDER BY, LIMIT, etc.
 static string InjectWhereClause(const string &sql, const string &where_condition) {
-	std::cerr << "  [InjectWhereClause] Original SQL: " << sql << std::endl;
-	std::cerr << "  [InjectWhereClause] WHERE condition: " << where_condition << std::endl;
-	
 	string trimmed = sql;
 	StringUtil::RTrim(trimmed);
 	if (!trimmed.empty() && trimmed.back() == ';') {
@@ -907,9 +767,7 @@ static string InjectWhereClause(const string &sql, const string &where_condition
 	StringUtil::RTrim(before);
 	StringUtil::LTrim(after);
 	
-	string result = before + " WHERE " + where_condition + (after.empty() ? "" : " " + after);
-	std::cerr << "  [InjectWhereClause] ✓ Result SQL: " << result << std::endl;
-	return result;
+	return before + " WHERE " + where_condition + (after.empty() ? "" : " " + after);
 }
 
 // STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan
@@ -922,9 +780,10 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 	auto &db_instance = *conn.context->db;
 	vector<DistributedPipelineTask> tasks;
 	
-	std::cerr << "\n[PIPELINE TASKS] Extracting pipeline tasks from physical plan..." << std::endl;
-	std::cerr << "  Base SQL: " << base_sql << std::endl;
-	std::cerr << "  Available Workers: " << num_workers << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("🔧 [PIPELINE] Extracting tasks: base_sql='%s' workers=%llu",
+	                                   base_sql,
+	                                   static_cast<long long unsigned>(num_workers)));
 	
 	try {
 		// STEP 5: Extract row group information for DuckDB-aligned partitioning
@@ -941,23 +800,30 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 			// DuckDB doesn't think this needs parallelism, but we have workers available
 			// Use num_workers anyway for distributed execution
 			num_tasks = num_workers;
-			std::cerr << "  DuckDB parallelism (" << partition_info.natural_parallelism 
-			          << ") < workers, using " << num_tasks << " tasks" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance,
+			                StringUtil::Format("🔧 [PIPELINE] Natural parallelism %llu < workers %llu, promoting to %llu tasks",
+			                                   static_cast<long long unsigned>(partition_info.natural_parallelism),
+			                                   static_cast<long long unsigned>(num_workers),
+			                                   static_cast<long long unsigned>(num_tasks)));
 		} else if (num_tasks > num_workers * 4) {
 			// Cap at 4x workers to avoid too many small tasks
 			num_tasks = num_workers * 4;
-			std::cerr << "  Capping tasks at " << num_tasks 
-			          << " (4x workers) to avoid fragmentation" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance,
+			                StringUtil::Format("🔧 [PIPELINE] Capping tasks at %llu (4x workers) to avoid fragmentation",
+			                                   static_cast<long long unsigned>(num_tasks)));
 		}
 		
-		std::cerr << "  Creating " << num_tasks << " pipeline tasks" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🔧 [PIPELINE] Creating %llu pipeline tasks",
+		                                   static_cast<long long unsigned>(num_tasks)));
 		
 		// STEP 5: Prefer row group-based partitioning when available
 		if (row_group_info.valid && row_group_info.total_row_groups > 0) {
 			// ROW GROUP-BASED PARTITIONING (Step 5): Align with DuckDB's natural storage structure
-			std::cerr << "  Using ROW GROUP-BASED partitioning (STEP 5 - DuckDB-aligned)" << std::endl;
-			std::cerr << "  Total row groups: " << row_group_info.total_row_groups << std::endl;
-			std::cerr << "  Rows per row group: " << row_group_info.rows_per_row_group << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance,
+			                StringUtil::Format("🔧 [PIPELINE] Using row group partitioning: groups=%llu rows_per_group=%llu",
+			                                   static_cast<long long unsigned>(row_group_info.total_row_groups),
+			                                   static_cast<long long unsigned>(row_group_info.rows_per_row_group)));
 			
 			// Assign row groups to tasks
 			// If we have more tasks than row groups, some tasks will be empty
@@ -993,9 +859,6 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 				task.row_group_start = rg_start;
 				task.row_group_end = rg_end - 1;
 				
-				std::cerr << "  Task " << i << ": row_groups [" << rg_start << ", " << (rg_end - 1)
-				          << "], rows [" << row_start << ", " << (row_end - 1) << "]" << std::endl;
-				
 				DUCKDB_LOG_DEBUG(db_instance,
 				                StringUtil::Format("🗂️  [STEP5] Task %llu: row groups [%llu, %llu], rows [%llu, %llu]",
 				                                  static_cast<long long unsigned>(i),
@@ -1009,8 +872,9 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 		} else if (partition_info.supports_intelligent_partitioning && 
 		           partition_info.estimated_cardinality > 0) {
 			// Fallback to intelligent range-based partitioning
-			std::cerr << "  Using intelligent range-based partitioning (fallback)" << std::endl;
-			std::cerr << "  Total cardinality: " << partition_info.estimated_cardinality << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance,
+			                StringUtil::Format("🔧 [PIPELINE] Using range-based partitioning fallback cardinality=%llu",
+			                                   static_cast<long long unsigned>(partition_info.estimated_cardinality)));
 			
 			idx_t rows_per_task = (partition_info.estimated_cardinality + num_tasks - 1) / num_tasks;
 			
@@ -1039,15 +903,11 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 				task.row_group_start = row_start / DEFAULT_ROW_GROUP_SIZE;
 				task.row_group_end = row_end / DEFAULT_ROW_GROUP_SIZE;
 				
-				std::cerr << "  Task " << i << ": rows [" << row_start << ", " << row_end 
-				          << "], row_groups [" << task.row_group_start << ", " << task.row_group_end << "]" 
-				          << std::endl;
-				
 				tasks.push_back(std::move(task));
 			}
 		} else {
 			// Fallback: modulo-based partitioning
-			std::cerr << "  Using fallback modulo-based partitioning" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance, "ℹ️  [PIPELINE] Using modulo-based partitioning fallback");
 			
 			for (idx_t i = 0; i < num_tasks; i++) {
 				DistributedPipelineTask task;
@@ -1064,20 +924,15 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 				task.row_group_start = 0;  // Unknown for modulo partitioning
 				task.row_group_end = 0;
 				
-				std::cerr << "  Task " << i << ": modulo partition" << std::endl;
-				
 				tasks.push_back(std::move(task));
 			}
 		}
-		
-		std::cerr << "[PIPELINE TASKS] Successfully created " << tasks.size() << " tasks" << std::endl;
 		
 		DUCKDB_LOG_DEBUG(db_instance,
 		                StringUtil::Format("🔧 [PIPELINE] Created %llu distributed pipeline tasks",
 		                                  static_cast<long long unsigned>(tasks.size())));
 		
 	} catch (std::exception &ex) {
-		std::cerr << "[PIPELINE TASKS ERROR] Failed to extract tasks: " << ex.what() << std::endl;
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("🔧 [PIPELINE] Failed to extract pipeline tasks: %s", ex.what()));
 		
@@ -1104,12 +959,8 @@ DistributedExecutor::QueryAnalysis DistributedExecutor::AnalyzeQuery(LogicalOper
 	QueryAnalysis analysis;
 	auto &db_instance = *conn.context->db;
 	
-	std::cerr << "\n[STEP 4] Analyzing query for merge strategy..." << std::endl;
-	
 	// Recursively walk the logical plan tree to find aggregates, GROUP BY, DISTINCT
 	std::function<void(LogicalOperator&)> analyze_operator = [&](LogicalOperator &op) {
-		std::cerr << "  Analyzing operator: " << LogicalOperatorToString(op.type) << std::endl;
-		
 		// Check for AGGREGATE operator
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
 			analysis.has_aggregates = true;
@@ -1119,7 +970,6 @@ DistributedExecutor::QueryAnalysis DistributedExecutor::AnalyzeQuery(LogicalOper
 			// Check if this is a GROUP BY aggregation
 			if (!agg_op.groups.empty()) {
 				analysis.has_group_by = true;
-				std::cerr << "    Found GROUP BY with " << agg_op.groups.size() << " group(s)" << std::endl;
 			}
 			
 			// Extract aggregate function names
@@ -1127,7 +977,6 @@ DistributedExecutor::QueryAnalysis DistributedExecutor::AnalyzeQuery(LogicalOper
 				if (expr->type == ExpressionType::BOUND_AGGREGATE) {
 					auto &agg_expr = expr->Cast<BoundAggregateExpression>();
 					analysis.aggregate_functions.push_back(agg_expr.function.name);
-					std::cerr << "    Found aggregate function: " << agg_expr.function.name << std::endl;
 				}
 			}
 		}
@@ -1135,7 +984,6 @@ DistributedExecutor::QueryAnalysis DistributedExecutor::AnalyzeQuery(LogicalOper
 		// Check for DISTINCT operator
 		if (op.type == LogicalOperatorType::LOGICAL_DISTINCT) {
 			analysis.has_distinct = true;
-			std::cerr << "    Found DISTINCT" << std::endl;
 		}
 		
 		// Recursively analyze children
@@ -1150,16 +998,12 @@ DistributedExecutor::QueryAnalysis DistributedExecutor::AnalyzeQuery(LogicalOper
 	// Determine merge strategy based on what we found
 	if (analysis.has_group_by) {
 		analysis.merge_strategy = MergeStrategy::GROUP_BY_MERGE;
-		std::cerr << "  Merge Strategy: GROUP_BY_MERGE" << std::endl;
 	} else if (analysis.has_aggregates) {
 		analysis.merge_strategy = MergeStrategy::AGGREGATE_MERGE;
-		std::cerr << "  Merge Strategy: AGGREGATE_MERGE" << std::endl;
 	} else if (analysis.has_distinct) {
 		analysis.merge_strategy = MergeStrategy::DISTINCT_MERGE;
-		std::cerr << "  Merge Strategy: DISTINCT_MERGE" << std::endl;
 	} else {
 		analysis.merge_strategy = MergeStrategy::CONCATENATE;
-		std::cerr << "  Merge Strategy: CONCATENATE (simple scan)" << std::endl;
 	}
 	
 	DUCKDB_LOG_DEBUG(db_instance,
@@ -1378,25 +1222,17 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 			vector<LogicalType> batch_types;
 			batch_types.reserve(arrow_batch->num_columns());
 			
-			std::cerr << "[DEBUG] Arrow batch has " << arrow_batch->num_columns() << " columns:" << std::endl;
 			for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
 				auto arrow_field = arrow_batch->schema()->field(col_idx);
 				auto arrow_type = arrow_field->type();
 				auto duckdb_type = ArrowTypeToDuckDBType(arrow_type);
 				batch_types.push_back(duckdb_type);
-				std::cerr << "  Column " << col_idx << ": " << arrow_field->name() 
-				          << " (Arrow: " << arrow_type->ToString() 
-				          << " -> DuckDB: " << duckdb_type.ToString() << ")" << std::endl;
 			}
 			
 			// Initialize collection with actual schema from first batch
 			if (!collection) {
 				actual_types = batch_types;
 				collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), actual_types);
-				std::cerr << "[DEBUG] Created ColumnDataCollection with types:" << std::endl;
-				for (idx_t i = 0; i < actual_types.size(); i++) {
-					std::cerr << "  Column " << i << ": " << actual_types[i].ToString() << std::endl;
-				}
 				DUCKDB_LOG_DEBUG(db_instance, 
 				                StringUtil::Format("🔀 [COMBINE] Coordinator: Initialized GlobalSinkState with %llu columns", 
 				                                  static_cast<long long unsigned>(actual_types.size())));
@@ -1427,8 +1263,6 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 		                                  static_cast<long long unsigned>(worker_batches), 
 		                                  static_cast<long long unsigned>(worker_rows)));
 		
-		std::cerr << "  Worker " << worker_idx << " returned: " << worker_rows << " rows in " << worker_batches << " batches" << std::endl;
-		
 		worker_idx++;
 	}
 	
@@ -1456,22 +1290,9 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
                                             const QueryAnalysis &query_analysis) {
 	auto &db_instance = *conn.context->db.get();
 	
-	std::cerr << "\n[STEP 4] Smart merge phase starting..." << std::endl;
-	std::cerr << "  Merge Strategy: ";
-	switch (query_analysis.merge_strategy) {
-		case MergeStrategy::CONCATENATE:
-			std::cerr << "CONCATENATE (simple scan)" << std::endl;
-			break;
-		case MergeStrategy::AGGREGATE_MERGE:
-			std::cerr << "AGGREGATE_MERGE (merge partial aggregates)" << std::endl;
-			break;
-		case MergeStrategy::GROUP_BY_MERGE:
-			std::cerr << "GROUP_BY_MERGE (merge grouped results)" << std::endl;
-			break;
-		case MergeStrategy::DISTINCT_MERGE:
-			std::cerr << "DISTINCT_MERGE (eliminate duplicates)" << std::endl;
-			break;
-	}
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("🔀 [STEP4B] Smart merge phase starting strategy=%d",
+	                                   static_cast<int>(query_analysis.merge_strategy)));
 	
 	DUCKDB_LOG_DEBUG(db_instance,
 	                StringUtil::Format("🔀 [STEP4B] Merging %llu result streams using strategy %d",
@@ -1484,12 +1305,8 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 	// STEP 2: For simple scans, just return the concatenated results
 	if (query_analysis.merge_strategy == MergeStrategy::CONCATENATE) {
 		DUCKDB_LOG_DEBUG(db_instance, "✅ [STEP4B] CONCATENATE strategy - returning concatenated results");
-		std::cerr << "  No re-aggregation needed, returning concatenated results" << std::endl;
 		return partial_result;
 	}
-	
-	// STEP 3: For aggregations, GROUP BY, or DISTINCT, we need to re-process the results
-	std::cerr << "  Re-processing results for smart merge..." << std::endl;
 	
 	auto materialized = dynamic_cast<MaterializedQueryResult *>(partial_result.get());
 	if (!materialized || materialized->RowCount() == 0) {
@@ -1497,7 +1314,9 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 		return partial_result;
 	}
 	
-	std::cerr << "  Collected " << materialized->RowCount() << " partial rows from workers" << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("🔀 [STEP4B] Collected %llu partial rows from workers",
+	                                   static_cast<long long unsigned>(materialized->RowCount())));
 	
 	try {
 		// STEP 4: Create a temporary table from the collected results
@@ -1514,14 +1333,17 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 		}
 		create_sql += ")";
 		
-		std::cerr << "  Creating temp table: " << create_sql << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🔀 [STEP4B] Creating temp table with SQL: %s", create_sql));
 		auto create_result = conn.Query(create_sql);
 		if (create_result->HasError()) {
 			throw std::runtime_error(StringUtil::Format("Failed to create temp table: %s", create_result->GetError()));
 		}
 		
 		// Insert collected data into temp table - insert row by row
-		std::cerr << "  Inserting " << materialized->RowCount() << " rows into temp table..." << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🔀 [STEP4B] Inserting %llu rows into temp table",
+		                                   static_cast<long long unsigned>(materialized->RowCount())));
 		idx_t inserted_rows = 0;
 		
 		// Get the collection from materialized result
@@ -1554,27 +1376,23 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 			}
 		}
 		
-		std::cerr << "  Inserted " << inserted_rows << " rows into temp table" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🔀 [STEP4B] Inserted %llu rows into temp table",
+		                                   static_cast<long long unsigned>(inserted_rows)));
 		
 		// STEP 5: Apply the appropriate merge strategy
 		string merge_sql;
 		
 		switch (query_analysis.merge_strategy) {
 			case MergeStrategy::AGGREGATE_MERGE:
-				// Re-aggregate: SUM(partial_sums), SUM(partial_counts), etc.
-				std::cerr << "  Applying AGGREGATE_MERGE..." << std::endl;
 				merge_sql = BuildAggregateMergeSQL(temp_table_name, names, query_analysis);
 				break;
 				
 			case MergeStrategy::GROUP_BY_MERGE:
-				// Re-group and re-aggregate
-				std::cerr << "  Applying GROUP_BY_MERGE..." << std::endl;
 				merge_sql = BuildGroupByMergeSQL(temp_table_name, names, query_analysis);
 				break;
 				
 			case MergeStrategy::DISTINCT_MERGE:
-				// Apply DISTINCT
-				std::cerr << "  Applying DISTINCT_MERGE..." << std::endl;
 				merge_sql = StringUtil::Format("SELECT DISTINCT * FROM %s", temp_table_name);
 				break;
 				
@@ -1584,7 +1402,8 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 				break;
 		}
 		
-		std::cerr << "  Executing merge SQL: " << merge_sql << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("🔀 [STEP4B] Executing merge SQL: %s", merge_sql));
 		
 		// STEP 6: Execute the merge SQL and return the result
 		auto final_result = conn.Query(merge_sql);
@@ -1596,13 +1415,14 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 			DUCKDB_LOG_WARN(db_instance,
 			                StringUtil::Format("⚠️  [STEP4B] Merge SQL failed: %s, returning partial results",
 			                                  final_result->GetError()));
-			std::cerr << "  Merge SQL failed: " << final_result->GetError() << std::endl;
 			return partial_result;  // Fallback to partial results
 		}
 		
 		auto final_materialized = dynamic_cast<MaterializedQueryResult *>(final_result.get());
 		if (final_materialized) {
-			std::cerr << "  Final result: " << final_materialized->RowCount() << " rows after merge" << std::endl;
+			DUCKDB_LOG_DEBUG(db_instance,
+			                StringUtil::Format("🔀 [STEP4B] Final merge rows=%llu",
+			                                   static_cast<long long unsigned>(final_materialized->RowCount())));
 		}
 		
 		DUCKDB_LOG_DEBUG(db_instance, "✅ [STEP4B] Smart merge complete");
@@ -1611,7 +1431,6 @@ DistributedExecutor::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight
 	} catch (std::exception &ex) {
 		DUCKDB_LOG_WARN(db_instance,
 		                StringUtil::Format("⚠️  [STEP4B] Smart merge failed: %s, returning partial results", ex.what()));
-		std::cerr << "  Smart merge failed: " << ex.what() << std::endl;
 		return partial_result;  // Fallback to partial results
 	}
 }

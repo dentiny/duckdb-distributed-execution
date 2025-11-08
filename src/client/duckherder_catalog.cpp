@@ -31,7 +31,6 @@ DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p,
                                      string server_db_path_p)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()),
       server_host(std::move(server_host_p)), server_port(server_port_p), server_db_path(std::move(server_db_path_p)) {
-	std::cerr << "[CATALOG] DuckherderCatalog created with server: " << server_host << ":" << server_port << std::endl;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderCatalog initialized with server %s:%d", server_host, server_port));
 }
 
@@ -268,7 +267,6 @@ bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
 
 string DuckherderCatalog::GetServerUrl() const {
 	auto url = StringUtil::Format("grpc://%s:%d", server_host, server_port);
-	std::cerr << "[CATALOG] GetServerUrl() returning: " << url << std::endl;
 	return url;
 }
 

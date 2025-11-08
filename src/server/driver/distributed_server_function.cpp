@@ -36,12 +36,9 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 
 	if (g_server_started) {
-		std::cerr << "[SERVER] Server already running, ignoring request to start on port " << port << std::endl;
 		result.Reference(Value(SUCCESS));
 		return;
 	}
-
-	std::cerr << "[SERVER] Starting server on port " << port << " with " << worker_count << " workers" << std::endl;
 
 	try {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
@@ -62,7 +59,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
 			if (!serve_status.ok() && g_server_started) {
-				std::cerr << "Server error on port " << port << ": " << serve_status.ToString() << std::endl;
+				throw InternalException(StringUtil::Format("Server error on port %d: %s", port, serve_status.ToString()));
 			}
 		}).detach();
 
@@ -70,7 +67,6 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 		g_server_started = true;
-		std::cerr << "[SERVER] Server successfully started on port " << port << std::endl;
 		result.Reference(Value(SUCCESS));
 	} catch (const std::exception &ex) {
 		throw Exception(ExceptionType::IO, "Failed to start local server: " + string(ex.what()));

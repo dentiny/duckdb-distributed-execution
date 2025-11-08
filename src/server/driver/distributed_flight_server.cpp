@@ -396,7 +396,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Otherwise, generate SELECT * FROM table
 	if (StringUtil::Contains(StringUtil::Upper(table_identifier), "SELECT")) {
 		sql = table_identifier;
-		std::cerr << "[AGGREGATION PUSHDOWN] Using custom SQL from request" << std::endl;
+		DUCKDB_LOG_DEBUG(db_instance, "[AGGREGATION PUSHDOWN] Using custom SQL from request");
 	} else {
 		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
 	}
@@ -408,7 +408,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
 
-	std::cerr << "[AGGREGATION PUSHDOWN] Final SQL: " << sql << std::endl;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("[AGGREGATION PUSHDOWN] Final SQL: %s", sql));
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
