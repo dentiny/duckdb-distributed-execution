@@ -1,4 +1,4 @@
-# Duckherder - DuckDB Distributed Execution Extension
+# Duckherder - DuckDB Remote and Distributed Execution Extension
 
 Duckherder is a DuckDB extension built upon [storage extension](https://github.com/duckdb/duckdb/pull/6066) that enables (certain) distributed query execution across multiple worker nodes using [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) for efficient data transfer. It allows you to seamlessly work with remote tables and execute queries in parallel across distributed workers while maintaining DuckDB's familiar SQL interface.
 
@@ -13,10 +13,12 @@ Duckherder is a DuckDB extension built upon [storage extension](https://github.c
 
 ## Overview
 
-Duckherder implements a client-server architecture with intelligent distributed query execution:
-- **Client (Duckherder)**: Coordinates queries, manages remote table references, and distributes work
-- **Server (Duckling)**: Executes queries on local data and returns results via Arrow Flight
-- **Distributed Executor**: Partitions queries and executes them in parallel across workers
+Duckherder implements a client-server architecture with distributed query execution:
+- **Client (Duckherder)**: Coordinates queries, manages remote table references, and initiates distributed execution
+- **Server (Duckling)**: Consists of two components:
+  - **Driver Node**: Analyzes queries, creates partition plans, and coordinates worker execution
+  - **Worker Nodes**: Execute partitioned queries on local data and return results via Arrow Flight
+- **Distributed Executor**: Runs on the driver node, partitions queries based on DuckDB's physical plan analysis, and distributes tasks to workers
 
 The extension transparently handles query routing, allowing you to run CREATE, SELECT, INSERT, DELETE, and ALTER operations on remote tables through DuckDB's storage extension interface.
 
@@ -31,7 +33,6 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 │  │   Duckherder Catalog (dh)         │  │
 │  │   - Remote table references       │  │
 │  │   - Query routing logic           │  │
-│  │   - Distributed executor          │  │
 │  └───────────────────────────────────┘  │
 │              │                          │
 │              │ Arrow Flight Protocol    │
@@ -41,10 +42,17 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 ┌──────────────┴──────────────────────────┐
 │         Server DuckDB Instance(s)       │
 │  ┌───────────────────────────────────┐  │
-│  │   Duckling Storage                │  │
+│  │   Driver Node                     │  │
+│  │   - Distributed executor          │  │
+│  │   - Query plan analysis           │  │
+│  │   - Task coordination             │  │
+│  └───────────┬───────────────────────┘  │
+│              │                          │
+│  ┌───────────┴───────────────────────┐  │
+│  │   Worker Nodes                    │  │
 │  │   - Actual table data             │  │
-│  │   - Query execution               │  │
-│  │   - Worker nodes                  │  │
+│  │   - Partitioned execution         │  │
+│  │   - Result streaming              │  │
 │  └───────────────────────────────────┘  │
 └─────────────────────────────────────────┘
 ```
@@ -58,7 +66,7 @@ The extension transparently handles query routing, allowing you to run CREATE, S
        │
        ├─ Phase 1: Extract & validate logical plan
        ├─ Phase 2: Analyze DuckDB's natural parallelism
-       ├─ Phase 3: Create partition plans (one per worker)
+       ├─ Phase 3: Create partition plans
        ├─ Phase 4: Prepare result schema
        │
        ├──────────┬──────────┬──────────┐
@@ -152,11 +160,11 @@ export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 
 2. Build the extension:
 ```bash
-# Clone the repo
+# Clone the repo.
 git clone --recurse-submodules https://github.com/dentiny/duckdb-distributed-execution.git
 cd duckdb-distributed-execution
 
-# Build with release mode
+# Build with release mode.
 export VCPKG_TOOLCHAIN_PATH=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) make
 ```
@@ -171,10 +179,10 @@ The build produces:
 ### Local Server Management
 
 ```sql
--- Start a distributed server on port 8815
+-- Start a distributed server on port 8815.
 SELECT duckherder_start_local_server(8815);
 
--- Stop the local distributed server
+-- Stop the local distributed server.
 SELECT duckherder_stop_local_server();
 ```
 
@@ -182,17 +190,18 @@ SELECT duckherder_stop_local_server();
 
 ```sql
 -- Attach to the duckherder server as database 'dh'
+-- TODO(hjiang): currently only support database 'dh'
 ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
 ```
 
 ### Register and Unregister Remote Tables
 
 ```sql
--- Register a remote table mapping
+-- Register a remote table mapping.
 -- Syntax: duckherder_register_remote_table(local_table_name, remote_table_name)
 PRAGMA duckherder_register_remote_table('my_table', 'my_table');
 
--- Unregister a remote table mapping
+-- Unregister a remote table mapping.
 -- Syntax: duckherder_unregister_remote_table(local_table_name)
 PRAGMA duckherder_unregister_remote_table('my_table');
 ```
@@ -208,7 +217,7 @@ SELECT duckherder_load_extension('json');
 ### Working with Remote Tables
 
 ```sql
--- Create a table
+-- Create a table.
 CREATE TABLE dh.users (
     id INTEGER,
     name VARCHAR,
@@ -216,32 +225,32 @@ CREATE TABLE dh.users (
     created_at TIMESTAMP
 );
 
--- Insert data
+-- Insert data.
 INSERT INTO dh.users VALUES 
     (1, 'Alice', 'alice@example.com', '2024-01-15 10:30:00'),
     (2, 'Bob', 'bob@example.com', '2024-01-16 14:20:00'),
     (3, 'Charlie', 'charlie@example.com', '2024-01-17 09:15:00');
 
--- Create an index
+-- Create an index.
 CREATE INDEX idx_users_email ON dh.users(email);
 
--- Simple SELECT
+-- Simple SELECT.
 SELECT * FROM dh.users WHERE id > 1;
 
--- Distributed query (automatically parallelized)
+-- Distributed query, which automatically gets parallelized.
 SELECT * FROM dh.large_table WHERE value > 1000;
 
--- Drop a table
+-- Drop a table.
 DROP TABLE dh.users;
 ```
 
 ### Query Statistics
 
 ```sql
--- View query history and statistics
+-- View query history and statistics.
 SELECT * FROM duckherder_get_query_history();
 
--- Clear query history
+-- Clear query history.
 SELECT duckherder_clear_query_recorder_stats();
 ```
 
@@ -260,7 +269,8 @@ SELECT duckherder_clear_query_recorder_stats();
 - [ ] Struct type support
 
 ### Distributed Query Support
-- [x] Query partitioning
+- [x] Intelligent query partitioning
+- [x] Natural parallelism analysis
 - [x] Row group-aligned execution
 - [x] Range-based partitioning
 - [ ] Aggregation pushdown (infrastructure ready)
@@ -286,32 +296,7 @@ SELECT duckherder_clear_query_recorder_stats();
 - [ ] Support community extension install and load
 - [ ] Dynamic worker scaling
 - [ ] Query result caching
-
-## Key Implementation Details
-
-### Files Structure
-
-**Core Implementation:**
-- `src/server/driver/distributed_executor.cpp` - Main distributed execution logic
-- `src/include/server/driver/distributed_executor.hpp` - Executor interface
-- `src/server/driver/distributed_flight_server.cpp` - Arrow Flight server
-- `src/client/distributed_table_scan_function.cpp` - Client-side table scanning
-
-**Worker Execution:**
-- `src/server/worker/worker_node.cpp` - Worker node implementation
-- `src/server/worker/worker_manager.cpp` - Worker pool management
-
-**Testing:**
-- `test/sql/distributed_*.test` - SQL-based integration tests
-- `unit/test_distributed_flight.cpp` - Unit tests
-
-### Key Methods
-
-- `QueryNaturalParallelism()` - Analyzes DuckDB's parallelism decision
-- `ExtractPartitionInfo()` - Extracts physical plan metadata
-- `CreatePartitionSQL()` - Generates partition predicates
-- `ExtractPipelineTasks()` - Creates distributed tasks
-- `CollectAndMergeResults()` - Merges worker results
+- [ ] Util function to register driver node and worker nodes
 
 ## Contributing
 
