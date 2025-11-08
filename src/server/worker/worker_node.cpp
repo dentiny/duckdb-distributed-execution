@@ -5,9 +5,11 @@
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/enums/pending_execution_result.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/execution/executor.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "server/worker/worker_node.hpp"
@@ -204,11 +206,38 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 	auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
 	if (materialized) {
 		task_state.rows_processed = materialized->RowCount();
+		
+		// DEBUGGING: Print actual results from this worker
+		std::cerr << "  Status: SUCCESS" << std::endl;
+		std::cerr << "  Rows Processed: " << task_state.rows_processed << std::endl;
+		std::cerr << "  Execution Time: " << task_state.execution_time_ms << "ms" << std::endl;
+		
+		// Print sample of results for debugging
+		if (task_state.rows_processed > 0) {
+			std::cerr << "  [DEBUG] First few rows from worker:" << std::endl;
+			auto &collection = materialized->Collection();
+			ColumnDataScanState scan_state;
+			collection.InitializeScan(scan_state);
+			DataChunk debug_chunk;
+			debug_chunk.Initialize(Allocator::DefaultAllocator(), materialized->types);
+			
+			if (collection.Scan(scan_state, debug_chunk) && debug_chunk.size() > 0) {
+				idx_t rows_to_show = std::min(static_cast<idx_t>(3), debug_chunk.size());
+				for (idx_t row = 0; row < rows_to_show; row++) {
+					std::cerr << "    Row " << row << ": ";
+					for (idx_t col = 0; col < debug_chunk.ColumnCount(); col++) {
+						if (col > 0) std::cerr << ", ";
+						std::cerr << debug_chunk.GetValue(col, row).ToString();
+					}
+					std::cerr << std::endl;
+				}
+			}
+		}
+	} else {
+		std::cerr << "  Status: SUCCESS" << std::endl;
+		std::cerr << "  Rows Processed: " << task_state.rows_processed << std::endl;
+		std::cerr << "  Execution Time: " << task_state.execution_time_ms << "ms" << std::endl;
 	}
-	
-	std::cerr << "  Status: SUCCESS" << std::endl;
-	std::cerr << "  Rows Processed: " << task_state.rows_processed << std::endl;
-	std::cerr << "  Execution Time: " << task_state.execution_time_ms << "ms" << std::endl;
 	
 	DUCKDB_LOG_DEBUG(db_instance,
 	                StringUtil::Format("✅ [STEP3] Worker %s: Task %llu completed - %llu rows in %llu ms",

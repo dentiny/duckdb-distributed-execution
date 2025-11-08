@@ -386,13 +386,29 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
 
-	string sql = StringUtil::Format("SELECT * FROM %s", req.table_name());
+	// AGGREGATION PUSHDOWN FIX:
+	// Check if table_name actually contains full SQL (temp hack for testing)
+	// In the future, this should come from a dedicated field in the protocol
+	string sql;
+	string table_identifier = req.table_name();
+	
+	// If it looks like SQL (contains SELECT), use it as-is
+	// Otherwise, generate SELECT * FROM table
+	if (StringUtil::Contains(StringUtil::Upper(table_identifier), "SELECT")) {
+		sql = table_identifier;
+		std::cerr << "[AGGREGATION PUSHDOWN] Using custom SQL from request" << std::endl;
+	} else {
+		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
+	}
+	
 	if (req.limit() != NO_QUERY_LIMIT && req.limit() != STANDARD_VECTOR_SIZE) {
 		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
 	}
 	if (req.offset() != NO_QUERY_OFFSET) {
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
+
+	std::cerr << "[AGGREGATION PUSHDOWN] Final SQL: " << sql << std::endl;
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;

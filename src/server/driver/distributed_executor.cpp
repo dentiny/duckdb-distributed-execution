@@ -24,6 +24,8 @@
 
 namespace duckdb {
 
+static constexpr bool DISTRIBUTED_VERBOSE_LOGGING = false;
+
 DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p)
     : worker_manager(worker_manager_p), conn(conn_p) {
 }
@@ -49,11 +51,12 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	//
 	// Key insight: Workers are execution units (like threads), coordinator aggregates
 	
+	auto &db_instance = *conn.context->db;
+
 	if (!CanDistribute(sql)) {
 		return nullptr;
 	}
 
-	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
@@ -97,6 +100,12 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		                                  static_cast<long long unsigned>(workers.size())));
 	}
 
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("[DIST] ExecuteDistributed: '%s' workers=%llu natural_parallelism=%llu",
+	                                   sql,
+	                                   static_cast<long long unsigned>(workers.size()),
+	                                   static_cast<long long unsigned>(natural_parallelism)));
+
 	// STEP 2: Extract partition information from physical plan
 	// This analyzes the plan to determine if we can use intelligent partitioning
 	PlanPartitionInfo partition_info = ExtractPartitionInfo(*logical_plan, workers.size());
@@ -109,16 +118,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	
 	// STEP 6: Analyze pipeline complexity
 	PipelineInfo pipeline_info = AnalyzePipelines(*logical_plan);
-
-	std::cerr << "\n========== DISTRIBUTED EXECUTION START ==========" << std::endl;
-	std::cerr << "Query: " << sql << std::endl;
-	std::cerr << "Workers: " << workers.size() << std::endl;
-	std::cerr << "Natural Parallelism: " << natural_parallelism << std::endl;
-	std::cerr << "Intelligent Partitioning: " << (partition_info.supports_intelligent_partitioning ? "YES" : "NO") << std::endl;
-	std::cerr << "Estimated Cardinality: " << partition_info.estimated_cardinality << std::endl;
-	std::cerr << "Pipeline Count: " << pipeline_info.pipeline_count << std::endl;
-	std::cerr << "Pipeline Complexity: " << (pipeline_info.is_simple_scan ? "SIMPLE" : "COMPLEX") << std::endl;
-	std::cerr << "=================================================" << std::endl;
 
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing query '%s' distributed across %llu workers", sql,
 	                                                 static_cast<long long unsigned>(workers.size())));
@@ -246,7 +245,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		auto &task_indices = worker_to_tasks[worker_id];
 		
 		if (task_indices.empty()) {
-			std::cerr << "Worker " << worker_id << ": No tasks assigned (skipping)" << std::endl;
 			continue;
 		}
 		
@@ -287,7 +285,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 				                                  worker->worker_id,
 				                                  static_cast<long long unsigned>(task.task_id),
 				                                  status.ToString()));
-				std::cerr << "  Task " << task.task_id << ": FAILED (" << status.ToString() << ")" << std::endl;
 				continue;
 			}
 			
@@ -298,7 +295,7 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 			std::cerr << "  Task " << task.task_id << ": SENT" << std::endl;
 			
 			result_streams.emplace_back(std::move(stream));
-			total_tasks_sent++;
+			total_tasks_sent += task_indices.size();
 		}
 		
 		std::cerr << "Worker " << worker_id << ": ✓ Sent " << task_indices.size() << " task(s)" << std::endl;
@@ -326,20 +323,49 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	std::cerr << "Collecting results from " << result_streams.size() << " task(s)..." << std::endl;
 	
 	auto result = CollectAndMergeResults(result_streams, names, types, query_analysis);
-
+	
+	// DEBUGGING: Print aggregated results
 	if (result) {
-		// Count total rows returned.
-		idx_t total_rows = 0;
+		auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
+		if (materialized && materialized->RowCount() > 0) {
+			std::cerr << "\n[DEBUG] COORDINATOR AGGREGATED RESULTS:" << std::endl;
+			std::cerr << "  Total rows after merge: " << materialized->RowCount() << std::endl;
+			std::cerr << "  First few rows:" << std::endl;
+			
+			auto &collection = materialized->Collection();
+			ColumnDataScanState scan_state;
+			collection.InitializeScan(scan_state);
+			DataChunk debug_chunk;
+			debug_chunk.Initialize(Allocator::DefaultAllocator(), materialized->types);
+			
+			if (collection.Scan(scan_state, debug_chunk) && debug_chunk.size() > 0) {
+				idx_t rows_to_show = std::min(static_cast<idx_t>(5), debug_chunk.size());
+				for (idx_t row = 0; row < rows_to_show; row++) {
+					std::cerr << "    Row " << row << ": ";
+					for (idx_t col = 0; col < debug_chunk.ColumnCount(); col++) {
+						if (col > 0) std::cerr << ", ";
+						std::cerr << debug_chunk.GetValue(col, row).ToString();
+					}
+					std::cerr << std::endl;
+				}
+			}
+		}
+	}
+
+	idx_t total_rows = 0;
+	if (result) {
 		auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
 		if (materialized) {
 			total_rows = materialized->RowCount();
 		}
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Distributed query completed: %llu total rows returned",
 		                                                 static_cast<long long unsigned>(total_rows)));
-		
-		std::cerr << "FINAL RESULT: " << total_rows << " total rows from " << total_tasks_sent << " task(s)" << std::endl;
-		std::cerr << "========================================" << std::endl;
 	}
+
+	DUCKDB_LOG_DEBUG(db_instance,
+	                StringUtil::Format("[DIST] Merge complete: rows=%llu tasks=%llu",
+	                                   static_cast<long long unsigned>(total_rows),
+	                                   static_cast<long long unsigned>(total_tasks_sent)));
 
 	return result;
 }
@@ -386,7 +412,6 @@ bool DistributedExecutor::CanDistribute(const string &sql) {
 		return false;
 	}
 	
-	// Everything else should work with plan-based execution!
 	return true;
 }
 
@@ -797,6 +822,96 @@ DistributedExecutor::PipelineInfo DistributedExecutor::AnalyzePipelines(LogicalO
 	return info;
 }
 
+// Helper function to inject WHERE clause into SQL at the correct position
+// Handles queries with GROUP BY, HAVING, ORDER BY, LIMIT, etc.
+static string InjectWhereClause(const string &sql, const string &where_condition) {
+	std::cerr << "  [InjectWhereClause] Original SQL: " << sql << std::endl;
+	std::cerr << "  [InjectWhereClause] WHERE condition: " << where_condition << std::endl;
+	
+	string trimmed = sql;
+	StringUtil::RTrim(trimmed);
+	if (!trimmed.empty() && trimmed.back() == ';') {
+		trimmed.pop_back();
+		StringUtil::RTrim(trimmed);
+	}
+	
+	// Convert to uppercase for keyword matching
+	string upper_sql = StringUtil::Upper(trimmed);
+	
+	// Find the position to insert WHERE clause
+	// It should go after FROM/JOIN but before WHERE/GROUP BY/HAVING/ORDER BY/LIMIT/OFFSET
+	vector<string> after_keywords = {"FROM", "JOIN"};
+	vector<string> before_keywords = {"WHERE", "GROUP BY", "HAVING", "ORDER BY", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT"};
+	
+	// Find the last occurrence of FROM or JOIN
+	idx_t insert_pos = string::npos;
+	for (const auto &keyword : after_keywords) {
+		idx_t pos = upper_sql.rfind(keyword);
+		if (pos != string::npos) {
+			// Find the end of the table name/clause after this keyword
+			// Simple heuristic: find the next space after the table identifier
+			idx_t start = pos + keyword.length();
+			
+			// Skip the table name and any aliases
+			// Look for the next keyword or end of string
+			idx_t next_keyword_pos = trimmed.length();
+			for (const auto &next_kw : before_keywords) {
+				idx_t kw_pos = upper_sql.find(next_kw, start);
+				if (kw_pos != string::npos && kw_pos < next_keyword_pos) {
+					next_keyword_pos = kw_pos;
+				}
+			}
+			
+			insert_pos = next_keyword_pos;
+			break;
+		}
+	}
+	
+	// If no FROM found, check if there's already a WHERE clause
+	if (insert_pos == string::npos) {
+		// Check if WHERE already exists
+		idx_t where_pos = upper_sql.find("WHERE");
+		if (where_pos != string::npos) {
+			// Already has WHERE, append to it with AND
+			return trimmed + " AND " + where_condition;
+		} else {
+			// No FROM and no WHERE - just append
+			return trimmed + " WHERE " + where_condition;
+		}
+	}
+	
+	// Check if there's already a WHERE clause before our insert position
+	idx_t existing_where = upper_sql.find("WHERE");
+	if (existing_where != string::npos && existing_where < insert_pos) {
+		// WHERE already exists, append with AND
+		// Find the end of the WHERE clause (before GROUP BY, HAVING, etc.)
+		idx_t where_end = insert_pos;
+		for (const auto &keyword : before_keywords) {
+			if (keyword == "WHERE") continue;
+			idx_t kw_pos = upper_sql.find(keyword, existing_where);
+			if (kw_pos != string::npos && kw_pos < where_end) {
+				where_end = kw_pos;
+			}
+		}
+		
+		string before = trimmed.substr(0, where_end);
+		string after = trimmed.substr(where_end);
+		StringUtil::RTrim(before);
+		StringUtil::LTrim(after);
+		return before + " AND " + where_condition + (after.empty() ? "" : " " + after);
+	}
+	
+	// Insert WHERE clause at the correct position
+	string before = trimmed.substr(0, insert_pos);
+	string after = trimmed.substr(insert_pos);
+	StringUtil::RTrim(before);
+	StringUtil::LTrim(after);
+	
+	string result = before + " WHERE " + where_condition + (after.empty() ? "" : " " + after);
+	std::cerr << "  [InjectWhereClause] ✓ Result SQL: " << result << std::endl;
+	return result;
+}
+
 // STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan
 // This is the bridge between our current statistics-informed approach and true pipeline task distribution
 vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
@@ -869,17 +984,11 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 				                        partition_info.estimated_cardinality);
 				
 				// Create SQL with row group-aligned rowid filter
-				string trimmed = base_sql;
-				StringUtil::RTrim(trimmed);
-				if (!trimmed.empty() && trimmed.back() == ';') {
-					trimmed.pop_back();
-					StringUtil::RTrim(trimmed);
-				}
-				
-				task.task_sql = StringUtil::Format("%s WHERE rowid BETWEEN %llu AND %llu",
-				                                   trimmed,
-				                                   static_cast<long long unsigned>(row_start),
-				                                   static_cast<long long unsigned>(row_end - 1));
+				// Use InjectWhereClause to put WHERE in the correct position (before GROUP BY, etc.)
+				string where_condition = StringUtil::Format("rowid BETWEEN %llu AND %llu",
+				                                            static_cast<long long unsigned>(row_start),
+				                                            static_cast<long long unsigned>(row_end - 1));
+				task.task_sql = InjectWhereClause(base_sql, where_condition);
 				
 				task.row_group_start = rg_start;
 				task.row_group_end = rg_end - 1;
@@ -921,17 +1030,11 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 				}
 				
 				// Create SQL with rowid filter
-				string trimmed = base_sql;
-				StringUtil::RTrim(trimmed);
-				if (!trimmed.empty() && trimmed.back() == ';') {
-					trimmed.pop_back();
-					StringUtil::RTrim(trimmed);
-				}
-				
-				task.task_sql = StringUtil::Format("%s WHERE rowid BETWEEN %llu AND %llu",
-				                                   trimmed,
-				                                   static_cast<long long unsigned>(row_start),
-				                                   static_cast<long long unsigned>(row_end));
+				// Use InjectWhereClause to put WHERE in the correct position (before GROUP BY, etc.)
+				string where_condition = StringUtil::Format("rowid BETWEEN %llu AND %llu",
+				                                            static_cast<long long unsigned>(row_start),
+				                                            static_cast<long long unsigned>(row_end));
+				task.task_sql = InjectWhereClause(base_sql, where_condition);
 				
 				task.row_group_start = row_start / DEFAULT_ROW_GROUP_SIZE;
 				task.row_group_end = row_end / DEFAULT_ROW_GROUP_SIZE;
@@ -952,17 +1055,11 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 				task.total_tasks = num_tasks;
 				
 				// Create SQL with modulo filter
-				string trimmed = base_sql;
-				StringUtil::RTrim(trimmed);
-				if (!trimmed.empty() && trimmed.back() == ';') {
-					trimmed.pop_back();
-					StringUtil::RTrim(trimmed);
-				}
-				
-				task.task_sql = StringUtil::Format("%s WHERE (rowid %% %llu) = %llu",
-				                                   trimmed,
-				                                   static_cast<long long unsigned>(num_tasks),
-				                                   static_cast<long long unsigned>(i));
+				// Use InjectWhereClause to put WHERE in the correct position (before GROUP BY, etc.)
+				string where_condition = StringUtil::Format("(rowid %% %llu) = %llu",
+				                                            static_cast<long long unsigned>(num_tasks),
+				                                            static_cast<long long unsigned>(i));
+				task.task_sql = InjectWhereClause(base_sql, where_condition);
 				
 				task.row_group_start = 0;  // Unknown for modulo partitioning
 				task.row_group_end = 0;
@@ -990,17 +1087,11 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 			task.task_id = i;
 			task.total_tasks = num_workers;
 			
-			string trimmed = base_sql;
-			StringUtil::RTrim(trimmed);
-			if (!trimmed.empty() && trimmed.back() == ';') {
-				trimmed.pop_back();
-				StringUtil::RTrim(trimmed);
-			}
-			
-			task.task_sql = StringUtil::Format("%s WHERE (rowid %% %llu) = %llu",
-			                                   trimmed,
-			                                   static_cast<long long unsigned>(num_workers),
-			                                   static_cast<long long unsigned>(i));
+			// Use InjectWhereClause to put WHERE in the correct position (before GROUP BY, etc.)
+			string where_condition = StringUtil::Format("(rowid %% %llu) = %llu",
+			                                            static_cast<long long unsigned>(num_workers),
+			                                            static_cast<long long unsigned>(i));
+			task.task_sql = InjectWhereClause(base_sql, where_condition);
 			tasks.push_back(std::move(task));
 		}
 	}
