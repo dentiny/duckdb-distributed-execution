@@ -93,6 +93,18 @@ private:
 	// STEP 2: Extract partition information from physical plan
 	// Analyzes the plan structure to get hints about intelligent partitioning
 	PlanPartitionInfo ExtractPartitionInfo(LogicalOperator &logical_plan, idx_t num_workers);
+	
+	// STEP 5: Extract actual row group assignments from physical plan
+	struct RowGroupPartitionInfo {
+		vector<idx_t> row_group_ids;      // Which row groups to scan
+		idx_t total_row_groups;           // Total row groups in table
+		idx_t rows_per_row_group;         // Approximate rows per row group
+		bool valid;                       // Whether row group info is available
+		
+		RowGroupPartitionInfo() : total_row_groups(0), rows_per_row_group(0), valid(false) {}
+	};
+	
+	RowGroupPartitionInfo ExtractRowGroupInfo(LogicalOperator &logical_plan);
 
 	// STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan
 	// This queries DuckDB's natural parallelization and creates task assignments

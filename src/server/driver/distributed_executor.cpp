@@ -626,6 +626,59 @@ PlanPartitionInfo DistributedExecutor::ExtractPartitionInfo(LogicalOperator &log
 	}
 }
 
+// STEP 5: Extract row group information for better partitioning
+DistributedExecutor::RowGroupPartitionInfo DistributedExecutor::ExtractRowGroupInfo(LogicalOperator &logical_plan) {
+	auto &db_instance = *conn.context->db;
+	RowGroupPartitionInfo row_group_info;
+	
+	std::cerr << "\n[STEP 5] Extracting row group information from physical plan..." << std::endl;
+	
+	try {
+		conn.context->RunFunctionInTransaction([&]() {
+			// Generate physical plan
+			auto cloned_plan = logical_plan.Copy(*conn.context);
+			PhysicalPlanGenerator generator(*conn.context);
+			auto physical_plan_ptr = generator.Plan(std::move(cloned_plan));
+			auto &physical_plan = physical_plan_ptr->Root();
+			
+			// For now, use estimated cardinality and DEFAULT_ROW_GROUP_SIZE to infer row groups
+			if (physical_plan.estimated_cardinality > 0) {
+				// Calculate approximate number of row groups
+				// DuckDB typically uses DEFAULT_ROW_GROUP_SIZE (usually 122880) rows per row group
+				constexpr idx_t APPROX_ROW_GROUP_SIZE = 122880;
+				
+				row_group_info.total_row_groups = 
+					(physical_plan.estimated_cardinality + APPROX_ROW_GROUP_SIZE - 1) / APPROX_ROW_GROUP_SIZE;
+				row_group_info.rows_per_row_group = APPROX_ROW_GROUP_SIZE;
+				
+				// If we have at least one row group, mark as valid
+				if (row_group_info.total_row_groups > 0) {
+					row_group_info.valid = true;
+					
+					std::cerr << "  Estimated row groups: " << row_group_info.total_row_groups << std::endl;
+					std::cerr << "  Rows per row group: " << row_group_info.rows_per_row_group << std::endl;
+					std::cerr << "  Total cardinality: " << physical_plan.estimated_cardinality << std::endl;
+					
+					DUCKDB_LOG_DEBUG(db_instance,
+					                StringUtil::Format("🗂️  [STEP5] Row group info: %llu row groups, %llu rows/group",
+					                                  static_cast<long long unsigned>(row_group_info.total_row_groups),
+					                                  static_cast<long long unsigned>(row_group_info.rows_per_row_group)));
+				}
+			}
+		});
+	} catch (std::exception &ex) {
+		DUCKDB_LOG_DEBUG(db_instance,
+		                StringUtil::Format("⚠️  [STEP5] Failed to extract row group info: %s", ex.what()));
+		std::cerr << "  Failed to extract row group info: " << ex.what() << std::endl;
+	}
+	
+	if (!row_group_info.valid) {
+		std::cerr << "  No row group information available" << std::endl;
+	}
+	
+	return row_group_info;
+}
+
 // STEP 1 (Pipeline Tasks): Extract distributed pipeline tasks from physical plan
 // This is the bridge between our current statistics-informed approach and true pipeline task distribution
 vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
@@ -641,6 +694,9 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 	std::cerr << "  Available Workers: " << num_workers << std::endl;
 	
 	try {
+		// STEP 5: Extract row group information for DuckDB-aligned partitioning
+		auto row_group_info = ExtractRowGroupInfo(logical_plan);
+		
 		// First, get partition info (cardinality, natural parallelism)
 		auto partition_info = ExtractPartitionInfo(logical_plan, num_workers);
 		
@@ -663,11 +719,70 @@ vector<DistributedPipelineTask> DistributedExecutor::ExtractPipelineTasks(
 		
 		std::cerr << "  Creating " << num_tasks << " pipeline tasks" << std::endl;
 		
-		// Create tasks based on partition info
-		if (partition_info.supports_intelligent_partitioning && 
-		    partition_info.estimated_cardinality > 0) {
-			// Intelligent partitioning: divide data by rowid ranges
-			std::cerr << "  Using intelligent range-based partitioning" << std::endl;
+		// STEP 5: Prefer row group-based partitioning when available
+		if (row_group_info.valid && row_group_info.total_row_groups > 0) {
+			// ROW GROUP-BASED PARTITIONING (Step 5): Align with DuckDB's natural storage structure
+			std::cerr << "  Using ROW GROUP-BASED partitioning (STEP 5 - DuckDB-aligned)" << std::endl;
+			std::cerr << "  Total row groups: " << row_group_info.total_row_groups << std::endl;
+			std::cerr << "  Rows per row group: " << row_group_info.rows_per_row_group << std::endl;
+			
+			// Assign row groups to tasks
+			// If we have more tasks than row groups, some tasks will be empty
+			// If we have fewer tasks than row groups, distribute row groups across tasks
+			idx_t row_groups_per_task = (row_group_info.total_row_groups + num_tasks - 1) / num_tasks;
+			
+			for (idx_t i = 0; i < num_tasks; i++) {
+				DistributedPipelineTask task;
+				task.task_id = i;
+				task.total_tasks = num_tasks;
+				
+				// Calculate which row groups this task processes
+				idx_t rg_start = i * row_groups_per_task;
+				idx_t rg_end = std::min((i + 1) * row_groups_per_task, row_group_info.total_row_groups);
+				
+				// Skip empty tasks
+				if (rg_start >= row_group_info.total_row_groups) {
+					continue;
+				}
+				
+				// Calculate row boundaries based on row group boundaries
+				idx_t row_start = rg_start * row_group_info.rows_per_row_group;
+				idx_t row_end = std::min(rg_end * row_group_info.rows_per_row_group,
+				                        partition_info.estimated_cardinality);
+				
+				// Create SQL with row group-aligned rowid filter
+				string trimmed = base_sql;
+				StringUtil::RTrim(trimmed);
+				if (!trimmed.empty() && trimmed.back() == ';') {
+					trimmed.pop_back();
+					StringUtil::RTrim(trimmed);
+				}
+				
+				task.task_sql = StringUtil::Format("%s WHERE rowid BETWEEN %llu AND %llu",
+				                                   trimmed,
+				                                   static_cast<long long unsigned>(row_start),
+				                                   static_cast<long long unsigned>(row_end - 1));
+				
+				task.row_group_start = rg_start;
+				task.row_group_end = rg_end - 1;
+				
+				std::cerr << "  Task " << i << ": row_groups [" << rg_start << ", " << (rg_end - 1)
+				          << "], rows [" << row_start << ", " << (row_end - 1) << "]" << std::endl;
+				
+				DUCKDB_LOG_DEBUG(db_instance,
+				                StringUtil::Format("🗂️  [STEP5] Task %llu: row groups [%llu, %llu], rows [%llu, %llu]",
+				                                  static_cast<long long unsigned>(i),
+				                                  static_cast<long long unsigned>(rg_start),
+				                                  static_cast<long long unsigned>(rg_end - 1),
+				                                  static_cast<long long unsigned>(row_start),
+				                                  static_cast<long long unsigned>(row_end - 1)));
+				
+				tasks.push_back(std::move(task));
+			}
+		} else if (partition_info.supports_intelligent_partitioning && 
+		           partition_info.estimated_cardinality > 0) {
+			// Fallback to intelligent range-based partitioning
+			std::cerr << "  Using intelligent range-based partitioning (fallback)" << std::endl;
 			std::cerr << "  Total cardinality: " << partition_info.estimated_cardinality << std::endl;
 			
 			idx_t rows_per_task = (partition_info.estimated_cardinality + num_tasks - 1) / num_tasks;
