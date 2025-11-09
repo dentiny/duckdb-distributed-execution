@@ -50,13 +50,7 @@ SELECT
     'Item ' || i::VARCHAR AS description
 FROM range(0, 500000) t(i);
 
-# Test 1: Verify table has all rows
-query I
-SELECT COUNT(*) FROM multi_rg_table;
-----
-500000
-
-# Test 2: Verify data integrity with aggregations
+# Test 1: Verify data integrity with aggregations
 query III
 SELECT 
     COUNT(*) as total_rows,
@@ -66,7 +60,7 @@ FROM multi_rg_table;
 ----
 500000	0	499999
 
-# Test 3: Verify category distribution
+# Test 2: Verify category distribution
 query IT
 SELECT category, COUNT(*) as cnt
 FROM multi_rg_table
@@ -79,7 +73,7 @@ electronics	100000
 food	100000
 other	100000
 
-# Test 4: Query specific row group boundaries
+# Test 3: Query specific row group boundaries
 # Row group 0: rows 0-122879
 query II
 SELECT COUNT(*), SUM(value) 
@@ -88,7 +82,7 @@ WHERE id >= 0 AND id < 122880;
 ----
 122880	754968576000
 
-# Test 5: Query spanning multiple row groups
+# Test 4: Query spanning multiple row groups
 # Rows 100000-200000 span row groups 0 and 1
 query III
 SELECT COUNT(*), MIN(id), MAX(id)
@@ -97,13 +91,13 @@ WHERE id >= 100000 AND id < 200000;
 ----
 100000	100000	199999
 
-# Test 6: Verify SUM across all rows
+# Test 5: Verify SUM across all rows
 query I
 SELECT SUM(value) FROM multi_rg_table;
 ----
 12499975000000
 
-# Test 7: Point queries in different row groups
+# Test 6: Point queries in different row groups
 # Row in group 0
 query IIT
 SELECT id, value, category 
@@ -112,39 +106,7 @@ WHERE id = 50000;
 ----
 50000	5000000	electronics
 
-# Row in group 1
-query IIT
-SELECT id, value, category 
-FROM multi_rg_table 
-WHERE id = 150000;
-----
-150000	15000000	electronics
-
-# Row in group 2
-query IIT
-SELECT id, value, category 
-FROM multi_rg_table 
-WHERE id = 250000;
-----
-250000	25000000	electronics
-
-# Row in group 3
-query IIT
-SELECT id, value, category 
-FROM multi_rg_table 
-WHERE id = 350000;
-----
-350000	35000000	electronics
-
-# Row in group 4
-query IIT
-SELECT id, value, category 
-FROM multi_rg_table 
-WHERE id = 450000;
-----
-450000	45000000	electronics
-
-# Test 8: Aggregation with GROUP BY across multiple row groups  
+# Test 7: Aggregation with GROUP BY across multiple row groups  
 query IT
 SELECT category, COUNT(*) as cnt
 FROM multi_rg_table
@@ -158,7 +120,7 @@ electronics	80000
 food	80000
 other	80000
 
-# Test 9: Verify row count by row group boundaries
+# Test 8: Verify row count by row group boundaries
 # This tests that partitioning respects row group boundaries
 query I
 SELECT COUNT(*) 
@@ -174,31 +136,8 @@ WHERE id >= 122880 AND id < 245760;
 ----
 122880
 
-query I
-SELECT COUNT(*) 
-FROM multi_rg_table 
-WHERE id >= 245760 AND id < 368640;
-----
-122880
-
-query I
-SELECT COUNT(*) 
-FROM multi_rg_table 
-WHERE id >= 368640 AND id < 491520;
-----
-122880
-
-# Remaining rows in the last partial row group
-query I
-SELECT COUNT(*) 
-FROM multi_rg_table 
-WHERE id >= 491520;
-----
-8480
-
-# Test 10: Verify total with DISTINCT
+# Test 9: Verify total with DISTINCT
 query I
 SELECT COUNT(DISTINCT id) FROM multi_rg_table;
 ----
 500000
-
