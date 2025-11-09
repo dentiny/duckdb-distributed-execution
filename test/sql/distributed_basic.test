@@ -2,14 +2,7 @@
 # description: Basic distributed execution round trip
 # group: [sql]
 
-#
-# TODO(hjiang): Add large scale dataset.
-
 require duckherder
-
-# Stop any existing server first to ensure clean state
-statement ok
-SELECT duckherder_stop_local_server();
 
 # Start distributed server and workers in background thread
 statement ok

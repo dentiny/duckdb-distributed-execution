@@ -8,10 +8,6 @@
 
 require duckherder
 
-# Stop any existing server first to ensure clean state
-statement ok
-SELECT duckherder_stop_local_server();
-
 # Start distributed server with 4 workers
 statement ok
 SELECT duckherder_start_local_server(8815, 4);
@@ -133,4 +129,3 @@ query I
 SELECT COUNT(DISTINCT id) FROM rg_medium_table;
 ----
 250000
-

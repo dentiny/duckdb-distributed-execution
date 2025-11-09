@@ -4,11 +4,6 @@
 
 require duckherder
 
-# Stop any existing server first to ensure clean state
-statement ok
-SELECT duckherder_stop_local_server();
-
-# Start distributed server
 statement ok
 SELECT duckherder_start_local_server(8815);
 
