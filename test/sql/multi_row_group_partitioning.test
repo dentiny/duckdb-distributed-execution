@@ -1,6 +1,6 @@
 # name: test/sql/multi_row_group_partitioning.test
 # description: Test distributed execution with multiple row groups (500K rows)
-# group: [duckherder]
+# group: [sql]
 
 require duckherder
 

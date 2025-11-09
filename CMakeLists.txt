@@ -50,6 +50,11 @@ set(CLIENT_SOURCES
 
 set(SERVER_DRIVER_SOURCES
     src/server/driver/distributed_executor.cpp
+    src/server/driver/query_plan_analyzer.cpp
+    src/server/driver/partition_sql_generator.cpp
+    src/server/driver/result_merger.cpp
+    src/server/driver/task_partitioner.cpp
+    src/server/driver/plan_serializer.cpp
     src/server/driver/distributed_flight_server.cpp
     src/server/driver/distributed_server_function.cpp
     src/server/driver/distributed_server_main.cpp

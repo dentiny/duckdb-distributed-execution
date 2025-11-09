@@ -395,7 +395,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// In the future, this should come from a dedicated field in the protocol
 	string sql;
 	string table_identifier = req.table_name();
-	
+
 	// If it looks like SQL (contains SELECT), use it as-is
 	// Otherwise, generate SELECT * FROM table
 	if (StringUtil::Contains(StringUtil::Upper(table_identifier), "SELECT")) {
@@ -404,7 +404,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	} else {
 		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
 	}
-	
+
 	if (req.limit() != NO_QUERY_LIMIT && req.limit() != STANDARD_VECTOR_SIZE) {
 		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
 	}

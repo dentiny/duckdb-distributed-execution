@@ -59,7 +59,8 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 			// This thread owns its own server instance
 			auto serve_status = g_test_server->Serve();
 			if (!serve_status.ok() && g_server_started) {
-				throw InternalException(StringUtil::Format("Server error on port %d: %s", port, serve_status.ToString()));
+				throw InternalException(
+				    StringUtil::Format("Server error on port %d: %s", port, serve_status.ToString()));
 			}
 		}).detach();
 

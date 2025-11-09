@@ -21,7 +21,7 @@ struct DistributedTableScanLocalState : public LocalTableFunctionState {
 	}
 	bool finished;
 	vector<column_t> column_ids;
-	idx_t offset;  // Track current offset for fetching data
+	idx_t offset; // Track current offset for fetching data
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
@@ -79,16 +79,16 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s (offset: %llu)", 
-	                                        bind_data.remote_table_name, 
+	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s (offset: %llu)",
+	                                        bind_data.remote_table_name,
 	                                        static_cast<long long unsigned>(local_state.offset)));
-	// Get the expected types from the table schema to handle special types like ENUM
+	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
-	auto result =
-	    client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), /*offset=*/local_state.offset, &expected_types);
-
+	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(),
+	                               /*offset=*/local_state.offset, &expected_types);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::INTERNAL, "Distributed table scan error: " + result->GetError());
+		throw Exception(ExceptionType::INTERNAL,
+		                StringUtil::Format("Distributed table scan error: %s", result->GetError()));
 	}
 
 	auto data_chunk = result->Fetch();
@@ -97,9 +97,8 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		// Note: We use Copy instead of Reference to handle column reordering correctly.
 		// The output DataChunk schema is determined by the query projection,
 		// while data_chunk has the table's natural column order.
-		
 		output.SetCardinality(data_chunk->size());
-		
+
 		if (local_state.column_ids.empty()) {
 			// No projection - copy all columns in order
 			for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); col_idx++) {
@@ -107,26 +106,24 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 			}
 		} else {
 			// Projection pushdown - copy only requested columns in correct order
-			for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size(); out_idx++) {
+			for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size();
+			     out_idx++) {
 				auto col_idx = local_state.column_ids[out_idx];
 				if (col_idx < data_chunk->ColumnCount()) {
 					VectorOperations::Copy(data_chunk->data[col_idx], output.data[out_idx], data_chunk->size(), 0, 0);
 				}
 			}
 		}
-
-		// FIX: Increment offset to fetch next chunk on next call
-		// Don't mark as finished yet - keep fetching until we get an empty chunk
 		local_state.offset += data_chunk->size();
-		
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetched %llu rows, new offset: %llu", 
+
+		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetched %llu rows, new offset: %llu",
 		                                        static_cast<long long unsigned>(data_chunk->size()),
 		                                        static_cast<long long unsigned>(local_state.offset)));
 	} else {
-		// No more data - mark as finished
+		// No more data - mark as finished.
 		output.SetCardinality(0);
 		local_state.finished = true;
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Scan finished for table: %s (total rows: %llu)", 
+		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Scan finished for table: %s (total rows: %llu)",
 		                                        bind_data.remote_table_name,
 		                                        static_cast<long long unsigned>(local_state.offset)));
 	}
