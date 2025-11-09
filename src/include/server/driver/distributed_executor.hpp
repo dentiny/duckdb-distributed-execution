@@ -52,8 +52,8 @@ struct DistributedPipelineTask {
 	string task_sql;
 
 	// Task-specific metadata
-	idx_t row_group_start = 0; // Starting row group for this task
-	idx_t row_group_end = 0;   // Ending row group for this task
+	idx_t row_group_start = 0; // Starting row group for this task (inclusive)
+	idx_t row_group_end = 0;   // Ending row group for this task (exclusive)
 };
 
 // Distributed executor that partitions data and sends to workers
@@ -73,7 +73,6 @@ private:
 	WorkerManager &worker_manager;
 	Connection &conn;
 
-	// Extracted modules
 	unique_ptr<QueryPlanAnalyzer> plan_analyzer;
 	unique_ptr<PartitionSQLGenerator> sql_generator;
 	unique_ptr<ResultMerger> result_merger;

@@ -124,18 +124,11 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	return arrow::Status::OK();
 }
 
-// STEP 3: Execute a pipeline task with state tracking and metrics
+// Execute a pipeline task.
 arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
-                                              TaskExecutionState &task_state, unique_ptr<QueryResult> &result) {
+                                              unique_ptr<QueryResult> &result) {
 	auto &db_instance = *db->instance.get();
 	auto start_time = std::chrono::high_resolution_clock::now();
-
-	// Initialize task state
-	task_state.task_id = req.partition_id();
-	task_state.total_tasks = req.total_partitions();
-	task_state.task_sql = req.sql();
-	task_state.completed = false;
-	task_state.rows_processed = 0;
 
 	arrow::Status exec_status = arrow::Status::OK();
 
@@ -156,47 +149,21 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 	//     ...
 	// }
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔧 [STEP3] Worker %s: Task %llu - Using SQL-BASED execution "
-	                                                 "(plan-based execution disabled until physical plan support)",
-	                                                 worker_id, task_state.task_id));
-
 	// Execute task using SQL-based execution.
 	if (!result && !req.sql().empty()) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s: Task %llu - SQL-BASED execution for %s", worker_id,
-		                                                 task_state.task_id, req.sql()));
 		result = conn->Query(req.sql());
 	}
 
 	// Record execution time.
 	auto end_time = std::chrono::high_resolution_clock::now();
-	task_state.execution_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 
 	// Validate result.
 	if (!result) {
-		task_state.completed = false;
-		task_state.error_message = "No query result produced";
 		return arrow::Status::Invalid("Worker produced no query result for task");
 	}
-
 	if (result->HasError()) {
-		task_state.completed = false;
-		task_state.error_message = result->GetError();
 		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
 	}
-
-	// Task completed successfully
-	task_state.completed = true;
-
-	// Record row count (will be updated after Arrow conversion).
-	auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
-	if (materialized) {
-		task_state.rows_processed = materialized->RowCount();
-	}
-
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("Worker %s: Task %llu completed - %llu rows in %llu ms", worker_id,
-	                                    task_state.task_id, static_cast<long long unsigned>(task_state.rows_processed),
-	                                    static_cast<long long unsigned>(task_state.execution_time_ms)));
 
 	return arrow::Status::OK();
 }
@@ -206,29 +173,22 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	auto &db_instance = *db->instance.get();
 
-	// STEP 3: Create task execution state
-	TaskExecutionState task_state;
-	task_state.task_id = req.partition_id();
-	task_state.total_tasks = req.total_partitions();
-	current_task = make_uniq<TaskExecutionState>(task_state);
-
 	// Log the task assignment.
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s: Received task %llu/%llu", worker_id,
 	                                                 req.partition_id(), req.total_partitions()));
 
 	// STEP 3: Execute the pipeline task with state tracking
 	unique_ptr<QueryResult> result;
-	auto exec_status = ExecutePipelineTask(req, task_state, result);
+	auto exec_status = ExecutePipelineTask(req, result);
 
 	if (!exec_status.ok()) {
 		resp.set_success(false);
-		resp.set_error_message(task_state.error_message);
-		current_task.reset();
+		resp.set_error_message(exec_status.message());
 		return exec_status;
 	}
 
-	// Convert result to Arrow format
-	// This represents the LocalState output from this worker node
+	// Convert result to Arrow format.
+	// This represents the LocalState output from this worker node.
 	idx_t row_count = 0;
 	auto status = QueryResultToArrow(*result, reader, &row_count);
 	if (!status.ok()) {
@@ -237,26 +197,10 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 		return status;
 	}
 
-	// Update task state with final row count
-	task_state.rows_processed = row_count;
-
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_partition();
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
-
-	// STEP 3: Log task completion with metrics
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("[STEP3-DONE] Worker %s: Task %llu/%llu COMPLETE - %llu rows in %llu ms",
-	                                    worker_id, req.partition_id(), req.total_partitions(),
-	                                    static_cast<long long unsigned>(row_count),
-	                                    static_cast<long long unsigned>(task_state.execution_time_ms)));
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("[WORKER-DONE] Worker %s: Sending %llu rows back to coordinator for merge",
-	                                    worker_id, static_cast<long long unsigned>(row_count)));
-
-	// STEP 3: Clear current task state
-	current_task.reset();
 
 	return arrow::Status::OK();
 }
