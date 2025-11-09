@@ -1,8 +1,10 @@
 # name: test/sql/row_group_partitioning.test
-# description: Test ROW GROUP-BASED partitioning - aligns with DuckDB storage structure (122,880 rows/group)
-# Partitioning method: rowid BETWEEN rg_start AND rg_end (aligned with row group boundaries)
-# Dataset: 500,000 rows creating ~4 row groups
+# description: Test ROW GROUP-BASED partitioning - COMPREHENSIVE test with multiple row groups
 # group: [sql]
+
+# Partitioning method: rowid BETWEEN rg_start AND rg_end (aligned with row group boundaries)
+# Dataset: 500,000 rows creating ~4 row groups (comprehensive but slow - see row_group_partitioning_medium.test for faster version)
+# Row group size: 122,880 rows/group
 
 require duckherder
 

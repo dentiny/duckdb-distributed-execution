@@ -62,10 +62,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	auto &bind_data = data.bind_data->Cast<DistributedTableScanBindData>();
 	auto &local_state = data.local_state->Cast<DistributedTableScanLocalState>();
 
-	auto &db = DatabaseInstance::GetDatabase(context);
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Distributed scan executing for table: %s from server: %s",
-	                                        bind_data.remote_table_name, bind_data.server_url));
-
 	if (local_state.finished) {
 		output.SetCardinality(0);
 		return;
@@ -73,15 +69,11 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	auto &client = DistributedClient::GetInstance();
 	if (!client.TableExists(bind_data.remote_table_name)) {
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Table %s does not exist on server", bind_data.remote_table_name));
 		output.SetCardinality(0);
 		local_state.finished = true;
 		return;
 	}
 
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s (offset: %llu)",
-	                                        bind_data.remote_table_name,
-	                                        static_cast<long long unsigned>(local_state.offset)));
 	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
 	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), local_state.offset,
@@ -97,9 +89,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	if (data_chunk == nullptr || data_chunk->size() == 0) {
 		output.SetCardinality(0);
 		local_state.finished = true;
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Scan finished for table: %s (total rows: %llu)",
-		                                        bind_data.remote_table_name,
-		                                        static_cast<long long unsigned>(local_state.offset)));
 		return;
 	}
 
@@ -126,10 +115,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		}
 	}
 	local_state.offset += data_chunk->size();
-
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetched %llu rows, new offset: %llu",
-	                                        static_cast<long long unsigned>(data_chunk->size()),
-	                                        static_cast<long long unsigned>(local_state.offset)));
 }
 
 } // namespace duckdb

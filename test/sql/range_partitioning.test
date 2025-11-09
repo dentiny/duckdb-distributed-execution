@@ -1,8 +1,9 @@
 # name: test/sql/range_partitioning.test
 # description: Test RANGE-BASED partitioning - evenly divides data across workers using rowid ranges
+# group: [sql]
+
 # Partitioning method: rowid BETWEEN range_start AND range_end (not aligned with row groups)
 # Dataset: 10,000 rows distributed evenly (2,500 rows per worker with 4 workers)
-# group: [sql]
 
 require duckherder
 

@@ -27,22 +27,16 @@ DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : ho
 	auto &db_instance = *db->instance.get();
 
 	// Attach duckling storage extension.
-	DUCKDB_LOG_DEBUG(db_instance, "Attaching Duckling storage extension");
 	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
 	if (result->HasError()) {
-		auto error_message = StringUtil::Format("Failed to attach Duckling: %s", result->GetError());
-		DUCKDB_LOG_DEBUG(db_instance, error_message);
-		throw InternalException(error_message);
+		throw InternalException(StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
 	}
 
 	// Set duckling as the default database.
 	auto use_result = conn->Query("USE duckling;");
 	if (use_result->HasError()) {
-		auto error_message = StringUtil::Format("Failed to USE duckling: %s", use_result->GetError());
-		DUCKDB_LOG_DEBUG(db_instance, error_message);
-		throw InternalException(error_message);
+		throw InternalException(StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
 	}
-	DUCKDB_LOG_DEBUG(db_instance, "Duckling attach and set as default catalog");
 
 	// Initialize worker manager and distributed executor
 	worker_manager = make_uniq<WorkerManager>(*db);
@@ -155,9 +149,6 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
                                              const arrow::flight::Ticket &ticket,
                                              std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
-	auto &db_instance = *db->instance.get();
-	DUCKDB_LOG_DEBUG(db_instance, "DistributedFlightServer::DoGet called");
-
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
@@ -235,9 +226,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
-	auto &db_instance = *db->instance;
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateTable: %s", req.sql()));
-
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
@@ -270,9 +258,6 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
-	auto &db_instance = *db->instance;
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("HandleCreateIndex: %s", req.sql()));
-
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
@@ -335,11 +320,9 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
 	auto install_result = conn->Query(sql);
 	if (install_result->HasError()) {
-		const string error_message =
-		    StringUtil::Format("Extension %s install failed %s", req.extension_name(), install_result->GetError());
-		DUCKDB_LOG_DEBUG(db_instance, error_message);
 		resp.set_success(false);
-		resp.set_error_message(std::move(error_message));
+		resp.set_error_message(
+		    StringUtil::Format("Extension %s install failed %s", req.extension_name(), install_result->GetError()));
 		return arrow::Status::OK();
 	}
 
@@ -348,11 +331,9 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Load extension with %s", sql));
 	auto load_result = conn->Query(sql);
 	if (load_result->HasError()) {
-		const string error_message =
-		    StringUtil::Format("Extension %s load failed %s", req.extension_name(), load_result->GetError());
-		DUCKDB_LOG_DEBUG(db_instance, error_message);
 		resp.set_success(false);
-		resp.set_error_message(std::move(error_message));
+		resp.set_error_message(
+		    StringUtil::Format("Extension %s load failed %s", req.extension_name(), load_result->GetError()));
 		return arrow::Status::OK();
 	}
 
@@ -400,7 +381,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Otherwise, generate SELECT * FROM table
 	if (StringUtil::Contains(StringUtil::Upper(table_identifier), "SELECT")) {
 		sql = table_identifier;
-		DUCKDB_LOG_DEBUG(db_instance, "[AGGREGATION PUSHDOWN] Using custom SQL from request");
 	} else {
 		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
 	}
@@ -411,8 +391,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	if (req.offset() != NO_QUERY_OFFSET) {
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
-
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("[AGGREGATION PUSHDOWN] Final SQL: %s", sql));
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;

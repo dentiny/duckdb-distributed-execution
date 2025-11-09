@@ -111,9 +111,7 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	distributed::DistributedResponse response;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
 	auto &db_instance = *db->instance.get();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s received partition request", worker_id));
 	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s returning partition stream", worker_id));
 
 	if (!reader) {
 		return arrow::Status::Invalid("Failed to create RecordBatchReader: execution produced no reader");
@@ -171,13 +169,7 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
                                                  distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
-	auto &db_instance = *db->instance.get();
-
-	// Log the task assignment.
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s: Received task %llu/%llu", worker_id,
-	                                                 req.partition_id(), req.total_partitions()));
-
-	// STEP 3: Execute the pipeline task with state tracking
+	// Execute the pipeline task with state tracking
 	unique_ptr<QueryResult> result;
 	auto exec_status = ExecutePipelineTask(req, result);
 
@@ -192,8 +184,6 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	idx_t row_count = 0;
 	auto status = QueryResultToArrow(*result, reader, &row_count);
 	if (!status.ok()) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("Worker %s QueryResultToArrow error: %s", worker_id, status.ToString()));
 		return status;
 	}
 
@@ -234,34 +224,16 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 
 	// Begin a transaction before deserializing the plan
 	// Note: Deserialization requires an active transaction to resolve table bindings
-	DUCKDB_LOG_DEBUG(
-	    db_instance,
-	    StringUtil::Format("📦 [DESERIALIZE] Worker %s: Beginning transaction for plan deserialization", worker_id));
 	conn->BeginTransaction();
 
 	// Deserialize the logical plan
 	// This plan contains the partition predicate embedded in it by the coordinator
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("📦 [DESERIALIZE] Worker %s: Deserializing logical plan (%llu bytes)",
-	                                    worker_id, static_cast<long long unsigned>(req.serialized_plan().size())));
 	MemoryStream plan_stream(reinterpret_cast<data_ptr_t>(const_cast<char *>(req.serialized_plan().data())),
 	                         req.serialized_plan().size());
 	bound_parameter_map_t parameters;
-	unique_ptr<LogicalOperator> logical_plan;
-	try {
-		logical_plan = BinaryDeserializer::Deserialize<LogicalOperator>(plan_stream, *conn->context, parameters);
-		DUCKDB_LOG_DEBUG(
-		    db_instance,
-		    StringUtil::Format("[DESERIALIZE] Worker %s: Logical plan deserialized successfully", worker_id));
-	} catch (std::exception &ex) {
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("[DESERIALIZE] Worker %s: Deserialization failed: %s",
-		                                                worker_id, ex.what()));
-		conn->Rollback();
-		return arrow::Status::Invalid(StringUtil::Format("Failed to deserialize plan: %s", ex.what()));
-	}
+	unique_ptr<LogicalOperator> logical_plan =
+	    BinaryDeserializer::Deserialize<LogicalOperator>(plan_stream, *conn->context, parameters);
 	if (!logical_plan) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("[DESERIALIZE] Worker %s: Deserialized plan is null", worker_id));
 		conn->Rollback();
 		return arrow::Status::Invalid("Deserialized plan was null");
 	}
@@ -284,33 +256,21 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 	// - This worker node acts as ONE thread/execution unit
 	// - We execute our partition and return LocalState output
 	// - Coordinator acts as the GlobalState aggregator
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format(
-	                                  "[EXECUTE] Worker %s: Executing logical plan (LocalState execution)", worker_id));
 	auto statement = make_uniq<LogicalPlanStatement>(std::move(logical_plan));
 	auto materialized = conn->Query(std::move(statement));
 
 	// Commit the transaction
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("[EXECUTE] Worker %s: Committing transaction", worker_id));
 	conn->Commit();
 
 	if (materialized->HasError()) {
-		DUCKDB_LOG_WARN(db_instance, StringUtil::Format("[EXECUTE] Worker %s: Query execution error: %s", worker_id,
-		                                                materialized->GetError()));
 		return arrow::Status::Invalid(materialized->GetError());
 	}
 
 	// Validate and fix column metadata
 	if (materialized->types.size() != types.size()) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("[EXECUTE] Worker %s: Column count mismatch (expected: %llu, got: %llu)",
-		                                   worker_id, static_cast<long long unsigned>(types.size()),
-		                                   static_cast<long long unsigned>(materialized->types.size())));
 		return arrow::Status::Invalid("Worker result column count mismatch with expected types");
 	}
 
-	DUCKDB_LOG_DEBUG(
-	    db_instance,
-	    StringUtil::Format("[EXECUTE] Worker %s: Plan execution completed, result ready for transmission", worker_id));
 	materialized->types = std::move(types);
 	if (materialized->names.size() == names.size()) {
 		materialized->names = std::move(names);
@@ -353,8 +313,6 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 			break;
 		}
 
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s converting chunk size %llu", worker_id,
-		                                                 static_cast<long long unsigned>(chunk->size())));
 		ArrowArray arrow_array;
 		auto extension_types =
 		    ArrowTypeExtensionData::GetExtensionTypes(*result.client_properties.client_context, result.types);

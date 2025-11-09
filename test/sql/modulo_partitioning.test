@@ -1,8 +1,9 @@
 # name: test/sql/modulo_partitioning.test
 # description: Test MODULO-BASED partitioning - round-robin distribution for small datasets
+# group: [sql]
+
 # Partitioning method: (rowid % num_workers) = worker_id (fallback for small tables)
 # Dataset: 6 rows using modulo partitioning as fallback
-# group: [sql]
 
 require duckherder
 

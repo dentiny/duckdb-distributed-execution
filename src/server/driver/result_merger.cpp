@@ -156,9 +156,7 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	//
 	// This maintains the same aggregation semantics as thread-level parallelism,
 	// but distributed across network-connected nodes.
-
-	auto &db_instance = *conn.context->db.get();
-
+	//
 	// Collection will be created lazily after we see the first batch's schema
 	unique_ptr<ColumnDataCollection> collection;
 	vector<LogicalType> actual_types; // Types from actual Arrow data
@@ -169,20 +167,12 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	idx_t total_rows_combined = 0;
 
 	for (auto &stream : streams) {
-		DUCKDB_LOG_DEBUG(db_instance,
-		                 StringUtil::Format("🔀 [COMBINE] Coordinator: Processing results from worker %llu/%llu",
-		                                    static_cast<long long unsigned>(worker_idx + 1),
-		                                    static_cast<long long unsigned>(streams.size())));
 		idx_t worker_batches = 0;
 		idx_t worker_rows = 0;
 
 		while (true) {
 			auto batch_result = stream->Next();
 			if (!batch_result.ok()) {
-				DUCKDB_LOG_WARN(db_instance,
-				                StringUtil::Format("⚠️  [COMBINE] Coordinator: Worker %llu stream error: %s",
-				                                   static_cast<long long unsigned>(worker_idx),
-				                                   batch_result.status().ToString()));
 				break;
 			}
 
@@ -209,10 +199,6 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 			if (!collection) {
 				actual_types = batch_types;
 				collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), actual_types);
-				DUCKDB_LOG_DEBUG(
-				    db_instance,
-				    StringUtil::Format("🔀 [COMBINE] Coordinator: Initialized GlobalSinkState with %llu columns",
-				                       static_cast<long long unsigned>(actual_types.size())));
 			}
 
 			DataChunk chunk;
@@ -234,29 +220,13 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 			total_batches++;
 			total_rows_combined += arrow_batch->num_rows();
 		}
-
-		DUCKDB_LOG_DEBUG(db_instance,
-		                 StringUtil::Format("✅ [COMBINE] Coordinator: Worker %llu contributed %llu batches, %llu rows",
-		                                    static_cast<long long unsigned>(worker_idx),
-		                                    static_cast<long long unsigned>(worker_batches),
-		                                    static_cast<long long unsigned>(worker_rows)));
-
 		worker_idx++;
 	}
-
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🎯 [COMBINE] Coordinator: GlobalSinkState merge complete - %llu "
-	                                                 "total batches, %llu total rows from %llu workers",
-	                                                 static_cast<long long unsigned>(total_batches),
-	                                                 static_cast<long long unsigned>(total_rows_combined),
-	                                                 static_cast<long long unsigned>(streams.size())));
 
 	// Finalize phase: Return the aggregated result
 	// In this simple case, we just return the merged collection
 	// For more complex operators (aggregates, sorts, etc.), additional
 	// finalization logic would go here (e.g., final aggregation, final sort)
-	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("🏁 [FINALIZE] Coordinator: Returning final result (%llu rows total)",
-	                                    static_cast<long long unsigned>(total_rows_combined)));
 	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties {}, names,
 	                                          std::move(collection), ClientProperties {});
 }
@@ -265,35 +235,21 @@ unique_ptr<QueryResult>
 ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
                                      const vector<string> &names, const vector<LogicalType> &types,
                                      const QueryPlanAnalyzer::QueryAnalysis &query_analysis) {
-	auto &db_instance = *conn.context->db.get();
-
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Smart merge phase starting strategy=%d",
-	                                                 static_cast<int>(query_analysis.merge_strategy)));
-
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Merging %llu result streams using strategy %d",
-	                                                 static_cast<long long unsigned>(streams.size()),
-	                                                 static_cast<int>(query_analysis.merge_strategy)));
-
-	// STEP 1: Collect results from all workers
+	// Collect results from all workers
 	auto partial_result = CollectAndMergeResults(streams, names, types);
 
-	// STEP 2: For simple scans, just return the concatenated results
+	// For simple scans, just return the concatenated results
 	if (query_analysis.merge_strategy == QueryPlanAnalyzer::MergeStrategy::CONCATENATE) {
-		DUCKDB_LOG_DEBUG(db_instance, "✅ [STEP4B] CONCATENATE strategy - returning concatenated results");
 		return partial_result;
 	}
 
 	auto materialized = dynamic_cast<MaterializedQueryResult *>(partial_result.get());
 	if (!materialized || materialized->RowCount() == 0) {
-		DUCKDB_LOG_DEBUG(db_instance, "⚠️  [STEP4B] No rows to merge, returning empty result");
 		return partial_result;
 	}
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Collected %llu partial rows from workers",
-	                                                 static_cast<long long unsigned>(materialized->RowCount())));
-
 	try {
-		// STEP 4: Create a temporary table from the collected results
+		// Create a temporary table from the collected results
 		string temp_table_name = "__distributed_partial_results__";
 
 		// Drop if exists
@@ -308,15 +264,12 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 		}
 		create_sql += ")";
 
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Creating temp table with SQL: %s", create_sql));
 		auto create_result = conn.Query(create_sql);
 		if (create_result->HasError()) {
 			throw std::runtime_error(StringUtil::Format("Failed to create temp table: %s", create_result->GetError()));
 		}
 
 		// Insert collected data into temp table - insert row by row
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Inserting %llu rows into temp table",
-		                                                 static_cast<long long unsigned>(materialized->RowCount())));
 		idx_t inserted_rows = 0;
 
 		// Get the collection from materialized result
@@ -351,10 +304,7 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 			}
 		}
 
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Inserted %llu rows into temp table",
-		                                                 static_cast<long long unsigned>(inserted_rows)));
-
-		// STEP 5: Apply the appropriate merge strategy
+		// Apply the appropriate merge strategy
 		string merge_sql;
 
 		switch (query_analysis.merge_strategy) {
@@ -376,34 +326,18 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 			break;
 		}
 
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("🔀 [STEP4B] Executing merge SQL: %s", merge_sql));
-
-		// STEP 6: Execute the merge SQL and return the result
+		// Execute the merge SQL and return the result
 		auto final_result = conn.Query(merge_sql);
 
 		// Clean up temp table
 		conn.Query(StringUtil::Format("DROP TABLE IF EXISTS %s", temp_table_name));
 
 		if (final_result->HasError()) {
-			DUCKDB_LOG_WARN(db_instance,
-			                StringUtil::Format("⚠️  [STEP4B] Merge SQL failed: %s, returning partial results",
-			                                   final_result->GetError()));
 			return partial_result; // Fallback to partial results
 		}
-
-		auto final_materialized = dynamic_cast<MaterializedQueryResult *>(final_result.get());
-		if (final_materialized) {
-			DUCKDB_LOG_DEBUG(db_instance,
-			                 StringUtil::Format("🔀 [STEP4B] Final merge rows=%llu",
-			                                    static_cast<long long unsigned>(final_materialized->RowCount())));
-		}
-
-		DUCKDB_LOG_DEBUG(db_instance, "✅ [STEP4B] Smart merge complete");
 		return final_result;
 
 	} catch (std::exception &ex) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("⚠️  [STEP4B] Smart merge failed: %s, returning partial results", ex.what()));
 		return partial_result; // Fallback to partial results
 	}
 }
