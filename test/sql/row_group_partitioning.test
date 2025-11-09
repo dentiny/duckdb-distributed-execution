@@ -1,5 +1,7 @@
-# name: test/sql/multi_row_group_partitioning.test
-# description: Test distributed execution with multiple row groups (500K rows)
+# name: test/sql/row_group_partitioning.test
+# description: Test ROW GROUP-BASED partitioning - aligns with DuckDB storage structure (122,880 rows/group)
+# Partitioning method: rowid BETWEEN rg_start AND rg_end (aligned with row group boundaries)
+# Dataset: 500,000 rows creating ~4 row groups
 # group: [sql]
 
 require duckherder
