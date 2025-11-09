@@ -9,8 +9,8 @@ namespace duckdb {
 ResultMerger::ResultMerger(Connection &conn_p) : conn(conn_p) {
 }
 
-string ResultMerger::BuildAggregateMergeSQL(const string &temp_table, const vector<string> &column_names,
-                                            const QueryPlanAnalyzer::QueryAnalysis &analysis) {
+/*static*/ string ResultMerger::BuildAggregateMergeSQL(const string &temp_table, const vector<string> &column_names,
+                                                       const QueryPlanAnalyzer::QueryAnalysis &analysis) {
 	// For aggregates without GROUP BY, we need to merge partial results:
 	// - SUM(partial_sums) for SUM
 	// - SUM(partial_counts) for COUNT
@@ -53,8 +53,8 @@ string ResultMerger::BuildAggregateMergeSQL(const string &temp_table, const vect
 	return sql;
 }
 
-string ResultMerger::BuildGroupByMergeSQL(const string &temp_table, const vector<string> &column_names,
-                                          const QueryPlanAnalyzer::QueryAnalysis &analysis) {
+/*static*/ string ResultMerger::BuildGroupByMergeSQL(const string &temp_table, const vector<string> &column_names,
+                                                     const QueryPlanAnalyzer::QueryAnalysis &analysis) {
 	// For GROUP BY, we need to:
 	// 1. Identify which columns are group keys (non-aggregate columns)
 	// 2. Identify which columns are aggregates
@@ -71,17 +71,17 @@ string ResultMerger::BuildGroupByMergeSQL(const string &temp_table, const vector
 		if (col_lower.find("count") != string::npos || col_lower.find("sum") != string::npos ||
 		    col_lower.find("avg") != string::npos || col_lower.find("min") != string::npos ||
 		    col_lower.find("max") != string::npos || col_lower.find("_agg") != string::npos) {
-			agg_columns.push_back(col_name);
+			agg_columns.emplace_back(col_name);
 		} else {
-			group_keys.push_back(col_name);
+			group_keys.emplace_back(col_name);
 		}
 	}
 
 	// If we couldn't identify any group keys, fall back to treating first column as key
 	if (group_keys.empty() && !column_names.empty()) {
-		group_keys.push_back(column_names[0]);
-		for (idx_t i = 1; i < column_names.size(); i++) {
-			agg_columns.push_back(column_names[i]);
+		group_keys.emplace_back(column_names[0]);
+		for (idx_t idx = 1; idx < column_names.size(); ++idx) {
+			agg_columns.emplace_back(column_names[idx]);
 		}
 	}
 
@@ -89,10 +89,11 @@ string ResultMerger::BuildGroupByMergeSQL(const string &temp_table, const vector
 	string sql = "SELECT ";
 
 	// Add group keys (pass through)
-	for (idx_t i = 0; i < group_keys.size(); i++) {
-		if (i > 0)
+	for (idx_t idx = 0; idx < group_keys.size(); ++idx) {
+		if (idx > 0) {
 			sql += ", ";
-		sql += group_keys[i];
+		}
+		sql += group_keys[idx];
 	}
 
 	// Add re-aggregated columns
@@ -126,10 +127,11 @@ string ResultMerger::BuildGroupByMergeSQL(const string &temp_table, const vector
 	// Add GROUP BY clause
 	if (!group_keys.empty()) {
 		sql += " GROUP BY ";
-		for (idx_t i = 0; i < group_keys.size(); i++) {
-			if (i > 0)
+		for (idx_t idx = 0; idx < group_keys.size(); ++idx) {
+			if (idx > 0) {
 				sql += ", ";
-			sql += group_keys[i];
+			}
+			sql += group_keys[idx];
 		}
 	}
 
@@ -248,98 +250,95 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 		return partial_result;
 	}
 
-	try {
-		// Create a temporary table from the collected results
-		string temp_table_name = "__distributed_partial_results__";
+	// Create a temporary table from the collected results
+	string temp_table_name = "__distributed_partial_results__";
 
-		// Drop if exists
-		conn.Query(StringUtil::Format("DROP TABLE IF EXISTS %s", temp_table_name));
+	// Drop if exists
+	conn.Query(StringUtil::Format("DROP TABLE IF EXISTS %s", temp_table_name));
 
-		// Create table with correct schema
-		string create_sql = StringUtil::Format("CREATE TEMPORARY TABLE %s (", temp_table_name);
-		for (idx_t i = 0; i < names.size(); i++) {
-			if (i > 0)
-				create_sql += ", ";
-			create_sql += StringUtil::Format("%s %s", names[i], types[i].ToString());
+	// Create table with correct schema
+	string create_sql = StringUtil::Format("CREATE TEMPORARY TABLE %s (", temp_table_name);
+	for (idx_t idx = 0; idx < names.size(); ++idx) {
+		if (idx > 0) {
+			create_sql += ", ";
 		}
-		create_sql += ")";
+		create_sql += StringUtil::Format("%s %s", names[idx], types[idx].ToString());
+	}
+	create_sql += ")";
 
-		auto create_result = conn.Query(create_sql);
-		if (create_result->HasError()) {
-			throw std::runtime_error(StringUtil::Format("Failed to create temp table: %s", create_result->GetError()));
-		}
+	auto create_result = conn.Query(create_sql);
+	if (create_result->HasError()) {
+		throw std::runtime_error(StringUtil::Format("Failed to create temp table: %s", create_result->GetError()));
+	}
 
-		// Insert collected data into temp table - insert row by row
-		idx_t inserted_rows = 0;
+	// Insert collected data into temp table - insert row by row
+	idx_t inserted_rows = 0;
 
-		// Get the collection from materialized result
-		auto &collection = materialized->Collection();
+	// Get the collection from materialized result
+	auto &collection = materialized->Collection();
 
-		// Iterate through all chunks in the collection
-		ColumnDataScanState scan_state;
-		collection.InitializeScan(scan_state);
-		DataChunk insert_chunk;
-		insert_chunk.Initialize(Allocator::DefaultAllocator(), types);
+	// Iterate through all chunks in the collection
+	ColumnDataScanState scan_state;
+	collection.InitializeScan(scan_state);
+	DataChunk insert_chunk;
+	insert_chunk.Initialize(Allocator::DefaultAllocator(), types);
 
-		while (collection.Scan(scan_state, insert_chunk)) {
-			if (insert_chunk.size() == 0)
-				break;
+	while (collection.Scan(scan_state, insert_chunk)) {
+		if (insert_chunk.size() == 0)
+			break;
 
-			// Insert this chunk row by row
-			for (idx_t row_idx = 0; row_idx < insert_chunk.size(); row_idx++) {
-				string row_sql = StringUtil::Format("INSERT INTO %s VALUES (", temp_table_name);
-				for (idx_t col_idx = 0; col_idx < insert_chunk.ColumnCount(); col_idx++) {
-					if (col_idx > 0)
-						row_sql += ", ";
-					auto value = insert_chunk.GetValue(col_idx, row_idx);
-					row_sql += value.ToSQLString();
+		// Insert this chunk row by row
+		for (idx_t row_idx = 0; row_idx < insert_chunk.size(); row_idx++) {
+			string row_sql = StringUtil::Format("INSERT INTO %s VALUES (", temp_table_name);
+			for (idx_t col_idx = 0; col_idx < insert_chunk.ColumnCount(); ++col_idx) {
+				if (col_idx > 0) {
+					row_sql += ", ";
 				}
-				row_sql += ")";
-
-				auto insert_result = conn.Query(row_sql);
-				if (insert_result->HasError()) {
-					throw std::runtime_error(StringUtil::Format("Failed to insert row: %s", insert_result->GetError()));
-				}
-				inserted_rows++;
+				auto value = insert_chunk.GetValue(col_idx, row_idx);
+				row_sql += value.ToSQLString();
 			}
+			row_sql += ")";
+
+			auto insert_result = conn.Query(row_sql);
+			if (insert_result->HasError()) {
+				throw std::runtime_error(StringUtil::Format("Failed to insert row: %s", insert_result->GetError()));
+			}
+			inserted_rows++;
 		}
+	}
 
-		// Apply the appropriate merge strategy
-		string merge_sql;
+	// Apply the appropriate merge strategy
+	string merge_sql;
 
-		switch (query_analysis.merge_strategy) {
-		case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
-			merge_sql = BuildAggregateMergeSQL(temp_table_name, names, query_analysis);
-			break;
+	switch (query_analysis.merge_strategy) {
+	case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
+		merge_sql = BuildAggregateMergeSQL(temp_table_name, names, query_analysis);
+		break;
 
-		case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
-			merge_sql = BuildGroupByMergeSQL(temp_table_name, names, query_analysis);
-			break;
+	case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
+		merge_sql = BuildGroupByMergeSQL(temp_table_name, names, query_analysis);
+		break;
 
-		case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
-			merge_sql = StringUtil::Format("SELECT DISTINCT * FROM %s", temp_table_name);
-			break;
+	case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
+		merge_sql = StringUtil::Format("SELECT DISTINCT * FROM %s", temp_table_name);
+		break;
 
-		default:
-			// Shouldn't reach here
-			merge_sql = StringUtil::Format("SELECT * FROM %s", temp_table_name);
-			break;
-		}
+	default:
+		// Shouldn't reach here
+		merge_sql = StringUtil::Format("SELECT * FROM %s", temp_table_name);
+		break;
+	}
 
-		// Execute the merge SQL and return the result
-		auto final_result = conn.Query(merge_sql);
+	// Execute the merge SQL and return the result
+	auto final_result = conn.Query(merge_sql);
 
-		// Clean up temp table
-		conn.Query(StringUtil::Format("DROP TABLE IF EXISTS %s", temp_table_name));
+	// Clean up temp table
+	conn.Query(StringUtil::Format("DROP TABLE IF EXISTS %s", temp_table_name));
 
-		if (final_result->HasError()) {
-			return partial_result; // Fallback to partial results
-		}
-		return final_result;
-
-	} catch (std::exception &ex) {
+	if (final_result->HasError()) {
 		return partial_result; // Fallback to partial results
 	}
+	return final_result;
 }
 
 } // namespace duckdb

@@ -100,8 +100,9 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	// If there's no projection, just copy all columns in order.
 	if (local_state.column_ids.empty()) {
-		for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); col_idx++) {
-			VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(), 0, 0);
+		for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); ++col_idx) {
+			VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(),
+			                       /*source_offset=*/0, /*target_offset=*/0);
 		}
 	}
 	// Otherwise, perform projection pushdown, and copy only requested columns in the correct order.

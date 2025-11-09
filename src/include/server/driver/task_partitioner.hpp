@@ -6,19 +6,19 @@
 
 namespace duckdb {
 
-// Forward declarations
+// Forward declarations.
 struct DistributedPipelineTask;
-class QueryPlanAnalyzer;
 class PartitionSQLGenerator;
+class QueryPlanAnalyzer;
 
-//! TaskPartitioner: Creates distributed tasks from logical plans
-//! Uses intelligent partitioning strategies (row group, range, or modulo)
+// Creates distributed tasks from logical plans.
+// Uses intelligent partitioning strategies (row group, range, or modulo).
 class TaskPartitioner {
 public:
 	TaskPartitioner(Connection &conn, QueryPlanAnalyzer &analyzer, PartitionSQLGenerator &sql_gen);
 
-	//! Extract distributed pipeline tasks from logical plan
-	//! Creates tasks with intelligent partitioning based on plan analysis
+	// Extract distributed pipeline tasks from logical plan.
+	// Creates tasks with intelligent partitioning based on plan analysis.
 	vector<DistributedPipelineTask> ExtractPipelineTasks(LogicalOperator &logical_plan, const string &base_sql,
 	                                                     idx_t num_workers);
 

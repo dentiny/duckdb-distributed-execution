@@ -6,7 +6,7 @@
 
 namespace duckdb {
 
-// Forward declaration
+// Forward declaration.
 struct PlanPartitionInfo;
 
 // Generates SQL queries with partition predicates for distributed execution.

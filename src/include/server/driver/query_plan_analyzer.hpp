@@ -10,8 +10,7 @@ namespace duckdb {
 // Forward declarations.
 struct PlanPartitionInfo;
 
-// QueryPlanAnalyzer: Analyzes DuckDB logical/physical plans to extract
-// information for distributed execution planning
+// Analyzes DuckDB logical/physical plans to extract information for distributed execution planning.
 class QueryPlanAnalyzer {
 public:
 	explicit QueryPlanAnalyzer(Connection &conn_p);

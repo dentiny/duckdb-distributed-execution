@@ -38,26 +38,28 @@ struct PlanPartitionInfo {
 	idx_t rows_per_partition = 0;
 };
 
-// Pipeline Tasks: struct which represents a distributed pipeline task.
+// Struct which represents a distributed pipeline task.
 // This represents one unit of work that will be executed on a worker.
 struct DistributedPipelineTask {
-	// Unique task identifier
+	// Unique task identifier.
 	idx_t task_id = 0;
 
-	// Total number of parallel tasks
+	// Total number of parallel tasks.
 	idx_t total_tasks = 0;
 
-	// The SQL query to execute (for now, we'll start with SQL-based approach)
-	// Future: serialize actual Pipeline structure
+	// The SQL query to execute (for now, we'll start with SQL-based approach).
+	// Future: serialize actual Pipeline structure.
 	string task_sql;
 
-	// Task-specific metadata
-	idx_t row_group_start = 0; // Starting row group for this task (inclusive)
-	idx_t row_group_end = 0;   // Ending row group for this task (exclusive)
+	// Task-specific metadata.
+	// Starting row group for this task (inclusive).
+	idx_t row_group_start = 0;
+	// Ending row group for this task (exclusive).
+	idx_t row_group_end = 0;
 };
 
-// Distributed executor that partitions data and sends to workers
-// Now uses extracted modules for plan analysis, SQL generation, task partitioning, and result merging
+// Distributed executor that partitions data and sends to workers.
+// Now uses extracted modules for plan analysis, SQL generation, task partitioning, and result merging.
 class DistributedExecutor {
 public:
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p);
