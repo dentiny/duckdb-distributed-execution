@@ -87,14 +87,14 @@ PlanPartitionInfo QueryPlanAnalyzer::ExtractPartitionInfo(LogicalOperator &logic
 			// Extract basic information
 			info.operator_type = physical_plan.type;
 			info.estimated_cardinality = physical_plan.estimated_cardinality;
-			info.natural_parallelism = physical_plan.EstimatedThreadCount();
+			info.estimated_parallelism = physical_plan.EstimatedThreadCount();
 
-			DUCKDB_LOG_DEBUG(
-			    db_instance,
-			    StringUtil::Format("🔍 [PLAN ANALYSIS] operator=%s estimated_cardinality=%llu natural_parallelism=%llu",
-			                       PhysicalOperatorToString(info.operator_type),
-			                       static_cast<long long unsigned>(info.estimated_cardinality),
-			                       static_cast<long long unsigned>(info.natural_parallelism)));
+			DUCKDB_LOG_DEBUG(db_instance,
+			                 StringUtil::Format(
+			                     "🔍 [PLAN ANALYSIS] operator=%s estimated_cardinality=%llu estimated_parallelism=%llu",
+			                     PhysicalOperatorToString(info.operator_type),
+			                     static_cast<long long unsigned>(info.estimated_cardinality),
+			                     static_cast<long long unsigned>(info.estimated_parallelism)));
 
 			// Analyze if we can use intelligent partitioning
 			// For now, we support intelligent partitioning for:

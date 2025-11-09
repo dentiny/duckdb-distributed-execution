@@ -89,23 +89,23 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 
 	// STEP 1: Query what DuckDB would naturally do for parallelism
 	// This helps us understand DuckDB's intelligent parallelization decisions
-	idx_t natural_parallelism = plan_analyzer->QueryNaturalParallelism(*logical_plan);
+	idx_t estimated_parallelism = plan_analyzer->QueryNaturalParallelism(*logical_plan);
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("📊 [STEP1] DuckDB would naturally use %llu parallel tasks",
-	                                                 static_cast<long long unsigned>(natural_parallelism)));
+	                                                 static_cast<long long unsigned>(estimated_parallelism)));
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("📊 [STEP1] We have %llu workers available",
 	                                                 static_cast<long long unsigned>(workers.size())));
-	if (natural_parallelism > 0 && natural_parallelism != workers.size()) {
+	if (estimated_parallelism > 0 && estimated_parallelism != workers.size()) {
 		DUCKDB_LOG_DEBUG(
 		    db_instance,
 		    StringUtil::Format("📊 [STEP1] NOTE: Mismatch between natural parallelism (%llu) and worker count (%llu)",
-		                       static_cast<long long unsigned>(natural_parallelism),
+		                       static_cast<long long unsigned>(estimated_parallelism),
 		                       static_cast<long long unsigned>(workers.size())));
 	}
 
 	DUCKDB_LOG_DEBUG(db_instance,
-	                 StringUtil::Format("[DIST] ExecuteDistributed: '%s' workers=%llu natural_parallelism=%llu", sql,
+	                 StringUtil::Format("[DIST] ExecuteDistributed: '%s' workers=%llu estimated_parallelism=%llu", sql,
 	                                    static_cast<long long unsigned>(workers.size()),
-	                                    static_cast<long long unsigned>(natural_parallelism)));
+	                                    static_cast<long long unsigned>(estimated_parallelism)));
 
 	// STEP 2: Extract partition information from physical plan
 	// This analyzes the plan to determine if we can use intelligent partitioning

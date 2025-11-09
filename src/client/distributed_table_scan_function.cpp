@@ -84,49 +84,52 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	                                        static_cast<long long unsigned>(local_state.offset)));
 	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
-	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(),
-	                               /*offset=*/local_state.offset, &expected_types);
+	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), local_state.offset,
+	                               &expected_types);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL,
 		                StringUtil::Format("Distributed table scan error: %s", result->GetError()));
 	}
 
 	auto data_chunk = result->Fetch();
-	if (data_chunk && data_chunk->size() > 0) {
-		// Handle projection pushdown: copy data from fetched chunk to output
-		// Note: We use Copy instead of Reference to handle column reordering correctly.
-		// The output DataChunk schema is determined by the query projection,
-		// while data_chunk has the table's natural column order.
-		output.SetCardinality(data_chunk->size());
 
-		if (local_state.column_ids.empty()) {
-			// No projection - copy all columns in order
-			for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); col_idx++) {
-				VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(), 0, 0);
-			}
-		} else {
-			// Projection pushdown - copy only requested columns in correct order
-			for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size();
-			     out_idx++) {
-				auto col_idx = local_state.column_ids[out_idx];
-				if (col_idx < data_chunk->ColumnCount()) {
-					VectorOperations::Copy(data_chunk->data[col_idx], output.data[out_idx], data_chunk->size(), 0, 0);
-				}
-			}
-		}
-		local_state.offset += data_chunk->size();
-
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetched %llu rows, new offset: %llu",
-		                                        static_cast<long long unsigned>(data_chunk->size()),
-		                                        static_cast<long long unsigned>(local_state.offset)));
-	} else {
-		// No more data - mark as finished.
+	// No more data, and mark as finished.
+	if (data_chunk == nullptr || data_chunk->size() == 0) {
 		output.SetCardinality(0);
 		local_state.finished = true;
 		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Scan finished for table: %s (total rows: %llu)",
 		                                        bind_data.remote_table_name,
 		                                        static_cast<long long unsigned>(local_state.offset)));
+		return;
 	}
+
+	// Handle projection pushdown: copy data from fetched chunk to output.
+	// Note: We use Copy instead of Reference to handle column reordering correctly.
+	// The output DataChunk schema is determined by the query projection, while data_chunk has the table's natural
+	// column order.
+	output.SetCardinality(data_chunk->size());
+
+	// If there's no projection, just copy all columns in order.
+	if (local_state.column_ids.empty()) {
+		for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); col_idx++) {
+			VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(), 0, 0);
+		}
+	}
+	// Otherwise, perform projection pushdown, and copy only requested columns in the correct order.
+	else {
+		for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size(); ++out_idx) {
+			auto col_idx = local_state.column_ids[out_idx];
+			if (col_idx < data_chunk->ColumnCount()) {
+				VectorOperations::Copy(data_chunk->data[col_idx], output.data[out_idx], data_chunk->size(),
+				                       /*source_offset=*/0, /*target_offset=*/0);
+			}
+		}
+	}
+	local_state.offset += data_chunk->size();
+
+	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetched %llu rows, new offset: %llu",
+	                                        static_cast<long long unsigned>(data_chunk->size()),
+	                                        static_cast<long long unsigned>(local_state.offset)));
 }
 
 } // namespace duckdb

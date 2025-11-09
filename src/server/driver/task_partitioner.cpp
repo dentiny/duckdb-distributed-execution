@@ -28,9 +28,9 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 		auto partition_info = analyzer.ExtractPartitionInfo(logical_plan, num_workers);
 
 		// Determine how many tasks to create
-		// For now, we use max(natural_parallelism, num_workers)
+		// For now, we use max(estimated_parallelism, num_workers)
 		// This allows us to over-subscribe workers if DuckDB wants more parallelism
-		idx_t num_tasks = partition_info.natural_parallelism;
+		idx_t num_tasks = partition_info.estimated_parallelism;
 		if (num_tasks == 0 || num_tasks < num_workers) {
 			// DuckDB doesn't think this needs parallelism, but we have workers available
 			// Use num_workers anyway for distributed execution
@@ -38,7 +38,7 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 			DUCKDB_LOG_DEBUG(
 			    db_instance,
 			    StringUtil::Format("🔧 [PIPELINE] Natural parallelism %llu < workers %llu, promoting to %llu tasks",
-			                       static_cast<long long unsigned>(partition_info.natural_parallelism),
+			                       static_cast<long long unsigned>(partition_info.estimated_parallelism),
 			                       static_cast<long long unsigned>(num_workers),
 			                       static_cast<long long unsigned>(num_tasks)));
 		} else if (num_tasks > num_workers * 4) {
