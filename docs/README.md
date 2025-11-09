@@ -277,6 +277,7 @@ SELECT duckherder_clear_query_recorder_stats();
 - [ ] GROUP BY distributed execution
 - [ ] JOIN optimization (broadcast/co-partition)
 - [ ] ORDER BY support (distributed sort)
+- [ ] Driver collect patition and execition stats
 
 ### Multi-Client Support
 - [ ] Query server authentication and authorization
