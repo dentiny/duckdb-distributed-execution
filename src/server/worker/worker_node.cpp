@@ -110,7 +110,6 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	// Execute the partition and return results.
 	distributed::DistributedResponse response;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
-	auto &db_instance = *db->instance.get();
 	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
 
 	if (!reader) {
@@ -125,12 +124,9 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 // Execute a pipeline task.
 arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
                                               unique_ptr<QueryResult> &result) {
-	auto &db_instance = *db->instance.get();
-	auto start_time = std::chrono::high_resolution_clock::now();
-
 	arrow::Status exec_status = arrow::Status::OK();
 
-	// STEP 3 NOTE: Plan-based execution temporarily disabled
+	// TODO(hjiang): Plan-based execution temporarily disabled
 	//
 	// Issue: We're currently serializing LOGICAL plans (which have already been optimized
 	// on the coordinator). When workers deserialize and try to execute them, DuckDB
@@ -151,9 +147,6 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 	if (!result && !req.sql().empty()) {
 		result = conn->Query(req.sql());
 	}
-
-	// Record execution time.
-	auto end_time = std::chrono::high_resolution_clock::now();
 
 	// Validate result.
 	if (!result) {

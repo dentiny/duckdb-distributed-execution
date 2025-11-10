@@ -54,7 +54,7 @@ struct DistributedPipelineTask {
 	// Task-specific metadata.
 	// Starting row group for this task (inclusive).
 	idx_t row_group_start = 0;
-	// Ending row group for this task (exclusive).
+	// Ending row group for this task (inclusive).
 	idx_t row_group_end = 0;
 };
 

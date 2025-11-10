@@ -13,14 +13,12 @@ TaskPartitioner::TaskPartitioner(Connection &conn_p, QueryPlanAnalyzer &analyzer
 
 vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOperator &logical_plan,
                                                                       const string &base_sql, idx_t num_workers) {
-
-	auto &db_instance = *conn.context->db;
 	vector<DistributedPipelineTask> tasks;
 
 	// Extract row group information for DuckDB-aligned partitioning
 	auto row_group_info = analyzer.ExtractRowGroupInfo(logical_plan);
 
-	// First, get partition info (cardinality, natural parallelism)
+	// First, get partition info (i.e., cardinality, estimated parallelism)
 	auto partition_info = analyzer.ExtractPartitionInfo(logical_plan, num_workers);
 
 	// Determine how many tasks to create
@@ -30,27 +28,28 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 	if (num_tasks == 0 || num_tasks < num_workers) {
 		// DuckDB doesn't think this needs parallelism, but we have workers available
 		// Use num_workers anyway for distributed execution
+		// TODO(hjiang): Revisit later, if duckdb doesn't think we need parallelism, we simply execute inline.
 		num_tasks = num_workers;
 	} else if (num_tasks > num_workers * 4) {
 		// Cap at 4x workers to avoid too many small tasks
 		num_tasks = num_workers * 4;
 	}
 
-	// Prefer row group-based partitioning when available
+	// Case-1: row group-based partitioning is available.
 	if (row_group_info.valid && row_group_info.total_row_groups > 0) {
 		// Assign row groups to tasks
 		// If we have more tasks than row groups, some tasks will be empty
 		// If we have fewer tasks than row groups, distribute row groups across tasks
-		idx_t row_groups_per_task = (row_group_info.total_row_groups + num_tasks - 1) / num_tasks;
+		const idx_t row_groups_per_task = (row_group_info.total_row_groups + num_tasks - 1) / num_tasks;
 
-		for (idx_t i = 0; i < num_tasks; i++) {
+		for (idx_t idx = 0; idx < num_tasks; ++idx) {
 			DistributedPipelineTask task;
-			task.task_id = i;
+			task.task_id = idx;
 			task.total_tasks = num_tasks;
 
 			// Calculate which row groups this task processes
-			idx_t rg_start = i * row_groups_per_task;
-			idx_t rg_end = std::min((i + 1) * row_groups_per_task, row_group_info.total_row_groups);
+			const idx_t rg_start = idx * row_groups_per_task;
+			const idx_t rg_end = std::min((idx + 1) * row_groups_per_task, row_group_info.total_row_groups);
 
 			// Skip empty tasks
 			if (rg_start >= row_group_info.total_row_groups) {
@@ -58,8 +57,9 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 			}
 
 			// Calculate row boundaries based on row group boundaries
-			idx_t row_start = rg_start * row_group_info.rows_per_row_group;
-			idx_t row_end = std::min(rg_end * row_group_info.rows_per_row_group, partition_info.estimated_cardinality);
+			const idx_t row_start = rg_start * row_group_info.rows_per_row_group;
+			const idx_t row_end =
+			    std::min(rg_end * row_group_info.rows_per_row_group, partition_info.estimated_cardinality);
 
 			// Create SQL with row group-aligned rowid filter
 			string where_condition =
@@ -70,21 +70,25 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 			task.row_group_end = rg_end - 1;
 			tasks.emplace_back(std::move(task));
 		}
-	} else if (partition_info.supports_intelligent_partitioning && partition_info.estimated_cardinality > 0) {
-		// Fallback to intelligent range-based partitioning
+
+		return tasks;
+	}
+
+	// Case-2: perform range-based partition.
+	if (partition_info.supports_intelligent_partitioning && partition_info.estimated_cardinality > 0) {
 		idx_t rows_per_task = (partition_info.estimated_cardinality + num_tasks - 1) / num_tasks;
 
-		for (idx_t i = 0; i < num_tasks; i++) {
+		for (idx_t idx = 0; idx < num_tasks; ++idx) {
 			DistributedPipelineTask task;
-			task.task_id = i;
+			task.task_id = idx;
 			task.total_tasks = num_tasks;
 
 			// Calculate rowid range for this task
-			idx_t row_start = i * rows_per_task;
-			idx_t row_end = std::min((i + 1) * rows_per_task - 1, partition_info.estimated_cardinality);
+			const idx_t row_start = idx * rows_per_task;
+			idx_t row_end = std::min((idx + 1) * rows_per_task - 1, partition_info.estimated_cardinality);
 
 			// For last task, extend to include any remainder
-			if (i == num_tasks - 1) {
+			if (idx == num_tasks - 1) {
 				row_end = partition_info.estimated_cardinality;
 			}
 
@@ -97,26 +101,29 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 			task.row_group_start = row_start / DEFAULT_ROW_GROUP_SIZE;
 			task.row_group_end = row_end / DEFAULT_ROW_GROUP_SIZE;
 
-			tasks.push_back(std::move(task));
+			tasks.emplace_back(std::move(task));
 		}
-	} else {
-		// Fallback: modulo-based partitioning
-		for (idx_t i = 0; i < num_tasks; i++) {
-			DistributedPipelineTask task;
-			task.task_id = i;
-			task.total_tasks = num_tasks;
 
-			// Create SQL with modulo filter
-			string where_condition =
-			    StringUtil::Format("(rowid %% %llu) = %llu", static_cast<long long unsigned>(num_tasks),
-			                       static_cast<long long unsigned>(i));
-			task.task_sql = sql_generator.InjectWhereClause(base_sql, where_condition);
+		return tasks;
+	}
 
-			task.row_group_start = 0; // Unknown for modulo partitioning
-			task.row_group_end = 0;
+	// Case-3: Fallback to modulo-based partitioning.
+	// TODO(hjiang): For small tables, we shouldn't delegate to worker nodes.
+	for (idx_t idx = 0; idx < num_tasks; ++idx) {
+		DistributedPipelineTask task;
+		task.task_id = idx;
+		task.total_tasks = num_tasks;
 
-			tasks.push_back(std::move(task));
-		}
+		// Create SQL with modulo filter
+		string where_condition = StringUtil::Format(
+		    "(rowid %% %llu) = %llu", static_cast<long long unsigned>(num_tasks), static_cast<long long unsigned>(idx));
+		task.task_sql = sql_generator.InjectWhereClause(base_sql, where_condition);
+
+		// Row group information unknown for modulo partitioning.
+		task.row_group_start = 0;
+		task.row_group_end = 0;
+
+		tasks.emplace_back(std::move(task));
 	}
 
 	return tasks;
