@@ -42,6 +42,8 @@ public:
 	                    std::unique_ptr<arrow::flight::FlightMessageReader> reader,
 	                    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) override;
 
+	DatabaseInstance &GetDatabaseInstance();
+
 private:
 	// Process different request types using protobuf messages directly.
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);

@@ -17,10 +17,11 @@ struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 };
 
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
-	DistributedTableScanLocalState() : finished(false) {
+	DistributedTableScanLocalState() : finished(false), offset(0) {
 	}
 	bool finished;
 	vector<column_t> column_ids;
+	idx_t offset; // Track current offset for fetching data
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
@@ -61,10 +62,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	auto &bind_data = data.bind_data->Cast<DistributedTableScanBindData>();
 	auto &local_state = data.local_state->Cast<DistributedTableScanLocalState>();
 
-	auto &db = DatabaseInstance::GetDatabase(context);
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Distributed scan executing for table: %s from server: %s",
-	                                        bind_data.remote_table_name, bind_data.server_url));
-
 	if (local_state.finished) {
 		output.SetCardinality(0);
 		return;
@@ -72,46 +69,53 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	auto &client = DistributedClient::GetInstance();
 	if (!client.TableExists(bind_data.remote_table_name)) {
-		DUCKDB_LOG_DEBUG(db, StringUtil::Format("Table %s does not exist on server", bind_data.remote_table_name));
 		output.SetCardinality(0);
 		local_state.finished = true;
 		return;
 	}
 
-	DUCKDB_LOG_DEBUG(db, StringUtil::Format("Fetching data from server for table: %s", bind_data.remote_table_name));
-	// Get the expected types from the table schema to handle special types like ENUM
+	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
-	auto result =
-	    client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), /*offset=*/0, &expected_types);
-
+	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), local_state.offset,
+	                               &expected_types);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::INTERNAL, "Distributed table scan error: " + result->GetError());
+		throw Exception(ExceptionType::INTERNAL,
+		                StringUtil::Format("Distributed table scan error: %s", result->GetError()));
 	}
 
 	auto data_chunk = result->Fetch();
-	if (data_chunk && data_chunk->size() > 0) {
-		// Handle projection pushdown: output may have fewer columns than the fetched data
-		// We need to only reference the columns that are requested
-		if (local_state.column_ids.empty() || output.ColumnCount() == data_chunk->ColumnCount()) {
-			// No projection or all columns requested
-			output.Reference(*data_chunk);
-		} else {
-			// Projection pushdown: only reference the requested columns
-			for (idx_t out_idx = 0; out_idx < output.ColumnCount(); out_idx++) {
-				auto col_idx = local_state.column_ids[out_idx];
-				if (col_idx < data_chunk->ColumnCount()) {
-					output.data[out_idx].Reference(data_chunk->data[col_idx]);
-				}
-			}
-			output.SetCardinality(data_chunk->size());
-		}
 
-		// TODO(hjiang): For simplicity, we only return one chunk.
-		local_state.finished = true;
-	} else {
+	// No more data, and mark as finished.
+	if (data_chunk == nullptr || data_chunk->size() == 0) {
 		output.SetCardinality(0);
 		local_state.finished = true;
+		return;
 	}
+
+	// Handle projection pushdown: copy data from fetched chunk to output.
+	// Note: We use Copy instead of Reference to handle column reordering correctly.
+	// The output DataChunk schema is determined by the query projection, while data_chunk has the table's natural
+	// column order.
+	output.SetCardinality(data_chunk->size());
+
+	// If there's no projection, just copy all columns in order.
+	if (local_state.column_ids.empty()) {
+		for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); ++col_idx) {
+			VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(),
+			                       /*source_offset=*/0, /*target_offset=*/0);
+		}
+	}
+	// Otherwise, perform projection pushdown, and copy only requested columns in the correct order.
+	else {
+		for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size(); ++out_idx) {
+			auto col_idx = local_state.column_ids[out_idx];
+			if (col_idx < data_chunk->ColumnCount()) {
+				VectorOperations::Copy(data_chunk->data[col_idx], output.data[out_idx], data_chunk->size(),
+				                       /*source_offset=*/0, /*target_offset=*/0);
+			}
+		}
+	}
+	local_state.offset += data_chunk->size();
 }
 
 } // namespace duckdb

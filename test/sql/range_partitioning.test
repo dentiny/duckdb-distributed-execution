@@ -1,0 +1,164 @@
+# name: test/sql/range_partitioning.test
+# description: Test RANGE-BASED partitioning - evenly divides data across workers using rowid ranges
+# group: [sql]
+
+# Partitioning method: rowid BETWEEN range_start AND range_end (not aligned with row groups)
+# Dataset: 10,000 rows distributed evenly (2,500 rows per worker with 4 workers)
+
+require duckherder
+
+# Start distributed server with 4 workers
+statement ok
+SELECT duckherder_start_local_server(8815, 4);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+statement ok
+USE dh;
+
+statement ok
+PRAGMA duckherder_register_remote_table('large_table', 'large_table');
+
+statement ok
+DROP TABLE IF EXISTS large_table;
+
+statement ok
+CREATE TABLE large_table (
+    id INTEGER,
+    value INTEGER,
+    category VARCHAR,
+    amount DECIMAL(10,2)
+);
+
+# Insert 10,000 rows to trigger intelligent range-based partitioning
+# This ensures:
+# - Natural parallelism > 0
+# - Intelligent partitioning: YES
+# - Range-based partition predicates (rowid BETWEEN x AND y)
+statement ok
+INSERT INTO large_table 
+SELECT 
+    i,
+    i * 100,
+    CASE (i % 5)
+        WHEN 0 THEN 'electronics'
+        WHEN 1 THEN 'clothing'
+        WHEN 2 THEN 'food'
+        WHEN 3 THEN 'books'
+        ELSE 'furniture'
+    END,
+    (i * 1.5)::DECIMAL(10,2)
+FROM range(10000) t(i);
+
+# Test 1: Verify partition boundary rows (each from different worker)
+# Expected partitioning:
+#   Worker 0: rowid BETWEEN 0 AND 2499       (2500 rows)
+#   Worker 1: rowid BETWEEN 2500 AND 4999    (2500 rows)
+#   Worker 2: rowid BETWEEN 5000 AND 7499    (2500 rows)
+#   Worker 3: rowid BETWEEN 7500 AND 9999    (2500 rows)
+
+# Test rows from Worker 0 boundary
+query IIII
+SELECT id, value, category, amount FROM large_table WHERE id = 0;
+----
+0	0	electronics	0.00
+
+# Test rows from Worker 1 boundary
+query IIII
+SELECT id, value, category, amount FROM large_table WHERE id = 2500;
+----
+2500	250000	electronics	3750.00
+
+# Test rows from Worker 2 boundary
+query IIII
+SELECT id, value, category, amount FROM large_table WHERE id = 5000;
+----
+5000	500000	electronics	7500.00
+
+# Test rows from Worker 3 boundary
+query IIII
+SELECT id, value, category, amount FROM large_table WHERE id = 7500;
+----
+7500	750000	electronics	11250.00
+
+# Test last row
+query IIII
+SELECT id, value, category, amount FROM large_table WHERE id = 9999;
+----
+9999	999900	furniture	14998.50
+
+# Test 2: Verify rows from first partition (Worker 0: 0-2499)
+query III
+SELECT id, value, category FROM large_table WHERE id = 100;
+----
+100	10000	electronics
+
+# Test 3: Verify rows from second partition (Worker 1: 2500-4999)
+query III
+SELECT id, value, category FROM large_table WHERE id = 3000;
+----
+3000	300000	electronics
+
+# Test 4: Verify rows from third partition (Worker 2: 5000-7499)
+query III
+SELECT id, value, category FROM large_table WHERE id = 6000;
+----
+6000	600000	electronics
+
+# Test 5: Verify rows from fourth partition (Worker 3: 7500-9999)
+query III
+SELECT id, value, category FROM large_table WHERE id = 9000;
+----
+9000	900000	electronics
+
+# Test 6: Filtered query across multiple partitions
+query III
+SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 5002;
+----
+5002	500200	food
+
+query III
+SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 5007;
+----
+5007	500700	food
+
+# Test 7: Verify specific rows spanning partition boundaries
+query III
+SELECT id, value, category FROM large_table WHERE id = 2498;
+----
+2498	249800	books
+
+query III
+SELECT id, value, category FROM large_table WHERE id = 2502;
+----
+2502	250200	food
+
+# Test 8: Query with predicate on non-key column
+query III
+SELECT id, value, category FROM large_table WHERE value = 500000;
+----
+5000	500000	electronics
+
+# Test 9: Category-based filtering across all partitions
+query II
+SELECT id, category FROM large_table WHERE category = 'books' AND id = 8003;
+----
+8003	books
+
+query II
+SELECT id, category FROM large_table WHERE category = 'books' AND id = 8013;
+----
+8013	books
+
+# Test 10: Verify end boundaries
+query III
+SELECT id, value, category FROM large_table WHERE id = 9995;
+----
+9995	999500	electronics
+
+query III
+SELECT id, value, category FROM large_table WHERE id = 9999;
+----
+9999	999900	furniture
+

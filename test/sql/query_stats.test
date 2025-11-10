@@ -4,7 +4,6 @@
 
 require duckherder
 
-# Start distributed server in background thread
 statement ok
 SELECT duckherder_start_local_server(8815);
 

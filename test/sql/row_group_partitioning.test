@@ -1,0 +1,143 @@
+# name: test/sql/row_group_partitioning.test
+# description: Test ROW GROUP-BASED partitioning - COMPREHENSIVE test with multiple row groups
+# group: [sql]
+
+# Partitioning method: rowid BETWEEN rg_start AND rg_end (aligned with row group boundaries)
+# Dataset: 500,000 rows creating ~4 row groups (comprehensive but slow - see row_group_partitioning_medium.test for faster version)
+# Row group size: 122,880 rows/group
+
+require duckherder
+
+# Start distributed server with 4 workers
+statement ok
+SELECT duckherder_start_local_server(8815, 4);
+
+# Attach distributed database
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+statement ok
+USE dh;
+
+# Register the table for distributed access
+statement ok
+PRAGMA duckherder_register_remote_table('multi_rg_table', 'multi_rg_table');
+
+# Create a table with 500,000 rows (should create ~4 row groups)
+# Each row group = 122,880 rows
+# 500,000 / 122,880 = ~4.07 row groups
+statement ok
+CREATE TABLE multi_rg_table (
+    id INTEGER,
+    value INTEGER,
+    category VARCHAR,
+    description VARCHAR
+);
+
+# Insert 500,000 rows
+statement ok
+INSERT INTO multi_rg_table 
+SELECT 
+    i AS id,
+    i * 100 AS value,
+    CASE (i % 5)
+        WHEN 0 THEN 'electronics'
+        WHEN 1 THEN 'clothing'
+        WHEN 2 THEN 'food'
+        WHEN 3 THEN 'books'
+        ELSE 'other'
+    END AS category,
+    'Item ' || i::VARCHAR AS description
+FROM range(0, 500000) t(i);
+
+# Test 1: Verify data integrity with aggregations
+query III
+SELECT 
+    COUNT(*) as total_rows,
+    MIN(id) as min_id,
+    MAX(id) as max_id
+FROM multi_rg_table;
+----
+500000	0	499999
+
+# Test 2: Verify category distribution
+query IT
+SELECT category, COUNT(*) as cnt
+FROM multi_rg_table
+GROUP BY category
+ORDER BY category;
+----
+books	100000
+clothing	100000
+electronics	100000
+food	100000
+other	100000
+
+# Test 3: Query specific row group boundaries
+# Row group 0: rows 0-122879
+query II
+SELECT COUNT(*), SUM(value) 
+FROM multi_rg_table 
+WHERE id >= 0 AND id < 122880;
+----
+122880	754968576000
+
+# Test 4: Query spanning multiple row groups
+# Rows 100000-200000 span row groups 0 and 1
+query III
+SELECT COUNT(*), MIN(id), MAX(id)
+FROM multi_rg_table
+WHERE id >= 100000 AND id < 200000;
+----
+100000	100000	199999
+
+# Test 5: Verify SUM across all rows
+query I
+SELECT SUM(value) FROM multi_rg_table;
+----
+12499975000000
+
+# Test 6: Point queries in different row groups
+# Row in group 0
+query IIT
+SELECT id, value, category 
+FROM multi_rg_table 
+WHERE id = 50000;
+----
+50000	5000000	electronics
+
+# Test 7: Aggregation with GROUP BY across multiple row groups  
+query IT
+SELECT category, COUNT(*) as cnt
+FROM multi_rg_table
+WHERE id >= 0 AND id < 400000
+GROUP BY category
+ORDER BY category;
+----
+books	80000
+clothing	80000
+electronics	80000
+food	80000
+other	80000
+
+# Test 8: Verify row count by row group boundaries
+# This tests that partitioning respects row group boundaries
+query I
+SELECT COUNT(*) 
+FROM multi_rg_table 
+WHERE id >= 0 AND id < 122880;
+----
+122880
+
+query I
+SELECT COUNT(*) 
+FROM multi_rg_table 
+WHERE id >= 122880 AND id < 245760;
+----
+122880
+
+# Test 9: Verify total with DISTINCT
+query I
+SELECT COUNT(DISTINCT id) FROM multi_rg_table;
+----
+500000

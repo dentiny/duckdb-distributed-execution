@@ -1,16 +1,30 @@
-# Duckherder - DuckDB Remote Execution Extension
+# Duckherder - DuckDB Remote and Distributed Execution Extension
 
-Duckherder is a DuckDB extension build upon [storage extension](https://github.com/duckdb/duckdb/pull/6066), which enables remote query execution on server using [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) for data transfer. It allows you to seamlessly work with remote tables as if they were local, while maintaining DuckDB's familiar SQL interface.
+Duckherder is a DuckDB extension built upon [storage extension](https://github.com/duckdb/duckdb/pull/6066) that enables (certain) distributed query execution across multiple worker nodes using [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) for efficient data transfer. It allows you to seamlessly work with remote tables and execute queries in parallel across distributed workers while maintaining DuckDB's familiar SQL interface.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Distributed Execution System](#distributed-execution-system)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Roadmap](#roadmap)
 
 ## Overview
 
-Duckherder implements a client-server architecture where:
-- **Client (Duckherder)**: Coordinates queries and manages remote table references
-- **Server (Duckling)**: Executes queries on local data and returns results via Arrow Flight
+Duckherder implements a client-server architecture with distributed query execution:
+- **Client (Duckherder)**: Coordinates queries, manages remote table references, and initiates distributed execution
+- **Server (Duckling)**: Consists of two components:
+  - **Driver Node**: Analyzes queries, creates partition plans, and coordinates worker execution
+  - **Worker Nodes**: Execute partitioned queries on local data and return results via Arrow Flight
+- **Distributed Executor**: Runs on the driver node, partitions queries based on DuckDB's physical plan analysis, and distributes tasks to workers
 
-The extension transparently handles query routing, allowing you to run CREATE, SELECT, INSERT, DELETE, and ALTER operations on remote tables through DuckDB storage extension.
+The extension transparently handles query routing, allowing you to run CREATE, SELECT, INSERT, DELETE, and ALTER operations on remote tables through DuckDB's storage extension interface.
 
 ## Architecture
+
+### High-Level System Architecture
 
 ```
 ┌─────────────────────────────────────────┐
@@ -28,12 +42,108 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 ┌──────────────┴──────────────────────────┐
 │         Server DuckDB Instance(s)       │
 │  ┌───────────────────────────────────┐  │
-│  │   Duckling Storage                │  │
+│  │   Driver Node                     │  │
+│  │   - Distributed executor          │  │
+│  │   - Query plan analysis           │  │
+│  │   - Task coordination             │  │
+│  └───────────┬───────────────────────┘  │
+│              │                          │
+│  ┌───────────┴───────────────────────┐  │
+│  │   Worker Nodes                    │  │
 │  │   - Actual table data             │  │
-│  │   - Query execution               │  │
+│  │   - Partitioned execution         │  │
+│  │   - Result streaming              │  │
 │  └───────────────────────────────────┘  │
 └─────────────────────────────────────────┘
 ```
+
+### Distributed Execution Flow
+
+```
+┌─────────────┐
+│ COORDINATOR │ Extract query plan
+└──────┬──────┘
+       │
+       ├─ Phase 1: Extract & validate logical plan
+       ├─ Phase 2: Analyze DuckDB's natural parallelism
+       ├─ Phase 3: Create partition plans
+       ├─ Phase 4: Prepare result schema
+       │
+       ├──────────┬──────────┬──────────┐
+       ▼          ▼          ▼          ▼
+   ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
+   │WORKER 0│ │WORKER 1│ │WORKER 2│ │WORKER N│
+   └───┬────┘ └───┬────┘ └───┬────┘ └───┬────┘
+       │          │          │          │
+       │ Execute  │ Execute  │ Execute  │ Execute
+       │ partition│ partition│ partition│ partition
+       │ (Local)  │ (Local)  │ (Local)  │ (Local)
+       │          │          │          │
+       └──────────┴──────────┴──────────┘
+              │
+              ▼
+       ┌─────────────┐
+       │ COORDINATOR │  Merge results
+       │   Combine   │  Smart aggregation
+       │  Finalize   │  Return final result
+       └─────────────┘
+```
+
+## Distributed Execution System
+
+### Partitioning Strategy
+
+The distributed executor analyzes DuckDB's physical plan to create optimal partitions:
+
+#### 1. **Natural Parallelism Analysis**
+- Queries `EstimatedThreadCount()` from DuckDB's physical plan
+- Understands how many parallel tasks DuckDB would naturally create
+- Extracts cardinality and operator information
+
+#### 2. **Partition Strategy Selection (Priority Order)**
+
+The system uses a **three-tier hierarchy** to select the optimal partitioning strategy:
+
+| Priority | Condition | Strategy | Example Predicate | Notes |
+|----------|-----------|----------|-------------------|-------|
+| **1st** | Row groups detected (cardinality known) | **ROW GROUP-BASED** | `WHERE rowid BETWEEN 0 AND 245759` | Assigns whole row groups to tasks |
+| **2nd** | TABLE_SCAN + ≥100 rows/worker | **RANGE-BASED** | `WHERE rowid BETWEEN 0 AND 2499` | Contiguous ranges, not row-group-aligned |
+| **3rd** | Small table / Non-TABLE_SCAN / Unknown cardinality | **MODULO** | `WHERE (rowid % node id) = 0` | Fallback for all other cases. TODO(hjiang): for small table no need to distribute, should directly execute on driver node. |
+
+**Row group-based partitioning (preferred):**
+- **Aligned with DuckDB's storage structure** (122,880 rows per group)
+- Tasks process complete row groups (e.g., Task 0: groups [0,1], Task 1: groups [2,3])
+- Optimal cache locality and I/O efficiency
+- Respects DuckDB's natural parallelism boundaries
+
+**Range-based partitioning (fallback):**
+- Used when row groups can't be detected but cardinality is known
+- Contiguous row access
+- Not aligned with row group boundaries
+
+**Modulo partitioning (final fallback):**
+- Scattered row access (poor cache locality)
+- Works for any table size and operator type
+- Simple and always correct
+
+#### 3. **How Row Group-Based Partitioning Works**
+
+When row groups are detected (the common case), the system:
+- Calculates total row groups: `cardinality / 122,880`
+- Assigns whole row groups to tasks (e.g., Task 0 gets groups [0,1], Task 1 gets groups [2,3])
+- Converts row group ranges to rowid ranges: `rowid BETWEEN (rg_start * 122880) AND (rg_end * 122880 - 1)`
+- Workers scan complete row groups for optimal performance
+
+### DuckDB Thread Model → Distributed Model Mapping
+
+| DuckDB Thread Model | Distributed Model | Implementation |
+|---------------------|-------------------|----------------|
+| Thread | Worker Node | Physical machine/process |
+| LocalSinkState | Worker Result | QueryResult → Arrow batches |
+| Sink() | Worker Execute | `HandleExecutePartition()` |
+| GlobalSinkState | ColumnDataCollection | Coordinator's result collection |
+| Combine() | CollectAndMergeResults() | Merging worker outputs |
+| Finalize() | Return MaterializedQueryResult | Final result to client |
 
 ## Installation
 
@@ -55,7 +165,8 @@ git clone --recurse-submodules https://github.com/dentiny/duckdb-distributed-exe
 cd duckdb-distributed-execution
 
 # Build with release mode.
-export VCPKG_TOOLCHAIN_PATH=/home/vscode/vcpkg/scripts/buildsystems/vcpkg.cmake && CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) make
+export VCPKG_TOOLCHAIN_PATH=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) make
 ```
 
 The build produces:
@@ -86,13 +197,13 @@ ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815
 ### Register and Unregister Remote Tables
 
 ```sql
--- Register a remote table mapping
+-- Register a remote table mapping.
 -- Syntax: duckherder_register_remote_table(local_table_name, remote_table_name)
 PRAGMA duckherder_register_remote_table('my_table', 'my_table');
 
 -- Unregister a remote table mapping.
 -- Syntax: duckherder_unregister_remote_table(local_table_name)
-PRGAMA duckherder_unregister_remote_table('my_table');
+PRAGMA duckherder_unregister_remote_table('my_table');
 ```
 
 ### Load Extensions on Server
@@ -103,7 +214,7 @@ SELECT duckherder_load_extension('parquet');
 SELECT duckherder_load_extension('json');
 ```
 
-### Example on Working with Remote Tables
+### Working with Remote Tables
 
 ```sql
 -- Create a table.
@@ -120,13 +231,16 @@ INSERT INTO dh.users VALUES
     (2, 'Bob', 'bob@example.com', '2024-01-16 14:20:00'),
     (3, 'Charlie', 'charlie@example.com', '2024-01-17 09:15:00');
 
--- Create an index
+-- Create an index.
 CREATE INDEX idx_users_email ON dh.users(email);
 
--- Simple SELECT
+-- Simple SELECT.
 SELECT * FROM dh.users WHERE id > 1;
 
--- Drop a table
+-- Distributed query, which automatically gets parallelized.
+SELECT * FROM dh.large_table WHERE value > 1000;
+
+-- Drop a table.
 DROP TABLE dh.users;
 ```
 
@@ -142,31 +256,53 @@ SELECT duckherder_clear_query_recorder_stats();
 
 ## Roadmap
 
-### Table and index operations
+### Table and Index Operations
 - [x] Create/drop table
 - [x] Create/drop index
 - [x] Update table schema
 - [ ] Update index
 
-### Data type support
+### Data Type Support
 - [x] Primitive type support
 - [ ] List type support
 - [ ] Map type support
 - [ ] Struct type support
 
-### Distributed query support
-- [ ] Distribute query on server side via `duckling` storage extension
+### Distributed Query Support
+- [x] Intelligent query partitioning
+- [x] Natural parallelism analysis
+- [x] Row group-aligned execution
+- [x] Range-based partitioning
+- [ ] Aggregation pushdown (infrastructure ready)
+- [ ] GROUP BY distributed execution
+- [ ] JOIN optimization (broadcast/co-partition)
+- [ ] ORDER BY support (distributed sort)
+- [ ] Driver collect patition and execition stats
 
-### Multi-client support
-- [ ] Query server authN and authZ
-- [ ] Multiple duckdb instance support on servers
+### Multi-Client Support
+- [ ] Query server authentication and authorization
+- [ ] Multiple DuckDB instance support on servers
+- [ ] Connection pooling
 
-### Full write support
+### Full Write Support
 - [ ] Persist server-side database file
-- [ ] Recover duckdb instance via database file
+- [ ] Recover DuckDB instance via database file
+- [ ] Transaction support
 
-### Additional feature support
-- [x] Query timing stats
-- [ ] Query resource consumption
+### Additional Features
+- [x] Query timing statistics
+- [x] Comprehensive execution logging
 - [x] Support official extension install and load
+- [ ] Query resource consumption tracking
 - [ ] Support community extension install and load
+- [ ] Dynamic worker scaling
+- [ ] Query result caching
+- [ ] Util function to register driver node and worker nodes
+
+## Contributing
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for development guidelines.
+
+## License
+
+See [LICENSE](../LICENSE) for license information.
