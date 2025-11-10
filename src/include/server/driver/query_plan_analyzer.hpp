@@ -1,9 +1,9 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/planner/logical_operator.hpp"
-#include "duckdb/execution/physical_operator.hpp"
 
 namespace duckdb {
 

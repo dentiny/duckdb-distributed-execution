@@ -59,7 +59,6 @@ struct DistributedPipelineTask {
 };
 
 // Distributed executor that partitions data and sends to workers.
-// Now uses extracted modules for plan analysis, SQL generation, task partitioning, and result merging.
 class DistributedExecutor {
 public:
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p);

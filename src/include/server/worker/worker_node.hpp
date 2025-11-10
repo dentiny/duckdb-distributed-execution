@@ -42,7 +42,7 @@ private:
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
 	                                 idx_t *row_count = nullptr);
 
-	// Execute a pipeline task with state tracking.
+	// Execute a pipeline task.
 	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, unique_ptr<QueryResult> &result);
 
 	string worker_id;

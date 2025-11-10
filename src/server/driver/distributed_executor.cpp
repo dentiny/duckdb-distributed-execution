@@ -61,18 +61,8 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	}
 
 	// Phase 1: Plan extraction and validation
-	unique_ptr<LogicalOperator> logical_plan;
-	try {
-		logical_plan = conn.ExtractPlan(sql);
-	} catch (std::exception &ex) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("Failed to extract logical plan for query '%s': %s", sql, ex.what()));
-		return nullptr;
-	}
+	unique_ptr<LogicalOperator> logical_plan = conn.ExtractPlan(sql);
 	if (logical_plan == nullptr) {
-		DUCKDB_LOG_WARN(
-		    db_instance,
-		    StringUtil::Format("ExtractPlan returned null for query '%s', falling back to local execution", sql));
 		return nullptr;
 	}
 	if (!plan_analyzer->IsSupportedPlan(*logical_plan)) {
@@ -196,7 +186,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	}
 
 	if (result_streams.empty()) {
-		DUCKDB_LOG_WARN(db_instance, "No tasks were successfully executed");
 		return nullptr;
 	}
 

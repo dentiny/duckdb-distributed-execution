@@ -371,7 +371,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
 
-	// AGGREGATION PUSHDOWN FIX:
+	// TODO(hjiang): aggregate pushdown fix:
 	// Check if table_name actually contains full SQL (temp hack for testing)
 	// In the future, this should come from a dedicated field in the protocol
 	string sql;

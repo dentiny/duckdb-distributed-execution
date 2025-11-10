@@ -1,10 +1,11 @@
 #include "server/driver/query_plan_analyzer.hpp"
+
 #include "server/driver/distributed_executor.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
-#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
-#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
@@ -35,12 +36,12 @@ bool QueryPlanAnalyzer::IsSupportedPlan(LogicalOperator &op) {
 idx_t QueryPlanAnalyzer::QueryEstimatedParallelism(LogicalOperator &logical_plan) {
 	idx_t estimated_threads = 0;
 
-	// Wrap physical plan generation in a transaction (mimicking DuckDB's internal behavior)
-	// This is necessary because physical plan generation requires an active transaction context
+	// Wrap physical plan generation in a transaction (mimicking DuckDB's internal behavior).
+	// This is necessary because physical plan generation requires an active transaction context.
 	conn.context->RunFunctionInTransaction([&]() {
-		auto cloned_plan = logical_plan.Copy(*conn.context);
+		auto cloned_logical_plan = logical_plan.Copy(*conn.context);
 		PhysicalPlanGenerator generator(*conn.context);
-		auto physical_plan = generator.Plan(std::move(cloned_plan));
+		auto physical_plan = generator.Plan(std::move(cloned_logical_plan));
 
 		// Query the estimated thread count.
 		// This tells us how many parallel tasks DuckDB would naturally create.
