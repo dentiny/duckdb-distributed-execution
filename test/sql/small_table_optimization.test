@@ -1,0 +1,125 @@
+# name: test/sql/small_table_optimization.test
+# description: Test that small tables (< 1 row group) execute on a single node without distribution
+# group: [sql]
+
+# Small tables with < 122,880 rows (DEFAULT_ROW_GROUP_SIZE) should not be distributed
+# to avoid unnecessary network overhead. They should execute on a single worker.
+
+require duckherder
+
+# Start distributed server with 4 workers
+statement ok
+SELECT duckherder_start_local_server(8815, 4);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+statement ok
+USE dh;
+
+# Test 1: Very small table (100 rows) - should NOT distribute
+statement ok
+PRAGMA duckherder_register_remote_table('tiny_table', 'tiny_table');
+
+statement ok
+DROP TABLE IF EXISTS tiny_table;
+
+statement ok
+CREATE TABLE tiny_table (
+    id INTEGER,
+    value INTEGER,
+    category VARCHAR
+);
+
+# Insert only 100 rows (much less than one row group)
+statement ok
+INSERT INTO tiny_table 
+SELECT 
+    i,
+    i * 10,
+    CASE (i % 3)
+        WHEN 0 THEN 'A'
+        WHEN 1 THEN 'B'
+        ELSE 'C'
+    END
+FROM range(100) t(i);
+
+# Verify all rows are accessible
+query I
+SELECT COUNT(*) FROM tiny_table;
+----
+100
+
+# Verify specific rows
+query III
+SELECT id, value, category FROM tiny_table WHERE id = 0;
+----
+0	0	A
+
+query III
+SELECT id, value, category FROM tiny_table WHERE id = 50;
+----
+50	500	C
+
+query III
+SELECT id, value, category FROM tiny_table WHERE id = 99;
+----
+99	990	A
+
+# Test 2: Small table (1,000 rows) - should NOT distribute
+statement ok
+PRAGMA duckherder_register_remote_table('small_table', 'small_table');
+
+statement ok
+DROP TABLE IF EXISTS small_table;
+
+statement ok
+CREATE TABLE small_table (
+    id INTEGER,
+    value INTEGER
+);
+
+statement ok
+INSERT INTO small_table 
+SELECT i, i * 100
+FROM range(1000) t(i);
+
+query I
+SELECT COUNT(*) FROM small_table;
+----
+1000
+
+# Test aggregation on small table
+query I
+SELECT SUM(value) FROM small_table;
+----
+49950000
+
+# Test 3: Medium-small table (10,000 rows) - should NOT distribute
+statement ok
+PRAGMA duckherder_register_remote_table('medium_small_table', 'medium_small_table');
+
+statement ok
+DROP TABLE IF EXISTS medium_small_table;
+
+statement ok
+CREATE TABLE medium_small_table (
+    id INTEGER,
+    value INTEGER
+);
+
+statement ok
+INSERT INTO medium_small_table 
+SELECT i, i * 10
+FROM range(10000) t(i);
+
+query I
+SELECT COUNT(*) FROM medium_small_table;
+----
+10000
+
+# Test filtering on medium-small table
+query II
+SELECT id, value FROM medium_small_table WHERE id = 5000;
+----
+5000	50000

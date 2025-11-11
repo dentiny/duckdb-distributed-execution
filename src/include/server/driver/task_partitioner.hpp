@@ -23,6 +23,13 @@ public:
 	                                                     idx_t num_workers);
 
 private:
+	// Determine if distribution is needed based on table size.
+	// Returns false for small tables (< 1 row group) that should execute on a single node.
+	bool ShouldDistribute(idx_t estimated_cardinality) const;
+
+	// Create a single non-distributed task.
+	vector<DistributedPipelineTask> CreateSingleTask(const string &base_sql);
+
 	Connection &conn;
 	QueryPlanAnalyzer &analyzer;
 	PartitionSQLGenerator &sql_generator;

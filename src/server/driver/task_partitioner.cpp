@@ -11,6 +11,27 @@ TaskPartitioner::TaskPartitioner(Connection &conn_p, QueryPlanAnalyzer &analyzer
     : conn(conn_p), analyzer(analyzer_p), sql_generator(sql_gen_p) {
 }
 
+bool TaskPartitioner::ShouldDistribute(idx_t estimated_cardinality) const {
+	// Don't distribute small tables, which contains less than one row group.
+	// These execute more efficiently on a single node without distribution overhead.
+	if (estimated_cardinality > 0 && estimated_cardinality < DEFAULT_ROW_GROUP_SIZE) {
+		return false;
+	}
+	return true;
+}
+
+vector<DistributedPipelineTask> TaskPartitioner::CreateSingleTask(const string &base_sql) {
+	vector<DistributedPipelineTask> tasks;
+	DistributedPipelineTask task;
+	task.task_id = 0;
+	task.total_tasks = 1;
+	task.task_sql = base_sql;
+	task.row_group_start = 0;
+	task.row_group_end = 0;
+	tasks.emplace_back(std::move(task));
+	return tasks;
+}
+
 vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOperator &logical_plan,
                                                                       const string &base_sql, idx_t num_workers) {
 	vector<DistributedPipelineTask> tasks;
@@ -76,6 +97,11 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 
 	// Case-2: perform range-based partition.
 	if (partition_info.supports_intelligent_partitioning && partition_info.estimated_cardinality > 0) {
+		// For small tables (less than one row group), don't distribute - use single task
+		if (!ShouldDistribute(partition_info.estimated_cardinality)) {
+			return CreateSingleTask(base_sql);
+		}
+
 		idx_t rows_per_task = (partition_info.estimated_cardinality + num_tasks - 1) / num_tasks;
 
 		for (idx_t idx = 0; idx < num_tasks; ++idx) {
@@ -108,7 +134,11 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 	}
 
 	// Case-3: Fallback to modulo-based partitioning.
-	// TODO(hjiang): For small tables, we shouldn't delegate to worker nodes.
+	// For small tables (less than one row group), don't distribute.
+	if (!ShouldDistribute(partition_info.estimated_cardinality)) {
+		return CreateSingleTask(base_sql);
+	}
+
 	for (idx_t idx = 0; idx < num_tasks; ++idx) {
 		DistributedPipelineTask task;
 		task.task_id = idx;
