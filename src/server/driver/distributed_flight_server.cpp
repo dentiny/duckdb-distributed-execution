@@ -87,9 +87,9 @@ string DistributedFlightServer::GetLocation() const {
 	return StringUtil::Format("grpc://%s:%d", host, port);
 }
 
-arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallContext &context,
-                                                const arrow::flight::Action &action,
-                                                std::unique_ptr<arrow::flight::ResultStream> *result) {
+arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerCallContext &context,
+                                                    const arrow::flight::Action &action,
+                                                    std::unique_ptr<arrow::flight::ResultStream> *result) {
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(action.body->data(), action.body->size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
@@ -146,9 +146,20 @@ arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallC
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
-                                             const arrow::flight::Ticket &ticket,
-                                             std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
+arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallContext &context,
+                                                const arrow::flight::Action &action,
+                                                std::unique_ptr<arrow::flight::ResultStream> *result) {
+	try {
+		return DoActionImpl(context, action, result);
+	} catch (const std::exception &e) {
+		std::cerr << "[FATAL] DoAction exception: " << e.what() << std::endl;
+		return arrow::Status::UnknownError(StringUtil::Format("DoAction exception: %s", e.what()));
+	}
+}
+
+arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCallContext &context,
+                                                 const arrow::flight::Ticket &ticket,
+                                                 std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
@@ -165,9 +176,20 @@ arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallCont
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallContext &context,
-                                             std::unique_ptr<arrow::flight::FlightMessageReader> reader,
-                                             std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
+arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
+                                             const arrow::flight::Ticket &ticket,
+                                             std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
+	try {
+		return DoGetImpl(context, ticket, stream);
+	} catch (const std::exception &e) {
+		std::cerr << "[FATAL] DoGet exception: " << e.what() << std::endl;
+		return arrow::Status::UnknownError(StringUtil::Format("DoGet exception: %s", e.what()));
+	}
+}
+
+arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCallContext &context,
+                                                 std::unique_ptr<arrow::flight::FlightMessageReader> reader,
+                                                 std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 	auto descriptor = reader->descriptor();
 	std::string table_name;
 	if (!descriptor.path.empty()) {
@@ -197,6 +219,17 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 	ARROW_RETURN_NOT_OK(writer->WriteMetadata(*buffer));
 
 	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallContext &context,
+                                             std::unique_ptr<arrow::flight::FlightMessageReader> reader,
+                                             std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
+	try {
+		return DoPutImpl(context, std::move(reader), std::move(writer));
+	} catch (const std::exception &e) {
+		std::cerr << "[FATAL] DoPut exception: " << e.what() << std::endl;
+		return arrow::Status::UnknownError(StringUtil::Format("DoPut exception: %s", e.what()));
+	}
 }
 
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
