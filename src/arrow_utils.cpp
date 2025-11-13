@@ -373,10 +373,11 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = value;
 				break;
 			default:
-				throw NotImplementedException("Unsupported physical type for DECIMAL");
+				throw NotImplementedException("Unsupported physical type %s for DECIMAL %s",
+				                              TypeIdToString(physical_type), type.ToString());
 			}
 		} else {
-			throw NotImplementedException("Unsupported Arrow decimal type");
+			throw NotImplementedException("Unsupported Arrow decimal type %s", arrow_array->type()->ToString());
 		}
 		break;
 	}
