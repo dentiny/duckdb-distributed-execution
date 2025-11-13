@@ -400,9 +400,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			// Store the index in the DuckDB vector based on its physical type.
 			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
 		} else {
-			// Handle case where ENUM is sent as its physical type (UINT8/UINT16/UINT32)
-			// This can happen when the server doesn't have the ENUM type definition.
-			// In this case, the Arrow array contains the raw enum index values.
+			// Handle case where ENUM is sent as its physical type (UINT8/UINT16/UINT32).
 			int64_t enum_idx = 0;
 			switch (arrow_array->type_id()) {
 			case arrow::Type::UINT8: {
@@ -424,7 +422,6 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				throw NotImplementedException("ENUM type must be backed by Arrow DICTIONARY type or matching physical type (UINT8/UINT16/UINT32)");
 			}
 
-			// Store the enum index directly (it's already in the correct format)
 			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
 		}
 		break;
