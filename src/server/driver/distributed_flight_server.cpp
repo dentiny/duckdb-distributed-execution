@@ -441,6 +441,9 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	}
 
 	if (!result->client_properties.client_context) {
+		if (!conn || !conn->context) {
+			return arrow::Status::Invalid("On HandleScanTable, server connection is not initialized");
+		}
 		result->client_properties.client_context = conn->context.get();
 	}
 
@@ -496,6 +499,11 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
                                                           std::shared_ptr<arrow::RecordBatchReader> &reader,
                                                           idx_t *row_count) {
+	// Ensure client_context is set before conversion.
+	if (!result.client_properties.client_context) {
+		return arrow::Status::Invalid("On QueryResultToArrow, client context not initialized");
+	}
+
 	// Create Arrow schema from DuckDB types.
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
