@@ -21,7 +21,6 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 	auto enum_type = LogicalType::ENUM("mood", enum_values, 3);
 
 	SECTION("Convert from Arrow STRING") {
-		// This is the case that was failing in CI
 		arrow::StringBuilder builder;
 		REQUIRE(builder.Append("happy").ok());
 		REQUIRE(builder.Append("sad").ok());
@@ -30,11 +29,11 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 		std::shared_ptr<arrow::Array> arrow_array;
 		REQUIRE(builder.Finish(&arrow_array).ok());
 
-		// Convert to DuckDB vector
+		// Convert to DuckDB vector.
 		Vector duckdb_vector(enum_type, 3);
 		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 3);
 
-		// Verify the conversion
+		// Verify the conversion.
 		auto data_ptr = FlatVector::GetData<uint8_t>(duckdb_vector);
 		REQUIRE(data_ptr[0] == 0); // 'happy'
 		REQUIRE(data_ptr[1] == 1); // 'sad'
@@ -58,7 +57,6 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 	}
 
 	SECTION("Convert from Arrow DICTIONARY") {
-		// Create dictionary array
 		arrow::StringBuilder dict_builder;
 		REQUIRE(dict_builder.Append("happy").ok());
 		REQUIRE(dict_builder.Append("sad").ok());
@@ -67,7 +65,7 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 		std::shared_ptr<arrow::Array> dict_array;
 		REQUIRE(dict_builder.Finish(&dict_array).ok());
 
-		// Create indices array
+		// Create indices array.
 		arrow::UInt8Builder indices_builder;
 		REQUIRE(indices_builder.Append(0).ok()); // happy
 		REQUIRE(indices_builder.Append(2).ok()); // neutral
@@ -76,7 +74,7 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 		std::shared_ptr<arrow::Array> indices_array;
 		REQUIRE(indices_builder.Finish(&indices_array).ok());
 
-		// Create dictionary array
+		// Create dictionary array.
 		auto dict_type = std::make_shared<arrow::DictionaryType>(arrow::uint8(), arrow::utf8());
 		auto arrow_array = std::make_shared<arrow::DictionaryArray>(dict_type, indices_array, dict_array);
 
@@ -144,7 +142,7 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 }
 
 TEST_CASE("Arrow ENUM with larger physical types", "[arrow][enum]") {
-	// Create ENUM with more than 256 values (requires UINT16)
+	// Create ENUM with more than 256 values (requires UINT16).
 	Vector enum_values(LogicalType::VARCHAR, 300);
 	for (idx_t idx = 0; idx < 300; idx++) {
 		auto str = "value_" + std::to_string(idx);
