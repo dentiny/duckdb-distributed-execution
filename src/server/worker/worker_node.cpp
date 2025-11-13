@@ -290,7 +290,10 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 	// - Coordinator receives and combines all worker outputs (GlobalState semantics)
 	// - This maintains the same aggregation pattern as thread-level parallelism
 
-	auto &db_instance = *db->instance.get();
+	if (!result.client_properties.client_context) {
+		return arrow::Status::Invalid("QueryResultToArrow, worker client context is not initialized");
+	}
+
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
