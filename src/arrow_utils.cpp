@@ -73,8 +73,9 @@ string GetDictionaryString(const std::shared_ptr<arrow::Array> &dictionary, int6
 		return str_array->GetString(idx);
 	}
 
-	throw NotImplementedException("Unsupported Arrow dictionary value type: %s (type_id: %d). Expected STRING or LARGE_STRING",
-	                              dictionary->type()->ToString(), static_cast<int>(dictionary->type_id()));
+	throw NotImplementedException(
+	    "Unsupported Arrow dictionary value type: %s (type_id: %d). Expected STRING or LARGE_STRING",
+	    dictionary->type()->ToString(), static_cast<int>(dictionary->type_id()));
 }
 
 // Util function to store an unsigned integer value in a DuckDB vector based on physical type.
