@@ -56,7 +56,8 @@ int64_t GetDictionaryIndex(const std::shared_ptr<arrow::Array> &indices, idx_t a
 		return static_cast<int64_t>(int_array->Value(arrow_idx));
 	}
 	default:
-		throw NotImplementedException("Unsupported Arrow dictionary index type");
+		throw NotImplementedException("Unsupported Arrow dictionary index type: %s (type_id: %d)",
+		                              indices->type()->ToString(), static_cast<int>(indices->type_id()));
 	}
 }
 
@@ -67,9 +68,13 @@ string GetDictionaryString(const std::shared_ptr<arrow::Array> &dictionary, int6
 		return str_array->GetString(idx);
 	}
 
-	D_ASSERT(dictionary->type_id() == arrow::Type::STRING);
-	auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
-	return str_array->GetString(idx);
+	if (dictionary->type_id() == arrow::Type::STRING) {
+		auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
+		return str_array->GetString(idx);
+	}
+
+	throw NotImplementedException("Unsupported Arrow dictionary value type: %s (type_id: %d). Expected STRING or LARGE_STRING",
+	                              dictionary->type()->ToString(), static_cast<int>(dictionary->type_id()));
 }
 
 // Util function to store an unsigned integer value in a DuckDB vector based on physical type.
@@ -86,7 +91,8 @@ void StoreEnumValue(Vector &duckdb_vector, idx_t duck_idx, const LogicalType &ty
 		FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(value);
 		break;
 	default:
-		throw NotImplementedException("Unsupported physical type for ENUM");
+		throw NotImplementedException("Unsupported physical type %s for ENUM type %s (enum value: %lld)",
+		                              TypeIdToString(physical_type), type.ToString(), value);
 	}
 }
 
