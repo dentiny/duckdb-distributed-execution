@@ -45,6 +45,17 @@ public:
 	DatabaseInstance &GetDatabaseInstance();
 
 private:
+	// Implementation methods for Flight RPC handlers, without exception handling.
+	arrow::Status DoActionImpl(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
+	                           std::unique_ptr<arrow::flight::ResultStream> *result);
+
+	arrow::Status DoGetImpl(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
+	                        std::unique_ptr<arrow::flight::FlightDataStream> *stream);
+
+	arrow::Status DoPutImpl(const arrow::flight::ServerCallContext &context,
+	                        std::unique_ptr<arrow::flight::FlightMessageReader> reader,
+	                        std::unique_ptr<arrow::flight::FlightMetadataWriter> writer);
+
 	// Process different request types using protobuf messages directly.
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
 
