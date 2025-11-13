@@ -418,8 +418,39 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				enum_idx = int_array->Value(arrow_idx);
 				break;
 			}
-			default:
-				throw NotImplementedException("ENUM type must be backed by Arrow DICTIONARY type or matching physical type (UINT8/UINT16/UINT32)");
+			case arrow::Type::UINT64: {
+				auto int_array = std::static_pointer_cast<arrow::UInt64Array>(arrow_array);
+				enum_idx = static_cast<int64_t>(int_array->Value(arrow_idx));
+				break;
+			}
+			case arrow::Type::INT8: {
+				auto int_array = std::static_pointer_cast<arrow::Int8Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT16: {
+				auto int_array = std::static_pointer_cast<arrow::Int16Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT32: {
+				auto int_array = std::static_pointer_cast<arrow::Int32Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT64: {
+				auto int_array = std::static_pointer_cast<arrow::Int64Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			default: {
+				auto arrow_type_name = arrow_array->type()->ToString();
+				throw NotImplementedException("ENUM type received unexpected Arrow type: %s (type_id: %d). "
+				                              "Expected DICTIONARY or integer types (INT8/16/32/64 or UINT8/16/32/64). "
+				                              "DuckDB ENUM type: %s",
+				                              arrow_type_name, static_cast<int>(arrow_array->type_id()),
+				                              type.ToString());
+			}
 			}
 
 			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
