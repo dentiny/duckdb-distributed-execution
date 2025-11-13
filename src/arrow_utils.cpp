@@ -407,6 +407,29 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 
 			// Store the index in the DuckDB vector based on its physical type.
 			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
+		} else if (arrow_array->type_id() == arrow::Type::STRING ||
+		           arrow_array->type_id() == arrow::Type::LARGE_STRING) {
+			// Handle case where ENUM is sent as plain STRING/LARGE_STRING
+			// This can happen when the server sends ENUM values as their string representation
+			string str_val;
+			if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
+				auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
+				str_val = str_array->GetString(arrow_idx);
+			} else {
+				auto str_array = std::static_pointer_cast<arrow::StringArray>(arrow_array);
+				str_val = str_array->GetString(arrow_idx);
+			}
+
+			// Convert the string to a DuckDB ENUM index.
+			string_t enum_str {str_val};
+			int64_t enum_idx = EnumType::GetPos(type, enum_str);
+
+			if (enum_idx < 0) {
+				throw InvalidInputException("ENUM value '%s' not found in type %s", str_val, type.ToString());
+			}
+
+			// Store the index in the DuckDB vector based on its physical type.
+			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
 		} else {
 			// Handle case where ENUM is sent as its physical type (UINT8/UINT16/UINT32).
 			int64_t enum_idx = 0;
