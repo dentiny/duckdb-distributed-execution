@@ -112,3 +112,8 @@ add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
 target_link_libraries(
   test_distributed_flight ${EXTENSION_NAME} Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+
+add_executable(test_arrow_enum_conversion unit/test_arrow_enum_conversion.cpp
+                                          src/arrow_utils.cpp)
+target_link_libraries(test_arrow_enum_conversion duckdb_static
+                      Arrow::arrow_static)
