@@ -56,7 +56,8 @@ int64_t GetDictionaryIndex(const std::shared_ptr<arrow::Array> &indices, idx_t a
 		return static_cast<int64_t>(int_array->Value(arrow_idx));
 	}
 	default:
-		throw NotImplementedException("Unsupported Arrow dictionary index type");
+		throw NotImplementedException("Unsupported Arrow dictionary index type: %s (type_id: %d)",
+		                              indices->type()->ToString(), static_cast<int>(indices->type_id()));
 	}
 }
 
@@ -67,9 +68,14 @@ string GetDictionaryString(const std::shared_ptr<arrow::Array> &dictionary, int6
 		return str_array->GetString(idx);
 	}
 
-	D_ASSERT(dictionary->type_id() == arrow::Type::STRING);
-	auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
-	return str_array->GetString(idx);
+	if (dictionary->type_id() == arrow::Type::STRING) {
+		auto str_array = std::static_pointer_cast<arrow::StringArray>(dictionary);
+		return str_array->GetString(idx);
+	}
+
+	throw NotImplementedException(
+	    "Unsupported Arrow dictionary value type: %s (type_id: %d). Expected STRING or LARGE_STRING",
+	    dictionary->type()->ToString(), static_cast<int>(dictionary->type_id()));
 }
 
 // Util function to store an unsigned integer value in a DuckDB vector based on physical type.
@@ -86,7 +92,8 @@ void StoreEnumValue(Vector &duckdb_vector, idx_t duck_idx, const LogicalType &ty
 		FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(value);
 		break;
 	default:
-		throw NotImplementedException("Unsupported physical type for ENUM");
+		throw NotImplementedException("Unsupported physical type %s for ENUM type %s (enum value: %lld)",
+		                              TypeIdToString(physical_type), type.ToString(), value);
 	}
 }
 
@@ -373,10 +380,11 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = value;
 				break;
 			default:
-				throw NotImplementedException("Unsupported physical type for DECIMAL");
+				throw NotImplementedException("Unsupported physical type %s for DECIMAL %s",
+				                              TypeIdToString(physical_type), type.ToString());
 			}
 		} else {
-			throw NotImplementedException("Unsupported Arrow decimal type");
+			throw NotImplementedException("Unsupported Arrow decimal type %s", arrow_array->type()->ToString());
 		}
 		break;
 	}
@@ -418,8 +426,39 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				enum_idx = int_array->Value(arrow_idx);
 				break;
 			}
-			default:
-				throw NotImplementedException("ENUM type must be backed by Arrow DICTIONARY type or matching physical type (UINT8/UINT16/UINT32)");
+			case arrow::Type::UINT64: {
+				auto int_array = std::static_pointer_cast<arrow::UInt64Array>(arrow_array);
+				enum_idx = static_cast<int64_t>(int_array->Value(arrow_idx));
+				break;
+			}
+			case arrow::Type::INT8: {
+				auto int_array = std::static_pointer_cast<arrow::Int8Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT16: {
+				auto int_array = std::static_pointer_cast<arrow::Int16Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT32: {
+				auto int_array = std::static_pointer_cast<arrow::Int32Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			case arrow::Type::INT64: {
+				auto int_array = std::static_pointer_cast<arrow::Int64Array>(arrow_array);
+				enum_idx = int_array->Value(arrow_idx);
+				break;
+			}
+			default: {
+				auto arrow_type_name = arrow_array->type()->ToString();
+				throw NotImplementedException("ENUM type received unexpected Arrow type: %s (type_id: %d). "
+				                              "Expected DICTIONARY or integer types (INT8/16/32/64 or UINT8/16/32/64). "
+				                              "DuckDB ENUM type: %s",
+				                              arrow_type_name, static_cast<int>(arrow_array->type_id()),
+				                              type.ToString());
+			}
 			}
 
 			StoreEnumValue(duckdb_vector, duck_idx, type, enum_idx);
