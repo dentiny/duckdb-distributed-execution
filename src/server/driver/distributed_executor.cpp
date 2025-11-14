@@ -71,14 +71,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		return nullptr;
 	}
 
-	// Query what DuckDB would naturally do for parallelism
-	// This helps us understand DuckDB's intelligent parallelization decisions
-	const idx_t estimated_parallelism = plan_analyzer->QueryEstimatedParallelism(*logical_plan);
-
-	// Extract partition information from physical plan
-	// This analyzes the plan to determine if we can use intelligent partitioning
-	PlanPartitionInfo partition_info = plan_analyzer->ExtractPartitionInfo(*logical_plan, workers.size());
-
 	// Analyze query to determine merge strategy
 	QueryPlanAnalyzer::QueryAnalysis query_analysis = plan_analyzer->AnalyzeQuery(*logical_plan);
 
@@ -191,14 +183,6 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 
 	// Phase 5: Combine results.
 	auto result = result_merger->CollectAndMergeResults(result_streams, names, types, query_analysis);
-
-	idx_t total_rows = 0;
-	if (result) {
-		auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
-		if (materialized) {
-			total_rows = materialized->RowCount();
-		}
-	}
 
 	return result;
 }
