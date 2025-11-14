@@ -24,7 +24,6 @@ DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : ho
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);
-	auto &db_instance = *db->instance.get();
 
 	// Attach duckling storage extension.
 	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
@@ -530,7 +529,7 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 	}
 
 	// Create RecordBatchReader from collected batches.
-	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(batches, schema));
+	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(std::move(batches), std::move(schema)));
 	if (row_count) {
 		*row_count = count;
 	}
