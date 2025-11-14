@@ -213,8 +213,6 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 		types.emplace_back(std::move(type));
 	}
 
-	auto &db_instance = *db->instance.get();
-
 	// Begin a transaction before deserializing the plan
 	// Note: Deserialization requires an active transaction to resolve table bindings
 	conn->BeginTransaction();
@@ -295,7 +293,6 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 		result.client_properties.client_context = conn->context.get();
 	}
 
-	auto &db_instance = *db->instance.get();
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));

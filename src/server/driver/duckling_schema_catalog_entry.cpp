@@ -23,17 +23,6 @@
 
 namespace duckdb {
 
-namespace {
-vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constraint>> &constraints) {
-	vector<unique_ptr<Constraint>> res;
-	res.reserve(constraints.size());
-	for (const auto &cur_constraint : constraints) {
-		res.emplace_back(cur_constraint->Copy());
-	}
-	return res;
-}
-} // namespace
-
 DucklingSchemaCatalogEntry::DucklingSchemaCatalogEntry(Catalog &duckling_catalog_p, DatabaseInstance &db_instance_p,
                                                        SchemaCatalogEntry *schema_catalog_entry_p,
                                                        unique_ptr<CreateSchemaInfo> create_schema_info_p)
