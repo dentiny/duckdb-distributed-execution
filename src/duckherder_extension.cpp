@@ -41,6 +41,12 @@ void LoadInternal(ExtensionLoader &loader) {
 	// Register distributed server control functions, which could be local usage.
 	loader.RegisterFunction(GetStartLocalServerFunction());
 	loader.RegisterFunction(GetStopLocalServerFunction());
+
+	// Register worker management functions.
+	loader.RegisterFunction(GetWorkerCountFunction());
+	loader.RegisterFunction(GetStartLocalWorkersFunction());
+	loader.RegisterFunction(GetRegisterWorkerFunction());
+	loader.RegisterFunction(GetRegisterWorkersFunction());
 }
 
 } // namespace

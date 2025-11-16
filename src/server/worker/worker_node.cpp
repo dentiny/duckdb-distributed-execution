@@ -121,6 +121,13 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	return arrow::Status::OK();
 }
 
+arrow::Status WorkerNode::ListActions(const arrow::flight::ServerCallContext &context,
+                                      std::vector<arrow::flight::ActionType> *actions) {
+	// Return available actions on this worker node
+	actions->push_back(arrow::flight::ActionType {"execute_partition", "Execute a partitioned query task"});
+	return arrow::Status::OK();
+}
+
 // Execute a pipeline task.
 arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
                                               unique_ptr<QueryResult> &result) {
@@ -337,6 +344,14 @@ arrow::Status WorkerNodeClient::Connect() {
 	arrow::flight::Location flight_location;
 	ARROW_ASSIGN_OR_RAISE(flight_location, arrow::flight::Location::Parse(location));
 	ARROW_ASSIGN_OR_RAISE(client, arrow::flight::FlightClient::Connect(flight_location));
+	
+	// Verify the connection actually works by listing actions
+	// This forces an actual network connection and will fail if server isn't running
+	auto result = client->ListActions();
+	if (!result.ok()) {
+		return arrow::Status::IOError("Failed to connect to worker at " + location + ": " + result.status().ToString());
+	}
+	
 	return arrow::Status::OK();
 }
 

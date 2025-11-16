@@ -22,7 +22,7 @@ public:
 	// Start the server.
 	arrow::Status Start();
 
-	// Start with worker nodes
+	// Start with worker nodes (creates local worker nodes for testing/development).
 	arrow::Status StartWithWorkers(idx_t num_workers);
 
 	// Stop the server.
@@ -30,6 +30,23 @@ public:
 
 	// Get server location.
 	string GetLocation() const;
+
+	// Register a single external worker node.
+	// The worker should already be running at the specified location.
+	// Throws IOException if connection fails.
+	void RegisterWorker(const string &worker_id, const string &location);
+
+	// Register multiple external worker nodes at once.
+	// Returns the number of workers successfully registered.
+	// Does not throw on individual worker failures.
+	idx_t RegisterWorkers(const vector<std::pair<string, string>> &workers);
+
+	// Get the number of registered workers.
+	idx_t GetWorkerCount() const;
+
+	// Start N local worker nodes (for testing/development).
+	// Workers are started in background threads.
+	void StartLocalWorkers(idx_t num_workers);
 
 	// Flight RPC methods.
 	arrow::Status DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,

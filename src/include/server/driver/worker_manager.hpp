@@ -29,8 +29,14 @@ public:
 	explicit WorkerManager(DuckDB &db_ref) : db(db_ref) {
 	}
 
-	// Register a worker node.
+	// Register a single external worker node.
+	// The worker should already be running at the specified location.
 	void RegisterWorker(const string &worker_id, const string &location);
+
+	// Register multiple external worker nodes at once.
+	// Each pair in the vector is (worker_id, location).
+	// Returns the number of workers successfully registered.
+	idx_t RegisterWorkers(const vector<std::pair<string, string>> &workers);
 
 	// Get all available workers.
 	vector<WorkerInfo *> GetAvailableWorkers();
@@ -38,7 +44,8 @@ public:
 	// Get number of workers.
 	idx_t GetWorkerCount() const;
 
-	// Start N local worker nodes for testing.
+	// Start N local worker nodes (for testing/development).
+	// Workers are started in background threads.
 	void StartLocalWorkers(idx_t num_workers);
 
 private:
@@ -46,6 +53,8 @@ private:
 	vector<std::unique_ptr<WorkerNode>> local_workers; // For testing
 	mutable std::mutex mu;
 	DuckDB &db;
+	idx_t next_local_worker_id = 0;  // Track next worker ID for local workers
+	int next_local_worker_port = 9000;  // Track next available port for local workers
 };
 
 } // namespace duckdb

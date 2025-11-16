@@ -86,6 +86,34 @@ string DistributedFlightServer::GetLocation() const {
 	return StringUtil::Format("grpc://%s:%d", host, port);
 }
 
+void DistributedFlightServer::RegisterWorker(const string &worker_id, const string &location) {
+	if (!worker_manager) {
+		throw InternalException("WorkerManager not initialized");
+	}
+	worker_manager->RegisterWorker(worker_id, location);
+}
+
+idx_t DistributedFlightServer::RegisterWorkers(const vector<std::pair<string, string>> &workers) {
+	if (!worker_manager) {
+		throw InternalException("WorkerManager not initialized");
+	}
+	return worker_manager->RegisterWorkers(workers);
+}
+
+idx_t DistributedFlightServer::GetWorkerCount() const {
+	if (!worker_manager) {
+		return 0;
+	}
+	return worker_manager->GetWorkerCount();
+}
+
+void DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
+	if (!worker_manager) {
+		throw InternalException("WorkerManager not initialized");
+	}
+	worker_manager->StartLocalWorkers(num_workers);
+}
+
 arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerCallContext &context,
                                                     const arrow::flight::Action &action,
                                                     std::unique_ptr<arrow::flight::ResultStream> *result) {
