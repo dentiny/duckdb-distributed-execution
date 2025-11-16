@@ -26,7 +26,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 set(UTIL_SOURCES src/utils/catalog_utils.cpp src/utils/time_utils.cpp
-                 src/utils/thread_utils.cpp)
+                 src/utils/thread_utils.cpp src/utils/network_utils.cpp)
 
 set(CLIENT_SOURCES
     src/client/distributed_alter_table.cpp
@@ -57,6 +57,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/duckling_index_catalog_entry.cpp
     src/server/driver/duckling_schema_catalog_entry.cpp
     src/server/driver/duckling_storage.cpp
+    src/server/driver/worker_node_client.cpp
     src/server/driver/duckling_table_catalog_entry.cpp
     src/server/driver/duckling_transaction.cpp
     src/server/driver/duckling_transaction_manager.cpp

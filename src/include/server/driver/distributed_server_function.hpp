@@ -8,4 +8,9 @@ namespace duckdb {
 ScalarFunction GetStartLocalServerFunction();
 ScalarFunction GetStopLocalServerFunction();
 
+// Create scalar functions for worker management.
+ScalarFunction GetWorkerCountFunction();
+ScalarFunction GetRegisterWorkerFunction();
+ScalarFunction GetStartStandaloneWorkerFunction();
+
 } // namespace duckdb

@@ -53,17 +53,4 @@ private:
 	unique_ptr<Connection> conn;
 };
 
-// Simple client for worker communication.
-class WorkerNodeClient {
-public:
-	explicit WorkerNodeClient(const string &location);
-	arrow::Status Connect();
-	arrow::Status ExecutePartition(const distributed::ExecutePartitionRequest &request,
-	                               std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
-
-private:
-	string location;
-	std::unique_ptr<arrow::flight::FlightClient> client;
-};
-
 } // namespace duckdb

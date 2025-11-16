@@ -22,14 +22,25 @@ public:
 	// Start the server.
 	arrow::Status Start();
 
-	// Start with worker nodes
+	// Start server with worker nodes.
+	// Only used to create local worker nodes for testing and dev.
 	arrow::Status StartWithWorkers(idx_t num_workers);
+
+	// Start a number of local worker nodes in background threads.
+	// Only used for local testing and dev.
+	void StartLocalWorkers(idx_t num_workers);
 
 	// Stop the server.
 	void Shutdown();
 
 	// Get server location.
 	string GetLocation() const;
+
+	// Register an external worker node.
+	void RegisterWorker(const string &worker_id, const string &location);
+
+	// Get the number of registered workers.
+	idx_t GetWorkerCount() const;
 
 	// Flight RPC methods.
 	arrow::Status DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
