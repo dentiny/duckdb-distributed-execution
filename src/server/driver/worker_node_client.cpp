@@ -9,27 +9,6 @@ arrow::Status WorkerNodeClient::Connect() {
 	arrow::flight::Location flight_location;
 	ARROW_ASSIGN_OR_RAISE(flight_location, arrow::flight::Location::Parse(location));
 	ARROW_ASSIGN_OR_RAISE(client, arrow::flight::FlightClient::Connect(flight_location));
-	
-	// Verify the connection actually works by calling a dummy action.
-	// FlightClient::Connect() is lazy and doesn't establish a real network connection.
-	// This forces an actual network round-trip and will fail if the server isn't running.
-	// The "dummy_connect" action does nothing except confirm the worker is reachable.
-	arrow::flight::Action action;
-	action.type = "dummy_connect";
-	action.body = arrow::Buffer::FromString("");
-	
-	auto result = client->DoAction(action);
-	if (!result.ok()) {
-		return arrow::Status::IOError("Failed to connect to worker at " + location + ": " + result.status().ToString());
-	}
-	
-	// Consume at least one result to ensure the action actually executed
-	std::unique_ptr<arrow::flight::ResultStream> stream = std::move(*result);
-	auto next_result = stream->Next();
-	if (!next_result.ok()) {
-		return arrow::Status::IOError("Failed to verify worker connection at " + location + ": " + next_result.status().ToString());
-	}
-	
 	return arrow::Status::OK();
 }
 

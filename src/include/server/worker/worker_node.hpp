@@ -33,9 +33,6 @@ public:
 	arrow::Status DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
 	                    std::unique_ptr<arrow::flight::FlightDataStream> *stream) override;
 
-	arrow::Status ListActions(const arrow::flight::ServerCallContext &context,
-	                          std::vector<arrow::flight::ActionType> *actions) override;
-
 private:
 	arrow::Status HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
 	                                     distributed::DistributedResponse &resp,

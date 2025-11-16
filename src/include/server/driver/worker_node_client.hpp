@@ -14,9 +14,7 @@ class WorkerNodeClient {
 public:
 	explicit WorkerNodeClient(const string &location);
 	
-	// Connect to the worker and verify it's reachable.
-	// Uses a dummy_connect action to force an actual network round-trip.
-	// Throws if the worker is not running or unreachable.
+	// Connect to the worker.
 	arrow::Status Connect();
 	
 	// Execute a partitioned query task on the worker.

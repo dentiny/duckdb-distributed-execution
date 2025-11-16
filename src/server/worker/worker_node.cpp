@@ -63,18 +63,7 @@ string WorkerNode::GetLocation() const {
 
 arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
                                    std::unique_ptr<arrow::flight::ResultStream> *result) {
-	// Handle dummy_connect action for connection verification BEFORE parsing protobuf
-	// This action sends an empty body, so protobuf parsing would fail
-	if (action.type == "dummy_connect") {
-		distributed::DistributedResponse response;
-		response.set_success(true);
-		std::string response_data = response.SerializeAsString();
-		auto buffer = arrow::Buffer::FromString(response_data);
-		std::vector<arrow::flight::Result> results;
-		results.emplace_back(arrow::flight::Result {buffer});
-		*result = std::make_unique<arrow::flight::SimpleResultStream>(std::move(results));
-		return arrow::Status::OK();
-	}
+	
 
 	// Parse protobuf for other actions
 	distributed::DistributedRequest request;
@@ -132,14 +121,6 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 
 	*stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
 
-	return arrow::Status::OK();
-}
-
-arrow::Status WorkerNode::ListActions(const arrow::flight::ServerCallContext &context,
-                                      std::vector<arrow::flight::ActionType> *actions) {
-	// Advertise supported actions
-	actions->push_back(arrow::flight::ActionType {"execute_partition", "Execute a partitioned query task"});
-	actions->push_back(arrow::flight::ActionType {"dummy_connect", "Connection verification (no-op)"});
 	return arrow::Status::OK();
 }
 
