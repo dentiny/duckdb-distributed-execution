@@ -11,6 +11,7 @@
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
+#include <chrono>
 
 namespace duckdb {
 
@@ -58,14 +59,26 @@ struct DistributedPipelineTask {
 	idx_t row_group_end = 0;
 };
 
+// Result structure containing query result and execution metadata
+struct DistributedExecutionResult {
+	unique_ptr<QueryResult> result;
+	QueryPlanAnalyzer::MergeStrategy merge_strategy;
+	idx_t num_workers_used = 0;
+	std::chrono::milliseconds worker_execution_time;
+	
+	DistributedExecutionResult() 
+		: merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
+		  worker_execution_time(0) {}
+};
+
 // Distributed executor that partitions data and sends to workers.
 class DistributedExecutor {
 public:
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p);
 
 	// Execute a query in distributed manner.
-	// Returns nullptr if query cannot be distributed, which will fall back to local execution.
-	unique_ptr<QueryResult> ExecuteDistributed(const string &sql);
+	// Returns result with nullptr if query cannot be distributed, which will fall back to local execution.
+	DistributedExecutionResult ExecuteDistributed(const string &sql);
 
 private:
 	// Check if query can be distributed.

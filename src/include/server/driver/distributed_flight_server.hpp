@@ -6,12 +6,40 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/worker_manager.hpp"
+#include "server/driver/query_plan_analyzer.hpp"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
 #include <memory>
+#include <chrono>
+#include <mutex>
 
 namespace duckdb {
+
+// Enum for query execution modes
+enum class QueryExecutionMode {
+	LOCAL,                    // Executed locally without distribution
+	DISTRIBUTED_CONCATENATE,  // Distributed with simple concatenation
+	DISTRIBUTED_AGGREGATE,    // Distributed with aggregate merge
+	DISTRIBUTED_GROUP_BY,     // Distributed with group by merge
+	DISTRIBUTED_DISTINCT      // Distributed with distinct merge
+};
+
+// Structure to store query execution information
+struct QueryExecutionInfo {
+	string sql;                           // The SQL query
+	QueryExecutionMode execution_mode;    // How the query was executed
+	std::chrono::milliseconds query_duration;  // Total query duration
+	std::chrono::milliseconds worker_execution_time;  // Time spent by workers
+	std::chrono::system_clock::time_point execution_start_time;  // When query started
+	idx_t num_workers_used = 0;          // Number of workers used
+	
+	QueryExecutionInfo() 
+		: execution_mode(QueryExecutionMode::LOCAL),
+		  query_duration(0),
+		  worker_execution_time(0),
+		  execution_start_time(std::chrono::system_clock::now()) {}
+};
 
 // Arrow Flight-based RPC server for distributed execution.
 class DistributedFlightServer : public arrow::flight::FlightServerBase {
@@ -105,6 +133,12 @@ private:
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
 	                                 idx_t *row_count = nullptr);
 
+	// Record query execution information
+	void RecordQueryExecution(const QueryExecutionInfo &info);
+
+	// Get all recorded query executions (for debugging/inspection)
+	vector<QueryExecutionInfo> GetQueryExecutions() const;
+
 private:
 	string host;
 	int port;
@@ -112,6 +146,10 @@ private:
 	unique_ptr<Connection> conn;
 	unique_ptr<WorkerManager> worker_manager;
 	unique_ptr<DistributedExecutor> distributed_executor;
+
+	// Query execution tracking
+	mutable std::mutex query_history_mutex;
+	vector<QueryExecutionInfo> query_history;
 };
 
 } // namespace duckdb
