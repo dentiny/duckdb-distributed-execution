@@ -297,14 +297,6 @@ ScalarFunction GetRegisterWorkerFunction() {
 	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, RegisterWorker);
 }
 
-ScalarFunction GetRegisterWorkersFunction() {
-	return ScalarFunction("duckherder_register_workers",
-	                      /*arguments*/
-	                      {LogicalType::LIST(LogicalType {LogicalTypeId::VARCHAR}),
-	                       LogicalType::LIST(LogicalType {LogicalTypeId::VARCHAR})},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BIGINT}, RegisterWorkers);
-}
-
 ScalarFunction GetStartStandaloneWorkerFunction() {
 	return ScalarFunction("duckherder_start_standalone_worker",
 	                      /*arguments*/ {LogicalType {LogicalTypeId::INTEGER}},

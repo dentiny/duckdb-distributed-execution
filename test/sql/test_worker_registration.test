@@ -50,17 +50,6 @@ ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815
 statement ok
 USE dh;
 
-# Test 8: Try to register non-existent external workers (should fail gracefully)
-# Should return 0 since no workers are running at those addresses
-# Must call from main database context
-query I
-SELECT main.duckherder_register_workers(
-    ['worker_bad_1', 'worker_bad_2'],
-    ['grpc://localhost:30001', 'grpc://localhost:30002']
-);
-----
-0
-
 # Test 9: Worker count should remain unchanged (3 registered workers)
 # Must call from main database context
 query I

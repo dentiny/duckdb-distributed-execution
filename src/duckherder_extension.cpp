@@ -46,7 +46,6 @@ void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(GetWorkerCountFunction());
 	loader.RegisterFunction(GetStartLocalWorkersFunction());
 	loader.RegisterFunction(GetRegisterWorkerFunction());
-	loader.RegisterFunction(GetRegisterWorkersFunction());
 	loader.RegisterFunction(GetStartStandaloneWorkerFunction());
 }
 
