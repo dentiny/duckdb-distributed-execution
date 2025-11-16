@@ -43,16 +43,12 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 	DUCKDB_LOG_DEBUG(db_instance, "Starting %llu local worker nodes", num_workers);
 	
 	for (idx_t idx = 0; idx < num_workers; ++idx) {
-		// Use incrementing worker ID
-		string worker_id = StringUtil::Format("worker_%llu", next_local_worker_id++);
-		
-		// Get an available port dynamically
 		int port = GetAvailablePort(next_local_worker_port);
 		if (port < 0) {
-			throw IOException("Failed to find available port for worker %s", worker_id);
+			throw IOException("Failed to find available port for workers");
 		}
-		next_local_worker_port = port + 1; // Start searching from next port next time
 		
+		string worker_id = StringUtil::Format("worker_%llu", next_local_worker_id++);
 		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", port, &db);
 
 		auto status = worker->Start();
@@ -61,8 +57,6 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 		}
 
 		string location = worker->GetLocation();
-		
-		// Register without lock since we already have it
 		auto worker_info = make_uniq<WorkerInfo>(worker_id, location);
 		auto connect_status = worker_info->client->Connect();
 		if (!connect_status.ok()) {
@@ -72,6 +66,9 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 		
 		local_workers.emplace_back(std::move(worker));
 		DUCKDB_LOG_DEBUG(db_instance, "Started local worker '%s' at '%s'", worker_id, location);
+		
+		// Update port for next iteration
+		next_local_worker_port = port + 1;
 	}
 	
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully started %llu local workers (total workers: %llu)", 

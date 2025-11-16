@@ -19,6 +19,10 @@ std::unordered_map<int, unique_ptr<DistributedFlightServer>> g_test_servers;
 std::mutex g_server_mutex;
 constexpr int DEFAULT_SERVER_PORT = 8815;
 
+// Map of port -> standalone worker instance for testing registration
+std::unordered_map<int, unique_ptr<WorkerNode>> g_standalone_workers;
+std::mutex g_worker_mutex;
+
 void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	const std::lock_guard<std::mutex> lock(g_server_mutex);
 
@@ -210,13 +214,62 @@ void RegisterWorkers(DataChunk &args, ExpressionState &state, Vector &result) {
 	result.SetValue(0, Value::BIGINT(successful_count));
 }
 
+void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &result) {
+	const std::lock_guard<std::mutex> lock(g_worker_mutex);
+
+	// Get port for the standalone worker
+	auto &port_vector = args.data[0];
+	auto port_data = FlatVector::GetData<int32_t>(port_vector);
+	int port = port_data[0];
+
+	// Check if a worker already exists on this port
+	auto existing = g_standalone_workers.find(port);
+	if (existing != g_standalone_workers.end()) {
+		if (existing->second) {
+			existing->second->Shutdown();
+		}
+		g_standalone_workers.erase(existing);
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	try {
+		string worker_id = StringUtil::Format("standalone_worker_%d", port);
+		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", port, nullptr);
+		
+		auto status = worker->Start();
+		if (!status.ok()) {
+			throw Exception(ExceptionType::IO, "Failed to start standalone worker: " + status.ToString());
+		}
+
+		// Store the worker
+		auto* worker_ptr = worker.get();
+		g_standalone_workers[port] = std::move(worker);
+
+		// Start worker in background thread
+		std::thread([worker_ptr, port]() {
+			SetThreadName("StandaloneWkr");
+			auto serve_status = worker_ptr->Serve();
+			if (!serve_status.ok()) {
+				// Worker stopped, remove from map
+				std::lock_guard<std::mutex> lock(g_worker_mutex);
+				g_standalone_workers.erase(port);
+			}
+		}).detach();
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		result.Reference(Value(SUCCESS));
+	} catch (const std::exception &ex) {
+		throw Exception(ExceptionType::IO, "Failed to start standalone worker: " + string(ex.what()));
+	}
+}
+
 } // namespace
 
 ScalarFunction GetStartLocalServerFunction() {
 	auto start_func = ScalarFunction("duckherder_start_local_server",
 	                                 /*arguments*/ {LogicalType {LogicalTypeId::INTEGER}},
 	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer);
-	start_func.varargs = LogicalType::ANY;
+	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
 	return start_func;
 }
 
@@ -250,6 +303,12 @@ ScalarFunction GetRegisterWorkersFunction() {
 	                      {LogicalType::LIST(LogicalType {LogicalTypeId::VARCHAR}),
 	                       LogicalType::LIST(LogicalType {LogicalTypeId::VARCHAR})},
 	                      /*return_type=*/LogicalType {LogicalTypeId::BIGINT}, RegisterWorkers);
+}
+
+ScalarFunction GetStartStandaloneWorkerFunction() {
+	return ScalarFunction("duckherder_start_standalone_worker",
+	                      /*arguments*/ {LogicalType {LogicalTypeId::INTEGER}},
+	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartStandaloneWorker);
 }
 
 } // namespace duckdb

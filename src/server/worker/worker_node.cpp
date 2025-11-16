@@ -63,6 +63,20 @@ string WorkerNode::GetLocation() const {
 
 arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
                                    std::unique_ptr<arrow::flight::ResultStream> *result) {
+	// Handle dummy_connect action for connection verification BEFORE parsing protobuf
+	// This action sends an empty body, so protobuf parsing would fail
+	if (action.type == "dummy_connect") {
+		distributed::DistributedResponse response;
+		response.set_success(true);
+		std::string response_data = response.SerializeAsString();
+		auto buffer = arrow::Buffer::FromString(response_data);
+		std::vector<arrow::flight::Result> results;
+		results.emplace_back(arrow::flight::Result {buffer});
+		*result = std::make_unique<arrow::flight::SimpleResultStream>(std::move(results));
+		return arrow::Status::OK();
+	}
+
+	// Parse protobuf for other actions
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(action.body->data(), action.body->size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
@@ -123,8 +137,9 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 
 arrow::Status WorkerNode::ListActions(const arrow::flight::ServerCallContext &context,
                                       std::vector<arrow::flight::ActionType> *actions) {
-	// Return available actions on this worker node
+	// Advertise supported actions
 	actions->push_back(arrow::flight::ActionType {"execute_partition", "Execute a partitioned query task"});
+	actions->push_back(arrow::flight::ActionType {"dummy_connect", "Connection verification (no-op)"});
 	return arrow::Status::OK();
 }
 
@@ -345,11 +360,24 @@ arrow::Status WorkerNodeClient::Connect() {
 	ARROW_ASSIGN_OR_RAISE(flight_location, arrow::flight::Location::Parse(location));
 	ARROW_ASSIGN_OR_RAISE(client, arrow::flight::FlightClient::Connect(flight_location));
 	
-	// Verify the connection actually works by listing actions
-	// This forces an actual network connection and will fail if server isn't running
-	auto result = client->ListActions();
+	// Verify the connection actually works by calling a dummy action.
+	// FlightClient::Connect() is lazy and doesn't establish a real network connection.
+	// This forces an actual network round-trip and will fail if the server isn't running.
+	// The "dummy_connect" action does nothing except confirm the worker is reachable.
+	arrow::flight::Action action;
+	action.type = "dummy_connect";
+	action.body = arrow::Buffer::FromString("");
+	
+	auto result = client->DoAction(action);
 	if (!result.ok()) {
 		return arrow::Status::IOError("Failed to connect to worker at " + location + ": " + result.status().ToString());
+	}
+	
+	// Consume at least one result to ensure the action actually executed
+	std::unique_ptr<arrow::flight::ResultStream> stream = std::move(*result);
+	auto next_result = stream->Next();
+	if (!next_result.ok()) {
+		return arrow::Status::IOError("Failed to verify worker connection at " + location + ": " + next_result.status().ToString());
 	}
 	
 	return arrow::Status::OK();

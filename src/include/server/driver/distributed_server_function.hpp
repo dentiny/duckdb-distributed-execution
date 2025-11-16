@@ -13,5 +13,6 @@ ScalarFunction GetWorkerCountFunction();
 ScalarFunction GetStartLocalWorkersFunction();
 ScalarFunction GetRegisterWorkerFunction();
 ScalarFunction GetRegisterWorkersFunction();
+ScalarFunction GetStartStandaloneWorkerFunction();
 
 } // namespace duckdb

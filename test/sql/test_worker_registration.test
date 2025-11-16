@@ -4,22 +4,41 @@
 
 require duckherder
 
-# Start distributed server with local workers
+# Test 1: Start standalone workers (not registered yet)
 statement ok
-SELECT duckherder_start_local_server(8815, 2);
+SELECT duckherder_start_standalone_worker(29101);
 
-# Test 1: Verify initial worker count (2 workers from server start)
-# Note: Must check before attaching remote database
+statement ok
+SELECT duckherder_start_standalone_worker(29102);
+
+# Test 2: Start distributed server WITHOUT workers
+statement ok
+SELECT duckherder_start_local_server(8815);
+
+# Test 3: Verify no workers initially
+query I
+SELECT duckherder_get_worker_count();
+----
+0
+
+# Test 4: Register the standalone workers
+statement ok
+SELECT duckherder_register_worker('worker_ext_1', 'grpc://localhost:29101');
+
+statement ok
+SELECT duckherder_register_worker('worker_ext_2', 'grpc://localhost:29102');
+
+# Test 5: Verify workers are now registered
 query I
 SELECT duckherder_get_worker_count();
 ----
 2
 
-# Test 2: Start additional local workers
+# Test 6: Start additional local workers  
 statement ok
 SELECT duckherder_start_local_workers(1);
 
-# Test 3: Verify worker count increased
+# Test 7: Verify worker count increased
 query I
 SELECT duckherder_get_worker_count();
 ----
@@ -31,25 +50,25 @@ ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815
 statement ok
 USE dh;
 
-# Test 4: Register multiple workers at once (API test)
+# Test 8: Try to register non-existent external workers (should fail gracefully)
 # Should return 0 since no workers are running at those addresses
 # Must call from main database context
 query I
 SELECT main.duckherder_register_workers(
-    ['worker_ext_1', 'worker_ext_2'],
-    ['grpc://localhost:29101', 'grpc://localhost:29102']
+    ['worker_bad_1', 'worker_bad_2'],
+    ['grpc://localhost:30001', 'grpc://localhost:30002']
 );
 ----
 0
 
-# Test 5: Worker count should remain unchanged (3 local workers only)
+# Test 9: Worker count should remain unchanged (3 registered workers)
 # Must call from main database context
 query I
 SELECT main.duckherder_get_worker_count();
 ----
 3
 
-# Test 6: Create a table and verify distributed execution works
+# Test 9: Create a table and verify distributed execution works
 statement ok
 PRAGMA duckherder_register_remote_table('worker_reg_test', 'worker_reg_test');
 
