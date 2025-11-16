@@ -31,12 +31,8 @@ public:
 
 	// Register a single external worker node.
 	// The worker should already be running at the specified location.
+	// Throws IOException if connection fails.
 	void RegisterWorker(const string &worker_id, const string &location);
-
-	// Register multiple external worker nodes at once.
-	// Each pair in the vector is (worker_id, location).
-	// Returns the number of workers successfully registered.
-	idx_t RegisterWorkers(const vector<std::pair<string, string>> &workers);
 
 	// Get all available workers.
 	vector<WorkerInfo *> GetAvailableWorkers();

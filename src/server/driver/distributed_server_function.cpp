@@ -192,15 +192,22 @@ void RegisterWorkers(DataChunk &args, ExpressionState &state, Vector &result) {
 		                                   worker_ids_size, locations_size));
 	}
 
-	// Build worker pairs
-	vector<std::pair<string, string>> workers;
+	// Register all workers, continue on failures
+	idx_t successful_count = 0;
 	for (idx_t i = 0; i < worker_ids_size; i++) {
-		workers.emplace_back(worker_ids_data[i].GetString(), locations_data[i].GetString());
+		string worker_id = worker_ids_data[i].GetString();
+		string location = locations_data[i].GetString();
+		
+		try {
+			it->second->RegisterWorker(worker_id, location);
+			successful_count++;
+		} catch (const Exception &ex) {
+			// Log failure but continue with other workers
+			// Individual failures don't stop the batch
+		}
 	}
 
-	// Register all workers
-	idx_t count = it->second->RegisterWorkers(workers);
-	result.SetValue(0, Value::BIGINT(count));
+	result.SetValue(0, Value::BIGINT(successful_count));
 }
 
 } // namespace

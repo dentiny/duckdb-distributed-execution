@@ -36,11 +36,6 @@ public:
 	// Throws IOException if connection fails.
 	void RegisterWorker(const string &worker_id, const string &location);
 
-	// Register multiple external worker nodes at once.
-	// Returns the number of workers successfully registered.
-	// Does not throw on individual worker failures.
-	idx_t RegisterWorkers(const vector<std::pair<string, string>> &workers);
-
 	// Get the number of registered workers.
 	idx_t GetWorkerCount() const;
 

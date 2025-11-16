@@ -7,6 +7,7 @@ namespace duckdb {
 
 void WorkerManager::RegisterWorker(const string &worker_id, const string &location) {
 	std::lock_guard<std::mutex> lck(mu);
+	auto &db_instance = *db.instance;
 
 	auto worker_info = make_uniq<WorkerInfo>(worker_id, location);
 
@@ -17,30 +18,7 @@ void WorkerManager::RegisterWorker(const string &worker_id, const string &locati
 	}
 
 	workers.emplace_back(std::move(worker_info));
-}
-
-idx_t WorkerManager::RegisterWorkers(const vector<std::pair<string, string>> &workers_to_register) {
-	idx_t successful_count = 0;
-	auto &db_instance = *db.instance;
-
-	for (const auto &worker_pair : workers_to_register) {
-		const auto &worker_id = worker_pair.first;
-		const auto &location = worker_pair.second;
-
-		try {
-			RegisterWorker(worker_id, location);
-			successful_count++;
-			DUCKDB_LOG_DEBUG(db_instance, "Successfully registered worker '%s' at '%s'", worker_id, location);
-		} catch (const std::exception &e) {
-			// Log failure but continue with other workers
-			DUCKDB_LOG_DEBUG(db_instance, "Failed to register worker '%s' at '%s': %s", 
-			                 worker_id, location, e.what());
-		}
-	}
-
-	DUCKDB_LOG_DEBUG(db_instance, "Registered %llu out of %llu workers", 
-	                 successful_count, workers_to_register.size());
-	return successful_count;
+	DUCKDB_LOG_DEBUG(db_instance, "Successfully registered worker '%s' at '%s'", worker_id, location);
 }
 
 vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {

@@ -93,13 +93,6 @@ void DistributedFlightServer::RegisterWorker(const string &worker_id, const stri
 	worker_manager->RegisterWorker(worker_id, location);
 }
 
-idx_t DistributedFlightServer::RegisterWorkers(const vector<std::pair<string, string>> &workers) {
-	if (!worker_manager) {
-		throw InternalException("WorkerManager not initialized");
-	}
-	return worker_manager->RegisterWorkers(workers);
-}
-
 idx_t DistributedFlightServer::GetWorkerCount() const {
 	if (!worker_manager) {
 		return 0;
