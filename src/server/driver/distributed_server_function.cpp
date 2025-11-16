@@ -133,13 +133,9 @@ void StartLocalWorkers(DataChunk &args, ExpressionState &state, Vector &result) 
 		throw Exception(ExceptionType::INVALID_INPUT, "Number of workers must be positive");
 	}
 
-	try {
-		// Add workers to the existing server
-		it->second->StartLocalWorkers(num_workers);
-		result.Reference(Value(SUCCESS));
-	} catch (const std::exception &ex) {
-		throw Exception(ExceptionType::IO, "Failed to start local workers: " + string(ex.what()));
-	}
+	// Add workers to the existing server.
+	it->second->StartLocalWorkers(num_workers);
+	result.Reference(Value(SUCCESS));
 }
 
 void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
