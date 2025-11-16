@@ -57,6 +57,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/duckling_index_catalog_entry.cpp
     src/server/driver/duckling_schema_catalog_entry.cpp
     src/server/driver/duckling_storage.cpp
+    src/server/driver/worker_node_client.cpp
     src/server/driver/duckling_table_catalog_entry.cpp
     src/server/driver/duckling_transaction.cpp
     src/server/driver/duckling_transaction_manager.cpp

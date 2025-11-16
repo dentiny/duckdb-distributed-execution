@@ -4,6 +4,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
 #include "server/worker/worker_node.hpp"
+#include "server/driver/worker_node_client.hpp"
 
 #include <memory>
 #include <mutex>
