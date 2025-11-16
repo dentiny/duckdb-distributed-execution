@@ -63,7 +63,6 @@ string WorkerNode::GetLocation() const {
 
 arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
                                    std::unique_ptr<arrow::flight::ResultStream> *result) {
-	
 
 	// Parse protobuf for other actions
 	distributed::DistributedRequest request;

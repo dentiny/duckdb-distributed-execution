@@ -13,10 +13,10 @@ namespace duckdb {
 class WorkerNodeClient {
 public:
 	explicit WorkerNodeClient(const string &location);
-	
+
 	// Connect to the worker.
 	arrow::Status Connect();
-	
+
 	// Execute a partitioned query task on the worker.
 	arrow::Status ExecutePartition(const distributed::ExecutePartitionRequest &request,
 	                               std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
@@ -27,4 +27,3 @@ private:
 };
 
 } // namespace duckdb
-

@@ -57,4 +57,3 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 }
 
 } // namespace duckdb
-

@@ -64,7 +64,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		}
 
 		// Store the server in the map
-		auto* server_ptr = server.get();
+		auto *server_ptr = server.get();
 		g_test_servers[port] = std::move(server);
 
 		// Start server in background thread and detach.
@@ -191,9 +191,10 @@ void RegisterWorkers(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto locations_size = ListVector::GetListSize(locations_vector);
 
 	if (worker_ids_size != locations_size) {
-		throw Exception(ExceptionType::INVALID_INPUT,
-		                StringUtil::Format("Worker IDs and locations arrays must have the same length (got %llu and %llu)",
-		                                   worker_ids_size, locations_size));
+		throw Exception(
+		    ExceptionType::INVALID_INPUT,
+		    StringUtil::Format("Worker IDs and locations arrays must have the same length (got %llu and %llu)",
+		                       worker_ids_size, locations_size));
 	}
 
 	// Register all workers, continue on failures
@@ -201,7 +202,7 @@ void RegisterWorkers(DataChunk &args, ExpressionState &state, Vector &result) {
 	for (idx_t i = 0; i < worker_ids_size; i++) {
 		string worker_id = worker_ids_data[i].GetString();
 		string location = locations_data[i].GetString();
-		
+
 		try {
 			it->second->RegisterWorker(worker_id, location);
 			successful_count++;
@@ -235,14 +236,14 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 	try {
 		string worker_id = StringUtil::Format("standalone_worker_%d", port);
 		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", port, nullptr);
-		
+
 		auto status = worker->Start();
 		if (!status.ok()) {
 			throw Exception(ExceptionType::IO, "Failed to start standalone worker: " + status.ToString());
 		}
 
 		// Store the worker
-		auto* worker_ptr = worker.get();
+		auto *worker_ptr = worker.get();
 		g_standalone_workers[port] = std::move(worker);
 
 		// Start worker in background thread

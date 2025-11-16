@@ -7,4 +7,3 @@ namespace duckdb {
 int GetAvailablePort(int start_port = 9000);
 
 } // namespace duckdb
-
