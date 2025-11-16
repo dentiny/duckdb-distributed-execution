@@ -16,26 +16,28 @@
 
 namespace duckdb {
 
-// Enum for query execution modes
+// Enum for query execution modes based on partitioning strategy
 enum class QueryExecutionMode {
-	LOCAL,                    // Executed locally without distribution
-	DISTRIBUTED_CONCATENATE,  // Distributed with simple concatenation
-	DISTRIBUTED_AGGREGATE,    // Distributed with aggregate merge
-	DISTRIBUTED_GROUP_BY,     // Distributed with group by merge
-	DISTRIBUTED_DISTINCT      // Distributed with distinct merge
+	LOCAL,                     // Executed locally without distribution
+	DELEGATED,                 // No partition - delegated to single worker node
+	NATURAL_PARTITION,         // Distributed with natural parallelism (based on DuckDB's estimation)
+	ROW_GROUP_PARTITION        // Distributed with row-group-aligned partitioning
 };
 
 // Structure to store query execution information
 struct QueryExecutionInfo {
 	string sql;                           // The SQL query
-	QueryExecutionMode execution_mode;    // How the query was executed
+	QueryExecutionMode execution_mode;    // Partitioning strategy used
+	string merge_strategy;                // How results were merged (CONCATENATE, AGGREGATE, etc.)
 	std::chrono::milliseconds query_duration;  // Total query duration
 	std::chrono::milliseconds worker_execution_time;  // Time spent by workers
 	std::chrono::system_clock::time_point execution_start_time;  // When query started
 	idx_t num_workers_used = 0;          // Number of workers used
+	idx_t num_tasks_generated = 0;       // Number of tasks created
 	
 	QueryExecutionInfo() 
 		: execution_mode(QueryExecutionMode::LOCAL),
+		  merge_strategy("NONE"),
 		  query_duration(0),
 		  worker_execution_time(0),
 		  execution_start_time(std::chrono::system_clock::now()) {}
@@ -69,6 +71,12 @@ public:
 
 	// Get the number of registered workers.
 	idx_t GetWorkerCount() const;
+
+	// Record query execution information
+	void RecordQueryExecution(const QueryExecutionInfo &info);
+
+	// Get all recorded query executions (for debugging/inspection)
+	vector<QueryExecutionInfo> GetQueryExecutions() const;
 
 	// Flight RPC methods.
 	arrow::Status DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
@@ -132,12 +140,6 @@ private:
 	// Convert DuckDB result to Arrow RecordBatch.
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
 	                                 idx_t *row_count = nullptr);
-
-	// Record query execution information
-	void RecordQueryExecution(const QueryExecutionInfo &info);
-
-	// Get all recorded query executions (for debugging/inspection)
-	vector<QueryExecutionInfo> GetQueryExecutions() const;
 
 private:
 	string host;

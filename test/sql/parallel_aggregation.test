@@ -51,3 +51,9 @@ SELECT id, category, value FROM parallel_test WHERE category = 'electronics';
 1	electronics	100
 5	electronics	500
 
+# Test 4: Verify query stats infrastructure is working
+query I
+SELECT COUNT(*) > 0 FROM duckherder_get_query_execution_stats();
+----
+true
+

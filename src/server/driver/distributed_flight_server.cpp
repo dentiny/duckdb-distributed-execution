@@ -269,21 +269,35 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 			// Query was executed in distributed mode
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
+			query_info.num_tasks_generated = exec_result.num_tasks;
 			query_info.worker_execution_time = exec_result.worker_execution_time;
 			
-			// Map merge strategy to execution mode
+			// Map partition strategy to execution mode
+			switch (exec_result.partition_strategy) {
+			case PartitionStrategy::NONE:
+				query_info.execution_mode = QueryExecutionMode::DELEGATED;
+				break;
+			case PartitionStrategy::ROW_GROUP_ALIGNED:
+				query_info.execution_mode = QueryExecutionMode::ROW_GROUP_PARTITION;
+				break;
+			case PartitionStrategy::NATURAL:
+				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
+				break;
+			}
+
+			// Map merge strategy to string
 			switch (exec_result.merge_strategy) {
 			case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_CONCATENATE;
+				query_info.merge_strategy = "CONCATENATE";
 				break;
 			case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_AGGREGATE;
+				query_info.merge_strategy = "AGGREGATE";
 				break;
 			case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_GROUP_BY;
+				query_info.merge_strategy = "GROUP_BY";
 				break;
 			case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_DISTINCT;
+				query_info.merge_strategy = "DISTINCT";
 				break;
 			}
 		}
@@ -293,6 +307,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	if (result == nullptr) {
 		result = conn->Query(req.sql());
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
+		query_info.merge_strategy = "NONE";
 		query_info.worker_execution_time = std::chrono::milliseconds(0);
 	}
 
@@ -498,21 +513,35 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 			// Query was executed in distributed mode
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
+			query_info.num_tasks_generated = exec_result.num_tasks;
 			query_info.worker_execution_time = exec_result.worker_execution_time;
 			
-			// Map merge strategy to execution mode
+			// Map partition strategy to execution mode
+			switch (exec_result.partition_strategy) {
+			case PartitionStrategy::NONE:
+				query_info.execution_mode = QueryExecutionMode::DELEGATED;
+				break;
+			case PartitionStrategy::ROW_GROUP_ALIGNED:
+				query_info.execution_mode = QueryExecutionMode::ROW_GROUP_PARTITION;
+				break;
+			case PartitionStrategy::NATURAL:
+				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
+				break;
+			}
+
+			// Map merge strategy to string
 			switch (exec_result.merge_strategy) {
 			case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_CONCATENATE;
+				query_info.merge_strategy = "CONCATENATE";
 				break;
 			case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_AGGREGATE;
+				query_info.merge_strategy = "AGGREGATE";
 				break;
 			case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_GROUP_BY;
+				query_info.merge_strategy = "GROUP_BY";
 				break;
 			case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
-				query_info.execution_mode = QueryExecutionMode::DISTRIBUTED_DISTINCT;
+				query_info.merge_strategy = "DISTINCT";
 				break;
 			}
 		}
@@ -522,6 +551,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	if (result == nullptr) {
 		result = conn->Query(sql);
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
+		query_info.merge_strategy = "NONE";
 		query_info.worker_execution_time = std::chrono::milliseconds(0);
 	}
 

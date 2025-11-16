@@ -5,6 +5,7 @@
 #include "duckherder_pragmas.hpp"
 #include "duckherder_storage.hpp"
 #include "query_history_query_function.hpp"
+#include "query_execution_stats_query_function.hpp"
 #include "query_recorder_factory.hpp"
 #include "server/driver/distributed_server_function.hpp"
 
@@ -31,6 +32,9 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	// Register function to get query stats.
 	loader.RegisterFunction(GetQueryHistory());
+
+	// Register function to get query execution stats from driver.
+	loader.RegisterFunction(GetQueryExecutionStats());
 
 	// Register function to clear query recorder stats.
 	ScalarFunction clear_recorder_stats_function("duckherder_clear_query_recorder_stats",

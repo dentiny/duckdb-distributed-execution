@@ -57,3 +57,9 @@ SELECT COUNT(*), MAX(id) FROM distributed_basic_table;
 ----
 4	4
 
+# Verify query execution stats infrastructure is working
+query I
+SELECT COUNT(*) > 0 FROM duckherder_get_query_execution_stats();
+----
+true
+

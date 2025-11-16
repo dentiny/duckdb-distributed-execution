@@ -91,6 +91,20 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		return exec_result;
 	}
 
+	exec_result.num_tasks = tasks.size();
+
+	// Determine partition strategy based on tasks generated
+	if (tasks.size() == 1) {
+		// Single task - delegated to one worker
+		exec_result.partition_strategy = PartitionStrategy::NONE;
+	} else if (tasks[0].row_group_end > 0) {
+		// Tasks have row group information - row group aligned
+		exec_result.partition_strategy = PartitionStrategy::ROW_GROUP_ALIGNED;
+	} else {
+		// Multiple tasks without row group info - natural partitioning
+		exec_result.partition_strategy = PartitionStrategy::NATURAL;
+	}
+
 	// Map tasks to workers using round-robin
 	// This allows M tasks to be distributed across N workers (M >= N)
 	// Maps from worker_id -> [task_indices]

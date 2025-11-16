@@ -9,14 +9,15 @@
 
 namespace duckdb {
 
-namespace {
-
 // Success function return value.
 constexpr bool SUCCESS = true;
 
 // Map from of port number server instance for test isolation.
+// Exposed globally so table functions can access query execution stats
 unique_ptr<DistributedFlightServer> g_test_server;
 constexpr int DEFAULT_SERVER_PORT = 8815;
+
+namespace {
 
 // Map from port number to standalone worker instance for testing registration.
 unordered_map<int, unique_ptr<WorkerNode>> g_standalone_workers;
