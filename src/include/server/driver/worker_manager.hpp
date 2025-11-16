@@ -1,10 +1,12 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
-#include "server/worker/worker_node.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/worker_node_client.hpp"
+#include "server/worker/worker_node.hpp"
 
 #include <memory>
 #include <mutex>
@@ -16,11 +18,11 @@ struct WorkerInfo {
 	// Grpc location.
 	// For example, grpc://<host>:<port>.
 	string location;
-	std::unique_ptr<WorkerNodeClient> client;
+	unique_ptr<WorkerNodeClient> client;
 	// TODO(hjiang): Add node availability status.
 
 	WorkerInfo(string id, string loc) : worker_id(std::move(id)), location(std::move(loc)) {
-		client = std::make_unique<WorkerNodeClient>(location);
+		client = make_uniq<WorkerNodeClient>(location);
 	}
 };
 

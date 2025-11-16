@@ -19,7 +19,7 @@ unique_ptr<DistributedFlightServer> g_test_server;
 constexpr int DEFAULT_SERVER_PORT = 8815;
 
 // Map from port number to standalone worker instance for testing registration.
-std::unordered_map<int, unique_ptr<WorkerNode>> g_standalone_workers;
+unordered_map<int, unique_ptr<WorkerNode>> g_standalone_workers;
 
 void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	int port = DEFAULT_SERVER_PORT;

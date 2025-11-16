@@ -2,7 +2,7 @@
 
 namespace duckdb {
 
-WorkerNodeClient::WorkerNodeClient(const string &location) : location(location) {
+WorkerNodeClient::WorkerNodeClient(const string &location_p) : location(std::move(location_p)) {
 }
 
 arrow::Status WorkerNodeClient::Connect() {

@@ -12,7 +12,7 @@ namespace duckdb {
 // Used by the driver to send tasks to workers and receive results.
 class WorkerNodeClient {
 public:
-	explicit WorkerNodeClient(const string &location);
+	explicit WorkerNodeClient(const string &location_p);
 
 	// Connect to the worker.
 	arrow::Status Connect();
