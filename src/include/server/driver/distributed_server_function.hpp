@@ -10,7 +10,6 @@ ScalarFunction GetStopLocalServerFunction();
 
 // Create scalar functions for worker management.
 ScalarFunction GetWorkerCountFunction();
-ScalarFunction GetStartLocalWorkersFunction();
 ScalarFunction GetRegisterWorkerFunction();
 ScalarFunction GetStartStandaloneWorkerFunction();
 

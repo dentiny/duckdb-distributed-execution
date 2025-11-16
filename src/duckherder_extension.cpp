@@ -44,7 +44,6 @@ void LoadInternal(ExtensionLoader &loader) {
 
 	// Register worker management functions.
 	loader.RegisterFunction(GetWorkerCountFunction());
-	loader.RegisterFunction(GetStartLocalWorkersFunction());
 	loader.RegisterFunction(GetRegisterWorkerFunction());
 	loader.RegisterFunction(GetStartStandaloneWorkerFunction());
 }

@@ -32,9 +32,12 @@ SELECT duckherder_get_worker_count();
 ----
 2
 
-# Start additional local workers and register.  
+# Start additional local workers after driver starts and register.  
 statement ok
-SELECT duckherder_start_local_workers(1);
+SELECT duckherder_start_standalone_worker(29103);
+
+statement ok
+SELECT duckherder_register_worker('worker_ext_2', 'grpc://localhost:29103');
 
 query I
 SELECT duckherder_get_worker_count();

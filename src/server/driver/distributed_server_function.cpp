@@ -116,28 +116,6 @@ void GetWorkerCount(DataChunk &args, ExpressionState &state, Vector &result) {
 	result.SetValue(0, Value::BIGINT(count));
 }
 
-void StartLocalWorkers(DataChunk &args, ExpressionState &state, Vector &result) {
-	const std::lock_guard<std::mutex> lock(g_server_mutex);
-
-	auto it = g_test_servers.find(DEFAULT_SERVER_PORT);
-	if (it == g_test_servers.end() || !it->second) {
-		throw Exception(ExceptionType::INVALID_INPUT,
-		                "Server not started. Call duckherder_start_local_server() first.");
-	}
-
-	auto &num_workers_vector = args.data[0];
-	auto num_workers_data = FlatVector::GetData<int32_t>(num_workers_vector);
-	int num_workers = num_workers_data[0];
-
-	if (num_workers <= 0) {
-		throw Exception(ExceptionType::INVALID_INPUT, "Number of workers must be positive");
-	}
-
-	// Add workers to the existing server.
-	it->second->StartLocalWorkers(num_workers);
-	result.Reference(Value(SUCCESS));
-}
-
 void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	const std::lock_guard<std::mutex> lock(g_server_mutex);
 
@@ -280,12 +258,6 @@ ScalarFunction GetWorkerCountFunction() {
 	return ScalarFunction("duckherder_get_worker_count",
 	                      /*arguments*/ {},
 	                      /*return_type=*/LogicalType {LogicalTypeId::BIGINT}, GetWorkerCount);
-}
-
-ScalarFunction GetStartLocalWorkersFunction() {
-	return ScalarFunction("duckherder_start_local_workers",
-	                      /*arguments*/ {LogicalType {LogicalTypeId::INTEGER}},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalWorkers);
 }
 
 ScalarFunction GetRegisterWorkerFunction() {
