@@ -130,6 +130,12 @@ arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint6
 	return arrow::Status::OK();
 }
 
+arrow::Status DistributedFlightClient::GetQueryExecutionStats(distributed::DistributedResponse &response) {
+	distributed::DistributedRequest req;
+	req.mutable_get_query_execution_stats();
+	return SendAction(req, response);
+}
+
 arrow::Status DistributedFlightClient::SendAction(const distributed::DistributedRequest &req,
                                                   distributed::DistributedResponse &resp) {
 	std::string req_data = req.SerializeAsString();

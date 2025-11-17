@@ -50,6 +50,10 @@ public:
 	                                  idx_t offset = NO_QUERY_OFFSET,
 	                                  const vector<LogicalType> *expected_types = nullptr);
 
+	// Get query execution statistics from the server.
+	// Returns error QueryResult on failure.
+	unique_ptr<QueryResult> GetQueryExecutionStats(vector<std::tuple<string, string, string, int64_t, int64_t, int64_t, int64_t>> &stats_out);
+
 private:
 	string server_url;
 	unique_ptr<DistributedFlightClient> client;

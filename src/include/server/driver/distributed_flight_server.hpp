@@ -127,6 +127,11 @@ private:
 	arrow::Status HandleLoadExtension(const distributed::LoadExtensionRequest &req,
 	                                  distributed::DistributedResponse &resp);
 
+	// Handle GET QUERY EXECUTION STATS request.
+	// Return query execution statistics from the server.
+	arrow::Status HandleGetQueryExecutionStats(const distributed::GetQueryExecutionStatsRequest &req,
+	                                           distributed::DistributedResponse &resp);
+
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);

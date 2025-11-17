@@ -149,6 +149,11 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
 		break;
 
+	// ========== Stats & Monitoring Operations ==========
+	case distributed::DistributedRequest::kGetQueryExecutionStats:
+		ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
+		break;
+
 	// ========== Error Cases ==========
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
 		return arrow::Status::Invalid("Request type not set");
@@ -646,6 +651,69 @@ void DistributedFlightServer::RecordQueryExecution(const QueryExecutionInfo &inf
 vector<QueryExecutionInfo> DistributedFlightServer::GetQueryExecutions() const {
 	std::lock_guard<std::mutex> lock(query_history_mutex);
 	return query_history;
+}
+
+arrow::Status DistributedFlightServer::HandleGetQueryExecutionStats(
+    const distributed::GetQueryExecutionStatsRequest &req, distributed::DistributedResponse &resp) {
+	
+	// Get query execution history
+	auto query_executions = GetQueryExecutions();
+	
+	// Pack into protobuf response
+	resp.set_success(true);
+	auto *stats_resp = resp.mutable_get_query_execution_stats();
+	
+	for (const auto &exec_info : query_executions) {
+		auto *query_info = stats_resp->add_query_executions();
+		
+		// SQL query
+		query_info->set_sql(exec_info.sql);
+		
+		// Execution mode
+		switch (exec_info.execution_mode) {
+		case QueryExecutionMode::DELEGATED:
+			query_info->set_execution_mode("DELEGATED");
+			break;
+		case QueryExecutionMode::NATURAL_PARTITION:
+			query_info->set_execution_mode("NATURAL_PARTITION");
+			break;
+		case QueryExecutionMode::ROW_GROUP_PARTITION:
+			query_info->set_execution_mode("ROW_GROUP_PARTITION");
+			break;
+		}
+		
+		// Merge strategy
+		switch (exec_info.merge_strategy) {
+		case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
+			query_info->set_merge_strategy("CONCATENATE");
+			break;
+		case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
+			query_info->set_merge_strategy("AGGREGATE");
+			break;
+		case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
+			query_info->set_merge_strategy("GROUP_BY");
+			break;
+		case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
+			query_info->set_merge_strategy("DISTINCT");
+			break;
+		}
+		
+		// Query duration in milliseconds
+		query_info->set_query_duration_ms(exec_info.query_duration.count());
+		
+		// Number of workers used
+		query_info->set_num_workers_used(exec_info.num_workers_used);
+		
+		// Number of tasks generated
+		query_info->set_num_tasks_generated(exec_info.num_tasks_generated);
+		
+		// Execution start time as milliseconds since epoch
+		auto time_since_epoch = exec_info.execution_start_time.time_since_epoch();
+		auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch).count();
+		query_info->set_execution_start_time_ms(milliseconds);
+	}
+	
+	return arrow::Status::OK();
 }
 
 } // namespace duckdb

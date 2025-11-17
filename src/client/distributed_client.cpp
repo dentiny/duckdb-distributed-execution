@@ -201,4 +201,42 @@ unique_ptr<QueryResult> DistributedClient::InsertInto(const string &insert_sql) 
 	return ExecuteSQL(insert_sql);
 }
 
+unique_ptr<QueryResult> DistributedClient::GetQueryExecutionStats(
+    vector<std::tuple<string, string, string, int64_t, int64_t, int64_t, int64_t>> &stats_out) {
+	distributed::DistributedResponse response;
+	auto status = client->GetQueryExecutionStats(response);
+	
+	if (!status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+	}
+	if (!response.success()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+	}
+	
+	// Extract stats from the response
+	const auto &stats_response = response.get_query_execution_stats();
+	stats_out.clear();
+	stats_out.reserve(stats_response.query_executions_size());
+	
+	for (int i = 0; i < stats_response.query_executions_size(); i++) {
+		const auto &exec_info = stats_response.query_executions(i);
+		stats_out.emplace_back(
+			exec_info.sql(),
+			exec_info.execution_mode(),
+			exec_info.merge_strategy(),
+			exec_info.query_duration_ms(),
+			exec_info.num_workers_used(),
+			exec_info.num_tasks_generated(),
+			exec_info.execution_start_time_ms()
+		);
+	}
+	
+	// Return empty successful result
+	vector<string> names;
+	vector<LogicalType> types;
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), names,
+	                                          std::move(collection), ClientProperties());
+}
+
 } // namespace duckdb

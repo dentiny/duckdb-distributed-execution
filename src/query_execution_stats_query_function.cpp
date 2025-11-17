@@ -1,50 +1,21 @@
 #include "query_execution_stats_query_function.hpp"
 
+#include "client/distributed_client.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector.hpp"
-#include "server/driver/distributed_flight_server.hpp"
 
 namespace duckdb {
-
-extern unique_ptr<DistributedFlightServer> g_test_server;
 
 namespace {
 
 struct QueryExecutionStatsData : public GlobalTableFunctionState {
-	vector<QueryExecutionInfo> query_executions;
+	// Stats data: (sql, execution_mode, merge_strategy, query_duration_ms, num_workers_used, num_tasks_generated, execution_start_time_ms)
+	vector<std::tuple<string, string, string, int64_t, int64_t, int64_t, int64_t>> query_stats;
 
 	// Used to record the progress of emission.
 	uint64_t offset = 0;
 };
-
-string ExecutionModeToString(QueryExecutionMode mode) {
-	switch (mode) {
-	case QueryExecutionMode::DELEGATED:
-		return "DELEGATED";
-	case QueryExecutionMode::NATURAL_PARTITION:
-		return "NATURAL_PARTITION";
-	case QueryExecutionMode::ROW_GROUP_PARTITION:
-		return "ROW_GROUP_PARTITION";
-	default:
-		return "UNKNOWN";
-	}
-}
-
-string MergeStrategyToString(QueryPlanAnalyzer::MergeStrategy strategy) {
-	switch (strategy) {
-	case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
-		return "CONCATENATE";
-	case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
-		return "AGGREGATE";
-	case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
-		return "GROUP_BY";
-	case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
-		return "DISTINCT";
-	default:
-		return "UNKNOWN";
-	}
-}
 
 unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context, TableFunctionBindInput &input,
                                                           vector<LogicalType> &return_types, vector<string> &names) {
@@ -90,14 +61,13 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
                                                                       TableFunctionInitInput &input) {
 	auto result = make_uniq<QueryExecutionStatsData>();
 
-	// Check if server is running.
-	if (g_test_server == nullptr) {
-		return std::move(result);
-	}
-
-	// Get query executions from the server.
-	auto &query_executions = result->query_executions;
-	query_executions = g_test_server->GetQueryExecutions();
+	// Get client instance and fetch stats via gRPC
+	auto &client = DistributedClient::GetInstance();
+	auto query_result = client.GetQueryExecutionStats(result->query_stats);
+	
+	// If there was an error fetching stats (e.g., server not available),
+	// return empty stats - the vector is already empty by default
+	// This allows the function to work gracefully without the server
 
 	return std::move(result);
 }
@@ -106,38 +76,38 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 	auto &data = data_p.global_state->Cast<QueryExecutionStatsData>();
 
 	// All entries have been emitted.
-	if (data.offset >= data.query_executions.size()) {
+	if (data.offset >= data.query_stats.size()) {
 		return;
 	}
 
 	// Start filling in the result buffer.
 	idx_t count = 0;
-	while (data.offset < data.query_executions.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &entry = data.query_executions[data.offset++];
+	while (data.offset < data.query_stats.size() && count < STANDARD_VECTOR_SIZE) {
+		const auto &entry = data.query_stats[data.offset++];
 		idx_t col = 0;
 
 		// SQL query
-		output.SetValue(col++, count, Value(entry.sql));
+		output.SetValue(col++, count, Value(std::get<0>(entry)));
 
 		// Execution mode (partitioning strategy)
-		output.SetValue(col++, count, Value(ExecutionModeToString(entry.execution_mode)));
+		output.SetValue(col++, count, Value(std::get<1>(entry)));
 
 		// Merge strategy
-		output.SetValue(col++, count, Value(MergeStrategyToString(entry.merge_strategy)));
+		output.SetValue(col++, count, Value(std::get<2>(entry)));
 
 		// Query duration in milliseconds
-		output.SetValue(col++, count, Value::BIGINT(entry.query_duration.count()));
+		output.SetValue(col++, count, Value::BIGINT(std::get<3>(entry)));
 
 		// Number of workers used
-		output.SetValue(col++, count, Value::BIGINT(entry.num_workers_used));
+		output.SetValue(col++, count, Value::BIGINT(std::get<4>(entry)));
 
 		// Number of tasks generated
-		output.SetValue(col++, count, Value::BIGINT(entry.num_tasks_generated));
+		output.SetValue(col++, count, Value::BIGINT(std::get<5>(entry)));
 
-		// Execution start time as timestamp
-		auto time_since_epoch = entry.execution_start_time.time_since_epoch();
-		auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(time_since_epoch).count();
-		output.SetValue(col++, count, Value::TIMESTAMP(timestamp_t(microseconds)));
+		// Execution start time as timestamp (convert from milliseconds to microseconds)
+		auto milliseconds_since_epoch = std::get<6>(entry);
+		auto microseconds_since_epoch = milliseconds_since_epoch * 1000;
+		output.SetValue(col++, count, Value::TIMESTAMP(timestamp_t(microseconds_since_epoch)));
 
 		count++;
 	}
