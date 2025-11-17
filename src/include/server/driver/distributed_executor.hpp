@@ -69,8 +69,8 @@ enum class PartitionStrategy {
 // Result structure containing query result and execution metadata.
 struct DistributedExecutionResult {
 	unique_ptr<QueryResult> result;
-	QueryPlanAnalyzer::MergeStrategy merge_strategy;
 	PartitionStrategy partition_strategy;
+	QueryPlanAnalyzer::MergeStrategy merge_strategy;
 	idx_t num_workers_used = 0;
 	idx_t num_tasks = 0;
 	std::chrono::milliseconds worker_execution_time;
