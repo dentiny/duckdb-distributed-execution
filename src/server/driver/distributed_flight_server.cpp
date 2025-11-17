@@ -264,14 +264,14 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	unique_ptr<QueryResult> result;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = distributed_executor->ExecuteDistributed(req.sql());
-		
+
 		if (exec_result.result != nullptr) {
 			// Query was executed in distributed mode
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
 			query_info.worker_execution_time = exec_result.worker_execution_time;
-			
+
 			// Map partition strategy to execution mode
 			switch (exec_result.partition_strategy) {
 			case PartitionStrategy::NONE:
@@ -508,14 +508,14 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	unique_ptr<QueryResult> result;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = distributed_executor->ExecuteDistributed(sql);
-		
+
 		if (exec_result.result != nullptr) {
 			// Query was executed in distributed mode
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
 			query_info.worker_execution_time = exec_result.worker_execution_time;
-			
+
 			// Map partition strategy to execution mode
 			switch (exec_result.partition_strategy) {
 			case PartitionStrategy::NONE:

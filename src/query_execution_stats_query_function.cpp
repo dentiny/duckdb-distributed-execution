@@ -14,7 +14,7 @@ namespace {
 
 struct QueryExecutionStatsData : public GlobalTableFunctionState {
 	vector<QueryExecutionInfo> query_executions;
-	
+
 	// Used to record the progress of emission.
 	uint64_t offset = 0;
 };
@@ -36,7 +36,7 @@ string ExecutionModeToString(QueryExecutionMode mode) {
 }
 
 unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context, TableFunctionBindInput &input,
-                                                           vector<LogicalType> &return_types, vector<string> &names) {
+                                                          vector<LogicalType> &return_types, vector<string> &names) {
 	D_ASSERT(return_types.empty());
 	D_ASSERT(names.empty());
 
@@ -80,9 +80,9 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 }
 
 unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientContext &context,
-                                                                       TableFunctionInitInput &input) {
+                                                                      TableFunctionInitInput &input) {
 	auto result = make_uniq<QueryExecutionStatsData>();
-	
+
 	// Check if server is running
 	if (g_test_server == nullptr) {
 		// Return empty results if server is not started
@@ -144,15 +144,12 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 } // namespace
 
 TableFunction GetQueryExecutionStats() {
-	TableFunction query_exec_stats_func {
-		/*name=*/"duckherder_get_query_execution_stats",
-		/*arguments=*/ {},
-		/*function=*/QueryExecutionStatsTableFunc,
-		/*bind=*/QueryExecutionStatsTableFuncBind,
-		/*init_global=*/QueryExecutionStatsTableFuncInit
-	};
+	TableFunction query_exec_stats_func {/*name=*/"duckherder_get_query_execution_stats",
+	                                     /*arguments=*/ {},
+	                                     /*function=*/QueryExecutionStatsTableFunc,
+	                                     /*bind=*/QueryExecutionStatsTableFuncBind,
+	                                     /*init_global=*/QueryExecutionStatsTableFuncInit};
 	return query_exec_stats_func;
 }
 
 } // namespace duckdb
-

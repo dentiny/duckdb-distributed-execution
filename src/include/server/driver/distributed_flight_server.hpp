@@ -18,29 +18,27 @@ namespace duckdb {
 
 // Enum for query execution modes based on partitioning strategy
 enum class QueryExecutionMode {
-	LOCAL,                     // Executed locally without distribution
-	DELEGATED,                 // No partition - delegated to single worker node
-	NATURAL_PARTITION,         // Distributed with natural parallelism (based on DuckDB's estimation)
-	ROW_GROUP_PARTITION        // Distributed with row-group-aligned partitioning
+	LOCAL,              // Executed locally without distribution
+	DELEGATED,          // No partition - delegated to single worker node
+	NATURAL_PARTITION,  // Distributed with natural parallelism (based on DuckDB's estimation)
+	ROW_GROUP_PARTITION // Distributed with row-group-aligned partitioning
 };
 
 // Structure to store query execution information
 struct QueryExecutionInfo {
-	string sql;                           // The SQL query
-	QueryExecutionMode execution_mode;    // Partitioning strategy used
-	string merge_strategy;                // How results were merged (CONCATENATE, AGGREGATE, etc.)
-	std::chrono::milliseconds query_duration;  // Total query duration
-	std::chrono::milliseconds worker_execution_time;  // Time spent by workers
-	std::chrono::system_clock::time_point execution_start_time;  // When query started
-	idx_t num_workers_used = 0;          // Number of workers used
-	idx_t num_tasks_generated = 0;       // Number of tasks created
-	
-	QueryExecutionInfo() 
-		: execution_mode(QueryExecutionMode::LOCAL),
-		  merge_strategy("NONE"),
-		  query_duration(0),
-		  worker_execution_time(0),
-		  execution_start_time(std::chrono::system_clock::now()) {}
+	string sql;                                      // The SQL query
+	QueryExecutionMode execution_mode;               // Partitioning strategy used
+	string merge_strategy;                           // How results were merged (CONCATENATE, AGGREGATE, etc.)
+	std::chrono::milliseconds query_duration;        // Total query duration
+	std::chrono::milliseconds worker_execution_time; // Time spent by workers
+	std::chrono::system_clock::time_point execution_start_time; // When query started
+	idx_t num_workers_used = 0;                                 // Number of workers used
+	idx_t num_tasks_generated = 0;                              // Number of tasks created
+
+	QueryExecutionInfo()
+	    : execution_mode(QueryExecutionMode::LOCAL), merge_strategy("NONE"), query_duration(0),
+	      worker_execution_time(0), execution_start_time(std::chrono::system_clock::now()) {
+	}
 };
 
 // Arrow Flight-based RPC server for distributed execution.

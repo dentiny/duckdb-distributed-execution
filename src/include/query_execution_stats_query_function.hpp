@@ -8,4 +8,3 @@ namespace duckdb {
 TableFunction GetQueryExecutionStats();
 
 } // namespace duckdb
-

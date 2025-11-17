@@ -74,11 +74,11 @@ struct DistributedExecutionResult {
 	idx_t num_workers_used = 0;
 	idx_t num_tasks = 0;
 	std::chrono::milliseconds worker_execution_time;
-	
-	DistributedExecutionResult() 
-		: merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
-		  partition_strategy(PartitionStrategy::NONE),
-		  worker_execution_time(0) {}
+
+	DistributedExecutionResult()
+	    : merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE), partition_strategy(PartitionStrategy::NONE),
+	      worker_execution_time(0) {
+	}
 };
 
 // Distributed executor that partitions data and sends to workers.

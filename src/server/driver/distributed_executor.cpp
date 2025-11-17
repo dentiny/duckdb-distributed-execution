@@ -55,13 +55,13 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	auto worker_start = std::chrono::high_resolution_clock::now();
 
 	if (!CanDistribute(sql)) {
-		return exec_result;  // Returns with result = nullptr
+		return exec_result; // Returns with result = nullptr
 	}
 
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
-		return exec_result;  // Returns with result = nullptr
+		return exec_result; // Returns with result = nullptr
 	}
 
 	exec_result.num_workers_used = workers.size();
@@ -207,8 +207,8 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 
 	// Calculate worker execution time (from start to end of worker operations)
 	auto worker_end = std::chrono::high_resolution_clock::now();
-	exec_result.worker_execution_time = 
-		std::chrono::duration_cast<std::chrono::milliseconds>(worker_end - worker_start);
+	exec_result.worker_execution_time =
+	    std::chrono::duration_cast<std::chrono::milliseconds>(worker_end - worker_start);
 
 	exec_result.result = std::move(result);
 	return exec_result;
