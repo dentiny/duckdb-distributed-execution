@@ -86,8 +86,6 @@ int main(int argc, char *argv[]) {
 
 		std::cout << "Worker node started successfully!" << std::endl;
 		std::cout << "Location: " << g_worker->GetLocation() << std::endl;
-		std::cout << "Waiting for tasks from coordinator..." << std::endl;
-		std::cout << "Press Ctrl+C to stop" << std::endl;
 
 		// Keep worker running.
 		auto serve_status = g_worker->Serve();
