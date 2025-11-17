@@ -29,13 +29,13 @@ struct QueryExecutionInfo {
 	QueryExecutionMode execution_mode;               // Partitioning strategy used
 	QueryPlanAnalyzer::MergeStrategy merge_strategy; // How results were merged
 	std::chrono::milliseconds query_duration;        // Total query duration
-	std::chrono::steady_clock::time_point execution_start_time; // When query started
+	std::chrono::system_clock::time_point execution_start_time; // When query started (wall-clock time)
 	idx_t num_workers_used = 0;                                 // Number of workers used
 	idx_t num_tasks_generated = 0;                              // Number of tasks created
 
 	QueryExecutionInfo()
 	    : execution_mode(QueryExecutionMode::DELEGATED), merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
-	      query_duration(0), execution_start_time(std::chrono::steady_clock::now()) {
+	      query_duration(0), execution_start_time(std::chrono::system_clock::now()) {
 	}
 };
 

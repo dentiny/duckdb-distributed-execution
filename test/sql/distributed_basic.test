@@ -56,5 +56,3 @@ query IT
 SELECT COUNT(*), MAX(id) FROM distributed_basic_table;
 ----
 4	4
-
-

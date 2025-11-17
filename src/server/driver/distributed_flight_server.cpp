@@ -257,8 +257,8 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
 	query_info.sql = req.sql();
-	auto query_start = std::chrono::high_resolution_clock::now();
-	query_info.execution_start_time = std::chrono::steady_clock::now();
+	auto query_start = std::chrono::steady_clock::now(); // For duration calculation
+	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
@@ -296,8 +296,8 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 		result = conn->Query(req.sql());
 	}
 
-	// Calculate total query duration
-	auto query_end = std::chrono::high_resolution_clock::now();
+	// Calculate total query duration (using steady_clock for accurate elapsed time)
+	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
 	// Only record if query was actually distributed to workers
@@ -488,8 +488,8 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
 	query_info.sql = sql;
-	auto query_start = std::chrono::high_resolution_clock::now();
-	query_info.execution_start_time = std::chrono::steady_clock::now();
+	auto query_start = std::chrono::steady_clock::now(); // For duration calculation
+	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
@@ -527,8 +527,8 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		result = conn->Query(sql);
 	}
 
-	// Calculate total query duration
-	auto query_end = std::chrono::high_resolution_clock::now();
+	// Calculate total query duration (using steady_clock for accurate elapsed time)
+	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
 	// Only record if query was actually distributed to workers
