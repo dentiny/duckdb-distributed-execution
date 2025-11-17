@@ -9,12 +9,6 @@ Duckherder is a DuckDB extension built upon [storage extension](https://github.c
 - [Distributed Execution System](#distributed-execution-system)
 - [Installation](#installation)
 - [Usage](#usage)
-- [Local Server Management](#local-server-management)
-- [Attach to the Server](#attach-to-the-server)
-- [Register and Unregister Remote Tables](#register-and-unregister-remote-tables)
-- [Load Extensions on Server](#load-extensions-on-server)
-- [Working with Remote Tables](#working-with-remote-tables)
-- [Query Execution Monitoring and Statistics](#query-execution-monitoring-and-statistics)
 - [Roadmap](#roadmap)
 
 ## Overview
