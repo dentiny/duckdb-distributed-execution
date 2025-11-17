@@ -293,7 +293,7 @@ SELECT COUNT(*) FROM duckherder_get_query_history();  -- Returns: 0
 - [ ] GROUP BY distributed execution
 - [ ] JOIN optimization (broadcast/co-partition)
 - [ ] ORDER BY support (distributed sort)
-- [ ] Driver collect patition and execition stats
+- [x] Driver collect partition and execution stats
 
 ### Multi-Client Support
 - [ ] Query server authentication and authorization

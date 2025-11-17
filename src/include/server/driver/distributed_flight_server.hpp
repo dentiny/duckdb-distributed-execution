@@ -18,6 +18,7 @@ namespace duckdb {
 
 // Enum for query execution modes based on partitioning strategy
 enum class QueryExecutionMode {
+	LOCAL,              // Local execution on driver (no distribution)
 	DELEGATED,          // No partition - delegated to single worker node
 	NATURAL_PARTITION,  // Distributed with natural parallelism (based on DuckDB's estimation)
 	ROW_GROUP_PARTITION // Distributed with row-group-aligned partitioning
@@ -34,7 +35,7 @@ struct QueryExecutionInfo {
 	idx_t num_tasks_generated = 0;                              // Number of tasks created
 
 	QueryExecutionInfo()
-	    : execution_mode(QueryExecutionMode::DELEGATED), merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
+	    : execution_mode(QueryExecutionMode::LOCAL), merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
 	      query_duration(0), execution_start_time(std::chrono::system_clock::now()) {
 	}
 };

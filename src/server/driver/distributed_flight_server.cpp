@@ -267,7 +267,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	bool was_distributed = false;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = distributed_executor->ExecuteDistributed(req.sql());
 
@@ -276,7 +275,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
-			was_distributed = true;
 
 			// Map partition strategy to execution mode
 			switch (exec_result.partition_strategy) {
@@ -299,21 +297,23 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
 		result = conn->Query(req.sql());
+		// Mark as local execution for non-distributed queries
+		query_info.execution_mode = QueryExecutionMode::LOCAL;
+		query_info.num_workers_used = 0;
+		query_info.num_tasks_generated = 0;
 	}
 
 	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
-
-	// Only record if query was actually distributed to workers
-	if (was_distributed) {
-		RecordQueryExecution(std::move(query_info));
-	}
 
 	if (result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
+
+	// Record all successful query executions (both distributed and local)
+	RecordQueryExecution(std::move(query_info));
 
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_sql();
@@ -671,6 +671,9 @@ DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQuer
 
 		// Execution mode
 		switch (exec_info.execution_mode) {
+		case QueryExecutionMode::LOCAL:
+			query_info->set_execution_mode("LOCAL");
+			break;
 		case QueryExecutionMode::DELEGATED:
 			query_info->set_execution_mode("DELEGATED");
 			break;
