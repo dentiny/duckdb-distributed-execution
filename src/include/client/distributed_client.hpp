@@ -19,6 +19,14 @@ struct QueryExecutionStatsEntry {
 	int64_t num_workers_used = 0;
 	int64_t num_tasks_generated = 0;
 	int64_t execution_start_time_ms = 0;
+
+	QueryExecutionStatsEntry() = default;
+
+	explicit QueryExecutionStatsEntry(const distributed::QueryExecutionInfo &proto)
+	    : sql(proto.sql()), execution_mode(proto.execution_mode()), merge_strategy(proto.merge_strategy()),
+	      query_duration_ms(proto.query_duration_ms()), num_workers_used(proto.num_workers_used()),
+	      num_tasks_generated(proto.num_tasks_generated()), execution_start_time_ms(proto.execution_start_time_ms()) {
+	}
 };
 
 class DistributedClient {

@@ -218,16 +218,7 @@ unique_ptr<QueryResult> DistributedClient::GetQueryExecutionStats(vector<QueryEx
 	stats_out.reserve(stats_response.query_executions_size());
 
 	for (int idx = 0; idx < stats_response.query_executions_size(); ++idx) {
-		const auto &exec_info = stats_response.query_executions(idx);
-		QueryExecutionStatsEntry entry;
-		entry.sql = exec_info.sql();
-		entry.execution_mode = exec_info.execution_mode();
-		entry.merge_strategy = exec_info.merge_strategy();
-		entry.query_duration_ms = exec_info.query_duration_ms();
-		entry.num_workers_used = exec_info.num_workers_used();
-		entry.num_tasks_generated = exec_info.num_tasks_generated();
-		entry.execution_start_time_ms = exec_info.execution_start_time_ms();
-		stats_out.emplace_back(std::move(entry));
+		stats_out.emplace_back(stats_response.query_executions(idx));
 	}
 
 	vector<string> names;
