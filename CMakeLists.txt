@@ -108,6 +108,12 @@ target_link_libraries(
   distributed_server ${EXTENSION_NAME} Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
 
+# Add distributed worker executable.
+add_executable(distributed_worker src/server/worker/distributed_worker_main.cpp)
+target_link_libraries(
+  distributed_worker ${EXTENSION_NAME} Arrow::arrow_static
+  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+
 # # Unit tests.
 include_directories(duckdb/third_party/catch)
 add_executable(test_distributed_flight unit/test_distributed_flight.cpp)

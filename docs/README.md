@@ -173,6 +173,37 @@ The build produces:
 - `./build/release/duckdb` - DuckDB shell with extension pre-loaded
 - `./build/release/test/unittest` - Test runner
 - `./build/release/extension/duckherder/duckherder.duckdb_extension` - Loadable extension
+- `./build/release/distributed_server` - Standalone distributed driver node
+- `./build/release/distributed_worker` - Standalone distributed worker node
+
+### Running Standalone Server and Workers
+
+For production deployments or testing distributed execution across multiple machines, you can run standalone server and worker processes:
+
+#### Starting the Driver/Coordinator Server
+
+```bash
+# Start the driver server on default host (0.0.0.0) and port (8815) without workers
+./build/release/distributed_server
+
+# Start the driver server on a specific host and port
+./build/release/distributed_server 192.168.1.100 8815
+
+# Start the driver server with 4 local workers (for single-machine distributed execution)
+./build/release/distributed_server 0.0.0.0 8815 4
+```
+
+#### Starting Standalone Worker Nodes
+
+For multi-machine setups, start worker nodes on separate machines:
+
+```bash
+# Start a worker on default host (0.0.0.0) and port (8816) with default worker ID (worker-1)
+./build/release/distributed_worker
+
+# Start a worker on a specific port with custom worker ID
+./build/release/distributed_worker 0.0.0.0 8817 worker-2
+```
 
 ## Usage
 
@@ -213,6 +244,77 @@ PRAGMA duckherder_unregister_remote_table('my_table');
 SELECT duckherder_load_extension('parquet');
 SELECT duckherder_load_extension('json');
 ```
+
+### Driver/Worker Node Registration
+
+#### Starting and Registering Standalone Workers
+
+For distributed execution, you can either use local workers (managed by the driver) or register external standalone workers:
+
+**Option 1: Start standalone workers in the same process (for testing, debugging and development)**
+```sql
+-- Start a local server with driver node
+SELECT duckherder_start_local_server(8815);
+
+-- Start standalone workers within the same process
+SELECT duckherder_start_standalone_worker(8816);
+SELECT duckherder_start_standalone_worker(8817);
+SELECT duckherder_start_standalone_worker(8818);
+
+-- Check how many workers are registered
+SELECT duckherder_get_worker_count();  -- Returns: 3
+```
+
+**Option 2: Register external workers (for multi-machine setups)**
+```sql
+-- Start a local server with driver node
+SELECT duckherder_start_local_server(8815);
+
+-- Register external worker nodes running on different machines
+-- Syntax: duckherder_register_worker(worker_id, location)
+SELECT duckherder_register_worker('worker-1', 'grpc://192.168.1.101:8816');
+SELECT duckherder_register_worker('worker-2', 'grpc://192.168.1.102:8816');
+SELECT duckherder_register_worker('worker-3', 'grpc://192.168.1.103:8816');
+
+-- Verify workers are registered
+SELECT duckherder_get_worker_count();  -- Returns: 3
+```
+
+**Option 3: Using the standalone distributed_server executable with local workers**
+```bash
+# Start the server with 4 automatically managed local workers
+./build/release/distributed_server 0.0.0.0 8815 4
+```
+
+#### Complete Multi-Machine Setup Example
+
+**On the driver machine:**
+```sql
+-- Start the driver node
+SELECT duckherder_start_local_server(8815);
+```
+
+**On each worker machine, run:**
+```bash
+# Worker 1
+./build/release/distributed_worker 0.0.0.0 8816 worker-1
+
+# Worker 2  
+./build/release/distributed_worker 0.0.0.0 8816 worker-2
+
+# Worker 3
+./build/release/distributed_worker 0.0.0.0 8816 worker-3
+```
+
+**Back on the driver, register the workers:**
+```sql
+-- Register each worker with its network location
+SELECT duckherder_register_worker('worker-1', 'grpc://192.168.1.101:8816');
+SELECT duckherder_register_worker('worker-2', 'grpc://192.168.1.102:8816');
+SELECT duckherder_register_worker('worker-3', 'grpc://192.168.1.103:8816');
+
+-- Confirm registration
+SELECT duckherder_get_worker_count();
 
 ### Working with Remote Tables
 

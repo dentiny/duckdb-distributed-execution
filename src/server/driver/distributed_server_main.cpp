@@ -1,3 +1,27 @@
+/*
+ * Distributed Server (Driver Node) Main Entry Point
+ *
+ * This executable starts a DuckDB distributed execution driver/coordinator node that:
+ * - Accepts client connections via Arrow Flight protocol
+ * - Manages distributed query execution across worker nodes
+ * - Analyzes query plans and creates optimal partition strategies
+ * - Coordinates task distribution and result merging
+ * - Optionally starts local worker nodes for single-machine distributed execution
+ *
+ * Usage:
+ *   ./distributed_server [host] [port] [num_workers]
+ *
+ * Arguments:
+ *   host         - Host address to bind to (default: 0.0.0.0)
+ *   port         - Port to listen on (default: 8815)
+ *   num_workers  - Number of local workers to start (default: 0 = no distributed execution)
+ *
+ * Examples:
+ *   ./distributed_server                          # Start on 0.0.0.0:8815 with no workers (local mode)
+ *   ./distributed_server 0.0.0.0 8815 4          # Start with 4 local workers
+ *   ./distributed_server localhost 9000 8        # Start on localhost:9000 with 8 workers
+ */
+
 #include <csignal>
 #include <iostream>
 #include <memory>
