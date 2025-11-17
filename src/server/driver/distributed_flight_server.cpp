@@ -262,8 +262,8 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
 	query_info.sql = req.sql();
-	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
-	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
+	auto query_start = std::chrono::steady_clock::now();
+	query_info.execution_start_time = std::chrono::system_clock::now();
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
@@ -301,13 +301,12 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 		result = conn->Query(req.sql());
 	}
 
-	// Calculate total query duration (using steady_clock for accurate elapsed time)
 	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
 	// Only record if query was actually distributed to workers
 	if (was_distributed) {
-		RecordQueryExecution(query_info);
+		RecordQueryExecution(std::move(query_info));
 	}
 
 	if (result->HasError()) {
@@ -536,9 +535,9 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
-	// Only record if query was actually distributed to workers
+	// Only record if query was actually distributed to workers.
 	if (was_distributed) {
-		RecordQueryExecution(query_info);
+		RecordQueryExecution(std::move(query_info));
 	}
 
 	if (result->HasError()) {
@@ -643,13 +642,13 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 	return arrow::Status::OK();
 }
 
-void DistributedFlightServer::RecordQueryExecution(const QueryExecutionInfo &info) {
-	std::lock_guard<std::mutex> lock(query_history_mutex);
-	query_history.push_back(info);
+void DistributedFlightServer::RecordQueryExecution(QueryExecutionInfo info) {
+	const std::lock_guard<std::mutex> lock(query_history_mutex);
+	query_history.emplace_back(info);
 }
 
 vector<QueryExecutionInfo> DistributedFlightServer::GetQueryExecutions() const {
-	std::lock_guard<std::mutex> lock(query_history_mutex);
+	const std::lock_guard<std::mutex> lock(query_history_mutex);
 	return query_history;
 }
 

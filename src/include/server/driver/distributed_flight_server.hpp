@@ -69,7 +69,7 @@ public:
 	idx_t GetWorkerCount() const;
 
 	// Record query execution information.
-	void RecordQueryExecution(const QueryExecutionInfo &info);
+	void RecordQueryExecution(QueryExecutionInfo info);
 
 	// Get all recorded query executions.
 	vector<QueryExecutionInfo> GetQueryExecutions() const;
