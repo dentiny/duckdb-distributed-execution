@@ -22,14 +22,28 @@ struct QueryExecutionStatsData : public GlobalTableFunctionState {
 // Helper function to convert execution mode to string
 string ExecutionModeToString(QueryExecutionMode mode) {
 	switch (mode) {
-	case QueryExecutionMode::LOCAL:
-		return "LOCAL";
 	case QueryExecutionMode::DELEGATED:
 		return "DELEGATED";
 	case QueryExecutionMode::NATURAL_PARTITION:
 		return "NATURAL_PARTITION";
 	case QueryExecutionMode::ROW_GROUP_PARTITION:
 		return "ROW_GROUP_PARTITION";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+// Helper function to convert merge strategy to string
+string MergeStrategyToString(QueryPlanAnalyzer::MergeStrategy strategy) {
+	switch (strategy) {
+	case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
+		return "CONCATENATE";
+	case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
+		return "AGGREGATE";
+	case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
+		return "GROUP_BY";
+	case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
+		return "DISTINCT";
 	default:
 		return "UNKNOWN";
 	}
@@ -117,7 +131,7 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 		output.SetValue(col++, count, Value(ExecutionModeToString(entry.execution_mode)));
 
 		// Merge strategy
-		output.SetValue(col++, count, Value(entry.merge_strategy));
+		output.SetValue(col++, count, Value(MergeStrategyToString(entry.merge_strategy)));
 
 		// Query duration in milliseconds
 		output.SetValue(col++, count, Value::BIGINT(entry.query_duration.count()));

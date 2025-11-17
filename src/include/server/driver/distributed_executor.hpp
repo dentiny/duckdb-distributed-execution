@@ -59,14 +59,14 @@ struct DistributedPipelineTask {
 	idx_t row_group_end = 0;
 };
 
-// Partitioning strategy used for distributed execution
+// Partitioning strategy used for distributed execution.
 enum class PartitionStrategy {
 	NONE,              // No partitioning (single task)
+	NATURAL,           // Partitioned by natural parallelism (range or modulo based)
 	ROW_GROUP_ALIGNED, // Partitioned by DuckDB row groups
-	NATURAL            // Partitioned by natural parallelism (range or modulo based)
 };
 
-// Result structure containing query result and execution metadata
+// Result structure containing query result and execution metadata.
 struct DistributedExecutionResult {
 	unique_ptr<QueryResult> result;
 	QueryPlanAnalyzer::MergeStrategy merge_strategy;

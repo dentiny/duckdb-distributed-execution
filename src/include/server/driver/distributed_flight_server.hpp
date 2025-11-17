@@ -5,20 +5,19 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/distributed_executor.hpp"
-#include "server/driver/worker_manager.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
+#include "server/driver/worker_manager.hpp"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
-#include <memory>
 #include <chrono>
+#include <memory>
 #include <mutex>
 
 namespace duckdb {
 
 // Enum for query execution modes based on partitioning strategy
 enum class QueryExecutionMode {
-	LOCAL,              // Executed locally without distribution
 	DELEGATED,          // No partition - delegated to single worker node
 	NATURAL_PARTITION,  // Distributed with natural parallelism (based on DuckDB's estimation)
 	ROW_GROUP_PARTITION // Distributed with row-group-aligned partitioning
@@ -28,16 +27,15 @@ enum class QueryExecutionMode {
 struct QueryExecutionInfo {
 	string sql;                                      // The SQL query
 	QueryExecutionMode execution_mode;               // Partitioning strategy used
-	string merge_strategy;                           // How results were merged (CONCATENATE, AGGREGATE, etc.)
+	QueryPlanAnalyzer::MergeStrategy merge_strategy; // How results were merged
 	std::chrono::milliseconds query_duration;        // Total query duration
-	std::chrono::milliseconds worker_execution_time; // Time spent by workers
 	std::chrono::system_clock::time_point execution_start_time; // When query started
 	idx_t num_workers_used = 0;                                 // Number of workers used
 	idx_t num_tasks_generated = 0;                              // Number of tasks created
 
 	QueryExecutionInfo()
-	    : execution_mode(QueryExecutionMode::LOCAL), merge_strategy("NONE"), query_duration(0),
-	      worker_execution_time(0), execution_start_time(std::chrono::system_clock::now()) {
+	    : execution_mode(QueryExecutionMode::DELEGATED), merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
+	      query_duration(0), execution_start_time(std::chrono::system_clock::now()) {
 	}
 };
 

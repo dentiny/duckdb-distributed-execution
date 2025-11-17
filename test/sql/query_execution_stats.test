@@ -56,11 +56,11 @@ SELECT COUNT(*) > 0 FROM (
 ----
 true
 
-# Test 3: Verify execution modes are valid
+# Test 3: Verify execution modes are valid (only distributed modes)
 query I
 SELECT COUNT(*) 
 FROM duckherder_get_query_execution_stats()
-WHERE execution_mode NOT IN ('LOCAL', 'DELEGATED', 'NATURAL_PARTITION', 'ROW_GROUP_PARTITION');
+WHERE execution_mode NOT IN ('DELEGATED', 'NATURAL_PARTITION', 'ROW_GROUP_PARTITION');
 ----
 0
 
@@ -96,7 +96,7 @@ WHERE execution_start_time IS NULL;
 ----
 0
 
-# Test 8: If there are any stats, check they're reasonable
+# Test 8: If there are any stats, check they're reasonable (only distributed execution modes)
 query I
 SELECT CASE 
     WHEN COUNT(*) = 0 THEN true
@@ -104,7 +104,7 @@ SELECT CASE
           FROM duckherder_get_query_execution_stats() 
           WHERE sql IS NOT NULL 
             AND LENGTH(sql) > 0
-            AND execution_mode IN ('LOCAL', 'DELEGATED', 'NATURAL_PARTITION', 'ROW_GROUP_PARTITION'))
+            AND execution_mode IN ('DELEGATED', 'NATURAL_PARTITION', 'ROW_GROUP_PARTITION'))
 END
 FROM duckherder_get_query_execution_stats();
 ----
