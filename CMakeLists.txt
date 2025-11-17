@@ -79,6 +79,7 @@ set(EXTENSION_SOURCES
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
     src/duckherder_extension.cpp
+    src/query_execution_stats_query_function.cpp
     src/query_history_query_function.cpp
     src/query_recorder.cpp
     src/query_recorder_factory.cpp)

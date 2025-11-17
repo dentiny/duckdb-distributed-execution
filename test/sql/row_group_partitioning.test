@@ -141,3 +141,4 @@ query I
 SELECT COUNT(DISTINCT id) FROM multi_rg_table;
 ----
 500000
+

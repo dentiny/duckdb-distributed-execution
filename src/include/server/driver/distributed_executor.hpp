@@ -11,6 +11,7 @@
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
+#include <chrono>
 
 namespace duckdb {
 
@@ -58,14 +59,36 @@ struct DistributedPipelineTask {
 	idx_t row_group_end = 0;
 };
 
+// Partitioning strategy used for distributed execution.
+enum class PartitionStrategy {
+	NONE,              // No partitioning (single task)
+	NATURAL,           // Partitioned by natural parallelism (range or modulo based)
+	ROW_GROUP_ALIGNED, // Partitioned by DuckDB row groups
+};
+
+// Result structure containing query result and execution metadata.
+struct DistributedExecutionResult {
+	unique_ptr<QueryResult> result;
+	PartitionStrategy partition_strategy;
+	QueryPlanAnalyzer::MergeStrategy merge_strategy;
+	idx_t num_workers_used = 0;
+	idx_t num_tasks = 0;
+	std::chrono::milliseconds worker_execution_time;
+
+	DistributedExecutionResult()
+	    : merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE), partition_strategy(PartitionStrategy::NONE),
+	      worker_execution_time(0) {
+	}
+};
+
 // Distributed executor that partitions data and sends to workers.
 class DistributedExecutor {
 public:
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p);
 
 	// Execute a query in distributed manner.
-	// Returns nullptr if query cannot be distributed, which will fall back to local execution.
-	unique_ptr<QueryResult> ExecuteDistributed(const string &sql);
+	// Returns result with nullptr if query cannot be distributed, which will fall back to local execution.
+	DistributedExecutionResult ExecuteDistributed(const string &sql);
 
 private:
 	// Check if query can be distributed.

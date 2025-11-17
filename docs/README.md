@@ -244,14 +244,30 @@ SELECT * FROM dh.large_table WHERE value > 1000;
 DROP TABLE dh.users;
 ```
 
-### Query Statistics
+### Query Execution Monitoring and Statistics
+
+duckherder provides built-in stats (current not persisted anywhere) for executed queries, including start timestamp, executime duration and disribution mode.
+```sql
+D SELECT * FROM duckherder_get_query_execution_stats();
+┌───────────────────────────────────────┬────────────────┬────────────────┬───────────────────┬──────────────────┬─────────────────────┬────────────────────────────┐
+│                  sql                  │ execution_mode │ merge_strategy │ query_duration_ms │ num_workers_used │ num_tasks_generated │    execution_start_time    │
+│                varchar                │    varchar     │    varchar     │       int64       │      int64       │        int64        │         timestamp          │
+├───────────────────────────────────────┼────────────────┼────────────────┼───────────────────┼──────────────────┼─────────────────────┼────────────────────────────┤
+│ SELECT * FROM distributed_basic_table │ DELEGATED      │ CONCATENATE    │                17 │                4 │                   1 │ 2025-11-17 02:10:27.482089 │
+│ SELECT * FROM distributed_basic_table │ DELEGATED      │ CONCATENATE    │                 1 │                4 │                   1 │ 2025-11-17 02:10:30.436037 │
+│ SELECT * FROM distributed_basic_table │ DELEGATED      │ CONCATENATE    │                 2 │                4 │                   1 │ 2025-11-17 02:10:33.675752 │
+│ SELECT * FROM distributed_basic_table │ DELEGATED      │ CONCATENATE    │                 1 │                4 │                   1 │ 2025-11-17 02:10:36.992988 │
+└───────────────────────────────────────┴────────────────┴────────────────┴───────────────────┴──────────────────┴─────────────────────┴────────────────────────────┘
+```
+
+#### Clear Query Statistics
 
 ```sql
--- View query history and statistics.
-SELECT * FROM duckherder_get_query_history();
-
--- Clear query history.
+-- Clear all recorded query history and statistics
 SELECT duckherder_clear_query_recorder_stats();
+
+-- Verify the history is cleared
+SELECT COUNT(*) FROM duckherder_get_query_history();  -- Returns: 0
 ```
 
 ## Roadmap
@@ -277,7 +293,7 @@ SELECT duckherder_clear_query_recorder_stats();
 - [ ] GROUP BY distributed execution
 - [ ] JOIN optimization (broadcast/co-partition)
 - [ ] ORDER BY support (distributed sort)
-- [ ] Driver collect patition and execition stats
+- [x] Driver collect partition and execution stats
 
 ### Multi-Client Support
 - [ ] Query server authentication and authorization
@@ -294,10 +310,10 @@ SELECT duckherder_clear_query_recorder_stats();
 - [x] Comprehensive execution logging
 - [x] Support official extension install and load
 - [ ] Query resource consumption tracking
-- [ ] Support community extension install and load
+- [x] Support community extension install and load
 - [ ] Dynamic worker scaling
 - [ ] Query result caching
-- [ ] Util function to register driver node and worker nodes
+- [x] Util function to register driver node and worker nodes
 
 ## Contributing
 

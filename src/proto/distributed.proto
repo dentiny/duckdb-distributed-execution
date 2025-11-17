@@ -19,6 +19,7 @@ enum RequestType {
   EXECUTE_PARTITION = 12;
   WORKER_REGISTER = 13;
   WORKER_HEARTBEAT = 14;
+  GET_QUERY_EXECUTION_STATS = 15;
 }
 
 // Execute SQL request.
@@ -123,6 +124,11 @@ message WorkerHeartbeatRequest {
   double load = 2;
 }
 
+// Get query execution stats request.
+message GetQueryExecutionStatsRequest {
+  // Empty - returns all stats
+}
+
 // Request message for distributed operations.
 message DistributedRequest {
   // Request-specific parameters.
@@ -140,6 +146,7 @@ message DistributedRequest {
     ExecutePartitionRequest execute_partition = 11;
     WorkerRegisterRequest worker_register = 12;
     WorkerHeartbeatRequest worker_heartbeat = 13;
+    GetQueryExecutionStatsRequest get_query_execution_stats = 14;
   }
 }
 
@@ -198,6 +205,22 @@ message WorkerHeartbeatResponse {
   bool healthy = 1;
 }
 
+// Individual query execution information.
+message QueryExecutionInfo {
+  string sql = 1;
+  string execution_mode = 2;
+  string merge_strategy = 3;
+  int64 query_duration_ms = 4;
+  uint64 num_workers_used = 5;
+  uint64 num_tasks_generated = 6;
+  int64 execution_start_time_ms = 7;
+}
+
+// Get query execution stats response.
+message GetQueryExecutionStatsResponse {
+  repeated QueryExecutionInfo query_executions = 1;
+}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -220,5 +243,6 @@ message DistributedResponse {
     ExecutePartitionResponse execute_partition = 13;
     WorkerRegisterResponse worker_register = 14;
     WorkerHeartbeatResponse worker_heartbeat = 15;
+    GetQueryExecutionStatsResponse get_query_execution_stats = 16;
   }
 }

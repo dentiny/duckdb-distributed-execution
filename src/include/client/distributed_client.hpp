@@ -10,6 +10,25 @@
 
 namespace duckdb {
 
+// Query execution statistics entry.
+struct QueryExecutionStatsEntry {
+	string sql;
+	string execution_mode;
+	string merge_strategy;
+	int64_t query_duration_ms = 0;
+	int64_t num_workers_used = 0;
+	int64_t num_tasks_generated = 0;
+	int64_t execution_start_time_ms = 0;
+
+	QueryExecutionStatsEntry() = default;
+
+	explicit QueryExecutionStatsEntry(const distributed::QueryExecutionInfo &proto)
+	    : sql(proto.sql()), execution_mode(proto.execution_mode()), merge_strategy(proto.merge_strategy()),
+	      query_duration_ms(proto.query_duration_ms()), num_workers_used(proto.num_workers_used()),
+	      num_tasks_generated(proto.num_tasks_generated()), execution_start_time_ms(proto.execution_start_time_ms()) {
+	}
+};
+
 class DistributedClient {
 public:
 	explicit DistributedClient(string server_url_p = "grpc://localhost:8815");
@@ -49,6 +68,10 @@ public:
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = NO_QUERY_LIMIT,
 	                                  idx_t offset = NO_QUERY_OFFSET,
 	                                  const vector<LogicalType> *expected_types = nullptr);
+
+	// Get query execution statistics from the server.
+	// Returns error QueryResult on failure.
+	unique_ptr<QueryResult> GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out);
 
 private:
 	string server_url;

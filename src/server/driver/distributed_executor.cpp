@@ -47,32 +47,39 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 // 3. Each worker executes its partition (LocalState semantics) [WORKER]
 // 4. Driver collects and combines results (GlobalState semantics) [Driver]
 // 5. Final result is returned to client [Driver]
-unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sql) {
+DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string &sql) {
+	DistributedExecutionResult exec_result;
 	auto &db_instance = *conn.context->db;
 
+	// Start timing worker execution
+	auto worker_start = std::chrono::high_resolution_clock::now();
+
 	if (!CanDistribute(sql)) {
-		return nullptr;
+		return exec_result;
 	}
 
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
-		return nullptr;
+		return exec_result;
 	}
+
+	exec_result.num_workers_used = workers.size();
 
 	// Phase 1: Plan extraction and validation
 	unique_ptr<LogicalOperator> logical_plan = conn.ExtractPlan(sql);
 	if (logical_plan == nullptr) {
-		return nullptr;
+		return exec_result;
 	}
 	if (!plan_analyzer->IsSupportedPlan(*logical_plan)) {
 		DUCKDB_LOG_DEBUG(db_instance,
 		                 StringUtil::Format("Logical plan for query '%s' contains unsupported operators", sql));
-		return nullptr;
+		return exec_result;
 	}
 
 	// Analyze query to determine merge strategy
 	QueryPlanAnalyzer::QueryAnalysis query_analysis = plan_analyzer->AnalyzeQuery(*logical_plan);
+	exec_result.merge_strategy = query_analysis.merge_strategy;
 
 	// Analyze pipeline complexity
 	QueryPlanAnalyzer::PipelineInfo pipeline_info = plan_analyzer->AnalyzePipelines(*logical_plan);
@@ -81,7 +88,21 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	// This replaces the old 1-partition-per-worker approach with flexible task distribution
 	auto tasks = task_partitioner->ExtractPipelineTasks(*logical_plan, sql, workers.size());
 	if (tasks.empty()) {
-		return nullptr;
+		return exec_result;
+	}
+
+	exec_result.num_tasks = tasks.size();
+
+	// Determine partition strategy based on tasks generated
+	if (tasks.size() == 1) {
+		// Single task - delegated to one worker
+		exec_result.partition_strategy = PartitionStrategy::NONE;
+	} else if (tasks[0].row_group_end > 0) {
+		// Tasks have row group information - row group aligned
+		exec_result.partition_strategy = PartitionStrategy::ROW_GROUP_ALIGNED;
+	} else {
+		// Multiple tasks without row group info - natural partitioning
+		exec_result.partition_strategy = PartitionStrategy::NATURAL;
 	}
 
 	// Map tasks to workers using round-robin
@@ -104,10 +125,10 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 		// Extract and serialize the plan for this task
 		auto task_plan = conn.ExtractPlan(task.task_sql);
 		if (task_plan == nullptr) {
-			return nullptr;
+			return exec_result;
 		}
 		if (!plan_analyzer->IsSupportedPlan(*task_plan)) {
-			return nullptr;
+			return exec_result;
 		}
 
 		// Serialize the plan for transmission to worker.
@@ -118,9 +139,9 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	// Phase 3: Prepare result schema and type information。
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("Failed to prepare distributed query '%s': %s", sql, prepared->GetError()));
-		return nullptr;
+		// Propagate the error instead of continuing
+		exec_result.result = make_uniq<MaterializedQueryResult>(prepared->GetErrorObject());
+		return exec_result;
 	}
 
 	vector<string> names = prepared->GetNames();
@@ -178,13 +199,15 @@ unique_ptr<QueryResult> DistributedExecutor::ExecuteDistributed(const string &sq
 	}
 
 	if (result_streams.empty()) {
-		return nullptr;
+		return exec_result;
 	}
 
 	// Phase 5: Combine results.
 	auto result = result_merger->CollectAndMergeResults(result_streams, names, types, query_analysis);
 
-	return result;
+	// Calculate worker execution time (from start to end of worker operations)
+	exec_result.result = std::move(result);
+	return exec_result;
 }
 
 bool DistributedExecutor::CanDistribute(const string &sql) {

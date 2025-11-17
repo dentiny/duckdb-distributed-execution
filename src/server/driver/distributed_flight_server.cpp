@@ -149,6 +149,11 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
 		break;
 
+	// ========== Stats & Monitoring Operations ==========
+	case distributed::DistributedRequest::kGetQueryExecutionStats:
+		ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
+		break;
+
 	// ========== Error Cases ==========
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
 		return arrow::Status::Invalid("Request type not set");
@@ -254,22 +259,61 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
                                                         distributed::DistributedResponse &resp) {
+	// Start tracking query execution
+	QueryExecutionInfo query_info;
+	query_info.sql = req.sql();
+	auto query_start = std::chrono::steady_clock::now();
+	query_info.execution_start_time = std::chrono::system_clock::now();
+
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
-		result = distributed_executor->ExecuteDistributed(req.sql());
+		auto exec_result = distributed_executor->ExecuteDistributed(req.sql());
+
+		if (exec_result.result != nullptr) {
+			// Query was executed in distributed mode
+			result = std::move(exec_result.result);
+			query_info.num_workers_used = exec_result.num_workers_used;
+			query_info.num_tasks_generated = exec_result.num_tasks;
+
+			// Map partition strategy to execution mode
+			switch (exec_result.partition_strategy) {
+			case PartitionStrategy::NONE:
+				query_info.execution_mode = QueryExecutionMode::DELEGATED;
+				break;
+			case PartitionStrategy::ROW_GROUP_ALIGNED:
+				query_info.execution_mode = QueryExecutionMode::ROW_GROUP_PARTITION;
+				break;
+			case PartitionStrategy::NATURAL:
+				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
+				break;
+			}
+
+			// Record merge strategy
+			query_info.merge_strategy = exec_result.merge_strategy;
+		}
 	}
 
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
 		result = conn->Query(req.sql());
+		// Mark as local execution for non-distributed queries
+		query_info.execution_mode = QueryExecutionMode::LOCAL;
+		query_info.num_workers_used = 0;
+		query_info.num_tasks_generated = 0;
 	}
+
+	auto query_end = std::chrono::steady_clock::now();
+	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
 	if (result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
+
+	// Record all successful query executions (both distributed and local)
+	RecordQueryExecution(std::move(query_info));
 
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_sql();
@@ -445,15 +489,55 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
 
+	// Start tracking query execution
+	QueryExecutionInfo query_info;
+	query_info.sql = sql;
+	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
+	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
+
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
+	bool was_distributed = false;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
-		result = distributed_executor->ExecuteDistributed(sql);
+		auto exec_result = distributed_executor->ExecuteDistributed(sql);
+
+		if (exec_result.result != nullptr) {
+			// Query was executed in distributed mode
+			result = std::move(exec_result.result);
+			query_info.num_workers_used = exec_result.num_workers_used;
+			query_info.num_tasks_generated = exec_result.num_tasks;
+			was_distributed = true;
+
+			// Map partition strategy to execution mode
+			switch (exec_result.partition_strategy) {
+			case PartitionStrategy::NONE:
+				query_info.execution_mode = QueryExecutionMode::DELEGATED;
+				break;
+			case PartitionStrategy::ROW_GROUP_ALIGNED:
+				query_info.execution_mode = QueryExecutionMode::ROW_GROUP_PARTITION;
+				break;
+			case PartitionStrategy::NATURAL:
+				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
+				break;
+			}
+
+			// Record merge strategy
+			query_info.merge_strategy = exec_result.merge_strategy;
+		}
 	}
 
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
 		result = conn->Query(sql);
+	}
+
+	// Calculate total query duration (using steady_clock for accurate elapsed time)
+	auto query_end = std::chrono::steady_clock::now();
+	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
+
+	// Only record if query was actually distributed to workers.
+	if (was_distributed) {
+		RecordQueryExecution(std::move(query_info));
 	}
 
 	if (result->HasError()) {
@@ -553,6 +637,83 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(std::move(batches), std::move(schema)));
 	if (row_count) {
 		*row_count = count;
+	}
+
+	return arrow::Status::OK();
+}
+
+void DistributedFlightServer::RecordQueryExecution(QueryExecutionInfo info) {
+	const std::lock_guard<std::mutex> lock(query_history_mutex);
+	query_history.emplace_back(info);
+}
+
+vector<QueryExecutionInfo> DistributedFlightServer::GetQueryExecutions() const {
+	const std::lock_guard<std::mutex> lock(query_history_mutex);
+	return query_history;
+}
+
+arrow::Status
+DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQueryExecutionStatsRequest &req,
+                                                      distributed::DistributedResponse &resp) {
+
+	// Get query execution history
+	auto query_executions = GetQueryExecutions();
+
+	// Pack into protobuf response
+	resp.set_success(true);
+	auto *stats_resp = resp.mutable_get_query_execution_stats();
+
+	for (const auto &exec_info : query_executions) {
+		auto *query_info = stats_resp->add_query_executions();
+
+		// SQL query
+		query_info->set_sql(exec_info.sql);
+
+		// Execution mode
+		switch (exec_info.execution_mode) {
+		case QueryExecutionMode::LOCAL:
+			query_info->set_execution_mode("LOCAL");
+			break;
+		case QueryExecutionMode::DELEGATED:
+			query_info->set_execution_mode("DELEGATED");
+			break;
+		case QueryExecutionMode::NATURAL_PARTITION:
+			query_info->set_execution_mode("NATURAL_PARTITION");
+			break;
+		case QueryExecutionMode::ROW_GROUP_PARTITION:
+			query_info->set_execution_mode("ROW_GROUP_PARTITION");
+			break;
+		}
+
+		// Merge strategy
+		switch (exec_info.merge_strategy) {
+		case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
+			query_info->set_merge_strategy("CONCATENATE");
+			break;
+		case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
+			query_info->set_merge_strategy("AGGREGATE");
+			break;
+		case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
+			query_info->set_merge_strategy("GROUP_BY");
+			break;
+		case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
+			query_info->set_merge_strategy("DISTINCT");
+			break;
+		}
+
+		// Query duration in milliseconds
+		query_info->set_query_duration_ms(exec_info.query_duration.count());
+
+		// Number of workers used
+		query_info->set_num_workers_used(exec_info.num_workers_used);
+
+		// Number of tasks generated
+		query_info->set_num_tasks_generated(exec_info.num_tasks_generated);
+
+		// Execution start time as milliseconds since epoch
+		auto time_since_epoch = exec_info.execution_start_time.time_since_epoch();
+		auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch).count();
+		query_info->set_execution_start_time_ms(milliseconds);
 	}
 
 	return arrow::Status::OK();

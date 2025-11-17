@@ -51,6 +51,9 @@ public:
 	arrow::Status ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
 	                        std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
 
+	// Get query execution statistics from the server
+	arrow::Status GetQueryExecutionStats(distributed::DistributedResponse &response);
+
 private:
 	// RPC implementation to send request and block wait response.
 	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);

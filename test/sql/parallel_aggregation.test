@@ -50,4 +50,3 @@ SELECT id, category, value FROM parallel_test WHERE category = 'electronics';
 ----
 1	electronics	100
 5	electronics	500
-
