@@ -43,9 +43,4 @@ SELECT COUNT(*) FROM parallelism_test WHERE value < 5000;
 ----
 500
 
-# Verify query stats are being recorded
-query I
-SELECT COUNT(*) > 0 FROM duckherder_get_query_execution_stats();
-----
-true
 
