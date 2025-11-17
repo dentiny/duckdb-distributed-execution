@@ -49,8 +49,7 @@ true
 query I
 SELECT COUNT(*) > 0 FROM (
     SELECT sql, execution_mode, merge_strategy, query_duration_ms, 
-           worker_execution_time_ms, num_workers_used, num_tasks_generated, 
-           execution_start_time 
+           num_workers_used, num_tasks_generated, execution_start_time 
     FROM duckherder_get_query_execution_stats()
 ) WHERE sql IS NOT NULL;
 ----
@@ -76,7 +75,7 @@ WHERE merge_strategy NOT IN ('NONE', 'CONCATENATE', 'AGGREGATE', 'GROUP_BY', 'DI
 query I
 SELECT COUNT(*)
 FROM duckherder_get_query_execution_stats()
-WHERE query_duration_ms < 0 OR worker_execution_time_ms < 0;
+WHERE query_duration_ms < 0;
 ----
 0
 

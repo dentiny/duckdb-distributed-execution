@@ -139,8 +139,8 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	// Phase 3: Prepare result schema and type information。
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
-		DUCKDB_LOG_WARN(db_instance,
-		                StringUtil::Format("Failed to prepare distributed query '%s': %s", sql, prepared->GetError()));
+		// Propagate the error instead of continuing
+		exec_result.result = make_uniq<MaterializedQueryResult>(prepared->GetErrorObject());
 		return exec_result;
 	}
 
@@ -206,10 +206,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	auto result = result_merger->CollectAndMergeResults(result_streams, names, types, query_analysis);
 
 	// Calculate worker execution time (from start to end of worker operations)
-	auto worker_end = std::chrono::high_resolution_clock::now();
-	exec_result.worker_execution_time =
-	    std::chrono::duration_cast<std::chrono::milliseconds>(worker_end - worker_start);
-
 	exec_result.result = std::move(result);
 	return exec_result;
 }

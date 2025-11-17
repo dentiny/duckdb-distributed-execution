@@ -258,7 +258,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	QueryExecutionInfo query_info;
 	query_info.sql = req.sql();
 	auto query_start = std::chrono::high_resolution_clock::now();
-	query_info.execution_start_time = std::chrono::system_clock::now();
+	query_info.execution_start_time = std::chrono::steady_clock::now();
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
@@ -271,7 +271,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
-			query_info.worker_execution_time = exec_result.worker_execution_time;
 			was_distributed = true;
 
 			// Map partition strategy to execution mode
@@ -490,7 +489,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	QueryExecutionInfo query_info;
 	query_info.sql = sql;
 	auto query_start = std::chrono::high_resolution_clock::now();
-	query_info.execution_start_time = std::chrono::system_clock::now();
+	query_info.execution_start_time = std::chrono::steady_clock::now();
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
@@ -503,7 +502,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
-			query_info.worker_execution_time = exec_result.worker_execution_time;
 			was_distributed = true;
 
 			// Map partition strategy to execution mode

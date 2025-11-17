@@ -55,8 +55,8 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 	D_ASSERT(names.empty());
 
 	// Define the schema for the result table
-	return_types.reserve(8);
-	names.reserve(8);
+	return_types.reserve(7);
+	names.reserve(7);
 
 	// SQL query
 	return_types.emplace_back(LogicalType::VARCHAR);
@@ -73,10 +73,6 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 	// Total query duration in milliseconds
 	return_types.emplace_back(LogicalType::BIGINT);
 	names.emplace_back("query_duration_ms");
-
-	// Worker execution time in milliseconds
-	return_types.emplace_back(LogicalType::BIGINT);
-	names.emplace_back("worker_execution_time_ms");
 
 	// Number of workers used
 	return_types.emplace_back(LogicalType::BIGINT);
@@ -135,9 +131,6 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 
 		// Query duration in milliseconds
 		output.SetValue(col++, count, Value::BIGINT(entry.query_duration.count()));
-
-		// Worker execution time in milliseconds
-		output.SetValue(col++, count, Value::BIGINT(entry.worker_execution_time.count()));
 
 		// Number of workers used
 		output.SetValue(col++, count, Value::BIGINT(entry.num_workers_used));
