@@ -7,7 +7,6 @@
 
 namespace duckdb {
 
-// Forward declaration - this is defined in distributed_server_function.cpp
 extern unique_ptr<DistributedFlightServer> g_test_server;
 
 namespace {
@@ -19,7 +18,6 @@ struct QueryExecutionStatsData : public GlobalTableFunctionState {
 	uint64_t offset = 0;
 };
 
-// Helper function to convert execution mode to string
 string ExecutionModeToString(QueryExecutionMode mode) {
 	switch (mode) {
 	case QueryExecutionMode::DELEGATED:
@@ -33,7 +31,6 @@ string ExecutionModeToString(QueryExecutionMode mode) {
 	}
 }
 
-// Helper function to convert merge strategy to string
 string MergeStrategyToString(QueryPlanAnalyzer::MergeStrategy strategy) {
 	switch (strategy) {
 	case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
@@ -54,7 +51,7 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 	D_ASSERT(return_types.empty());
 	D_ASSERT(names.empty());
 
-	// Define the schema for the result table
+	// Define the schema for the result table.
 	return_types.reserve(7);
 	names.reserve(7);
 
@@ -93,13 +90,12 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
                                                                       TableFunctionInitInput &input) {
 	auto result = make_uniq<QueryExecutionStatsData>();
 
-	// Check if server is running
+	// Check if server is running.
 	if (g_test_server == nullptr) {
-		// Return empty results if server is not started
 		return std::move(result);
 	}
 
-	// Get query executions from the server
+	// Get query executions from the server.
 	auto &query_executions = result->query_executions;
 	query_executions = g_test_server->GetQueryExecutions();
 
