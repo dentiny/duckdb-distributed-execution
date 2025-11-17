@@ -42,5 +42,3 @@ query I
 SELECT COUNT(*) FROM parallelism_test WHERE value < 5000;
 ----
 500
-
-

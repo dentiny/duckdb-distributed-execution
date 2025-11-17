@@ -10,6 +10,17 @@
 
 namespace duckdb {
 
+// Query execution statistics entry.
+struct QueryExecutionStatsEntry {
+	string sql;
+	string execution_mode;
+	string merge_strategy;
+	int64_t query_duration_ms = 0;
+	int64_t num_workers_used = 0;
+	int64_t num_tasks_generated = 0;
+	int64_t execution_start_time_ms = 0;
+};
+
 class DistributedClient {
 public:
 	explicit DistributedClient(string server_url_p = "grpc://localhost:8815");
@@ -52,7 +63,7 @@ public:
 
 	// Get query execution statistics from the server.
 	// Returns error QueryResult on failure.
-	unique_ptr<QueryResult> GetQueryExecutionStats(vector<std::tuple<string, string, string, int64_t, int64_t, int64_t, int64_t>> &stats_out);
+	unique_ptr<QueryResult> GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out);
 
 private:
 	string server_url;

@@ -25,10 +25,10 @@ enum class QueryExecutionMode {
 
 // Structure to store query execution information.
 struct QueryExecutionInfo {
-	string sql;                                      // The SQL query
-	QueryExecutionMode execution_mode;               // Partitioning strategy used
-	QueryPlanAnalyzer::MergeStrategy merge_strategy; // How results were merged
-	std::chrono::milliseconds query_duration;        // Total query duration
+	string sql;                                                 // The SQL query
+	QueryExecutionMode execution_mode;                          // Partitioning strategy used
+	QueryPlanAnalyzer::MergeStrategy merge_strategy;            // How results were merged
+	std::chrono::milliseconds query_duration;                   // Total query duration
 	std::chrono::system_clock::time_point execution_start_time; // When query started (wall-clock time)
 	idx_t num_workers_used = 0;                                 // Number of workers used
 	idx_t num_tasks_generated = 0;                              // Number of tasks created

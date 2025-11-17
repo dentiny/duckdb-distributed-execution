@@ -10,8 +10,7 @@ namespace duckdb {
 namespace {
 
 struct QueryExecutionStatsData : public GlobalTableFunctionState {
-	// Stats data: (sql, execution_mode, merge_strategy, query_duration_ms, num_workers_used, num_tasks_generated, execution_start_time_ms)
-	vector<std::tuple<string, string, string, int64_t, int64_t, int64_t, int64_t>> query_stats;
+	vector<QueryExecutionStatsEntry> query_stats;
 
 	// Used to record the progress of emission.
 	uint64_t offset = 0;
@@ -60,15 +59,8 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientContext &context,
                                                                       TableFunctionInitInput &input) {
 	auto result = make_uniq<QueryExecutionStatsData>();
-
-	// Get client instance and fetch stats via gRPC
 	auto &client = DistributedClient::GetInstance();
 	auto query_result = client.GetQueryExecutionStats(result->query_stats);
-	
-	// If there was an error fetching stats (e.g., server not available),
-	// return empty stats - the vector is already empty by default
-	// This allows the function to work gracefully without the server
-
 	return std::move(result);
 }
 
@@ -80,36 +72,34 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 		return;
 	}
 
-	// Start filling in the result buffer.
 	idx_t count = 0;
 	while (data.offset < data.query_stats.size() && count < STANDARD_VECTOR_SIZE) {
 		const auto &entry = data.query_stats[data.offset++];
 		idx_t col = 0;
 
 		// SQL query
-		output.SetValue(col++, count, Value(std::get<0>(entry)));
+		output.SetValue(col++, count, Value(entry.sql));
 
 		// Execution mode (partitioning strategy)
-		output.SetValue(col++, count, Value(std::get<1>(entry)));
+		output.SetValue(col++, count, Value(entry.execution_mode));
 
 		// Merge strategy
-		output.SetValue(col++, count, Value(std::get<2>(entry)));
+		output.SetValue(col++, count, Value(entry.merge_strategy));
 
 		// Query duration in milliseconds
-		output.SetValue(col++, count, Value::BIGINT(std::get<3>(entry)));
+		output.SetValue(col++, count, Value::BIGINT(entry.query_duration_ms));
 
 		// Number of workers used
-		output.SetValue(col++, count, Value::BIGINT(std::get<4>(entry)));
+		output.SetValue(col++, count, Value::BIGINT(entry.num_workers_used));
 
 		// Number of tasks generated
-		output.SetValue(col++, count, Value::BIGINT(std::get<5>(entry)));
+		output.SetValue(col++, count, Value::BIGINT(entry.num_tasks_generated));
 
 		// Execution start time as timestamp (convert from milliseconds to microseconds)
-		auto milliseconds_since_epoch = std::get<6>(entry);
-		auto microseconds_since_epoch = milliseconds_since_epoch * 1000;
+		auto microseconds_since_epoch = entry.execution_start_time_ms * 1000;
 		output.SetValue(col++, count, Value::TIMESTAMP(timestamp_t(microseconds_since_epoch)));
 
-		count++;
+		++count;
 	}
 	output.SetCardinality(count);
 }

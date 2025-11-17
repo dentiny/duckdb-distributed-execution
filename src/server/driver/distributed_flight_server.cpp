@@ -262,7 +262,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
 	query_info.sql = req.sql();
-	auto query_start = std::chrono::steady_clock::now(); // For duration calculation
+	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
 	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
 
 	// Try distributed execution first if workers are available.
@@ -493,7 +493,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
 	query_info.sql = sql;
-	auto query_start = std::chrono::steady_clock::now(); // For duration calculation
+	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
 	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
 
 	// Try distributed execution first if workers are available.
@@ -653,22 +653,23 @@ vector<QueryExecutionInfo> DistributedFlightServer::GetQueryExecutions() const {
 	return query_history;
 }
 
-arrow::Status DistributedFlightServer::HandleGetQueryExecutionStats(
-    const distributed::GetQueryExecutionStatsRequest &req, distributed::DistributedResponse &resp) {
-	
+arrow::Status
+DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQueryExecutionStatsRequest &req,
+                                                      distributed::DistributedResponse &resp) {
+
 	// Get query execution history
 	auto query_executions = GetQueryExecutions();
-	
+
 	// Pack into protobuf response
 	resp.set_success(true);
 	auto *stats_resp = resp.mutable_get_query_execution_stats();
-	
+
 	for (const auto &exec_info : query_executions) {
 		auto *query_info = stats_resp->add_query_executions();
-		
+
 		// SQL query
 		query_info->set_sql(exec_info.sql);
-		
+
 		// Execution mode
 		switch (exec_info.execution_mode) {
 		case QueryExecutionMode::DELEGATED:
@@ -681,7 +682,7 @@ arrow::Status DistributedFlightServer::HandleGetQueryExecutionStats(
 			query_info->set_execution_mode("ROW_GROUP_PARTITION");
 			break;
 		}
-		
+
 		// Merge strategy
 		switch (exec_info.merge_strategy) {
 		case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
@@ -697,22 +698,22 @@ arrow::Status DistributedFlightServer::HandleGetQueryExecutionStats(
 			query_info->set_merge_strategy("DISTINCT");
 			break;
 		}
-		
+
 		// Query duration in milliseconds
 		query_info->set_query_duration_ms(exec_info.query_duration.count());
-		
+
 		// Number of workers used
 		query_info->set_num_workers_used(exec_info.num_workers_used);
-		
+
 		// Number of tasks generated
 		query_info->set_num_tasks_generated(exec_info.num_tasks_generated);
-		
+
 		// Execution start time as milliseconds since epoch
 		auto time_since_epoch = exec_info.execution_start_time.time_since_epoch();
 		auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch).count();
 		query_info->set_execution_start_time_ms(milliseconds);
 	}
-	
+
 	return arrow::Status::OK();
 }
 
