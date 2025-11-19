@@ -1,5 +1,5 @@
-# name: test/sql/test_worker_registration.test
-# description: Test worker registration functions for distributed execution
+# name: test/sql/test_registration.test
+# description: Test worker and driver node registration functions for distributed execution
 # group: [sql]
 
 require duckherder
@@ -7,9 +7,6 @@ require duckherder
 # Start standalone workers.
 statement ok
 SELECT duckherder_start_standalone_worker(29101);
-
-statement ok
-SELECT duckherder_start_standalone_worker(29102);
 
 # Start distributed server without workers.
 statement ok
@@ -24,6 +21,15 @@ SELECT duckherder_get_worker_count();
 statement ok
 SELECT duckherder_register_worker('worker_ext_1', 'grpc://localhost:29101');
 
+query I
+SELECT duckherder_get_worker_count();
+----
+1
+
+# Start additional local workers after driver starts and register.  
+statement ok
+SELECT duckherder_start_standalone_worker(29102);
+
 statement ok
 SELECT duckherder_register_worker('worker_ext_2', 'grpc://localhost:29102');
 
@@ -31,18 +37,6 @@ query I
 SELECT duckherder_get_worker_count();
 ----
 2
-
-# Start additional local workers after driver starts and register.  
-statement ok
-SELECT duckherder_start_standalone_worker(29103);
-
-statement ok
-SELECT duckherder_register_worker('worker_ext_2', 'grpc://localhost:29103');
-
-query I
-SELECT duckherder_get_worker_count();
-----
-3
 
 statement ok
 ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
@@ -54,7 +48,7 @@ USE dh;
 query I
 SELECT main.duckherder_get_worker_count();
 ----
-3
+2
 
 statement ok
 PRAGMA duckherder_register_remote_table('worker_reg_test', 'worker_reg_test');
@@ -71,3 +65,21 @@ SELECT * FROM worker_reg_test ORDER BY id;
 1	test1
 2	test2
 3	test3
+
+# Test driver node registration.
+statement ok
+SELECT main.duckherder_register_or_replace_driver('driver-1', 'grpc://localhost:8815');
+
+# Replace the driver node with a different one.
+statement ok
+SELECT main.duckherder_register_or_replace_driver('driver-2', 'grpc://localhost:8815');
+
+# The function should work multiple times (idempotent).
+statement ok
+SELECT main.duckherder_register_or_replace_driver('driver-3', 'grpc://localhost:8815');
+
+# Workers should still be available after driver registration.
+query I
+SELECT main.duckherder_get_worker_count();
+----
+2

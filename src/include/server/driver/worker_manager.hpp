@@ -35,6 +35,10 @@ public:
 	// Register a single external worker node.
 	void RegisterWorker(const string &worker_id, const string &location);
 
+	// Register or replace the driver node.
+	// Unlike workers, only one driver node can be registered at a time.
+	void RegisterOrReplaceDriver(const string &driver_id, const string &location);
+
 	// Get all available workers.
 	vector<WorkerInfo *> GetAvailableWorkers();
 
@@ -50,8 +54,11 @@ private:
 	mutable std::mutex mu;
 	DuckDB &db;
 
+	// Driver node.
+	unique_ptr<WorkerInfo> driver_node;
+
 	// Local workers used for local testing.
-	vector<std::unique_ptr<WorkerNode>> local_workers;
+	vector<unique_ptr<WorkerNode>> local_workers;
 	// Used to track next worker ID for local workers.
 	idx_t next_local_worker_id = 0;
 	// Used to track next available port for local workers.
