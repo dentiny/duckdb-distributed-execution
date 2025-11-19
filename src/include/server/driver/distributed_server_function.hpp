@@ -4,16 +4,14 @@
 
 namespace duckdb {
 
-// Create scalar functions for starting and stopping a local server.
+// Create scalar functions for starting driver node management.
 ScalarFunction GetStartLocalServerFunction();
 ScalarFunction GetStopLocalServerFunction();
+ScalarFunction GetRegisterOrReplaceDriverFunction();
 
 // Create scalar functions for worker management.
 ScalarFunction GetWorkerCountFunction();
 ScalarFunction GetRegisterWorkerFunction();
 ScalarFunction GetStartStandaloneWorkerFunction();
-
-// Create scalar function for driver node management.
-ScalarFunction GetRegisterOrReplaceDriverFunction();
 
 } // namespace duckdb

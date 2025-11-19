@@ -45,14 +45,12 @@ void LoadInternal(ExtensionLoader &loader) {
 	// Register distributed server control functions, which could be local usage.
 	loader.RegisterFunction(GetStartLocalServerFunction());
 	loader.RegisterFunction(GetStopLocalServerFunction());
+	loader.RegisterFunction(GetRegisterOrReplaceDriverFunction());
 
 	// Register worker management functions.
 	loader.RegisterFunction(GetWorkerCountFunction());
 	loader.RegisterFunction(GetRegisterWorkerFunction());
 	loader.RegisterFunction(GetStartStandaloneWorkerFunction());
-
-	// Register driver node management functions.
-	loader.RegisterFunction(GetRegisterOrReplaceDriverFunction());
 }
 
 } // namespace

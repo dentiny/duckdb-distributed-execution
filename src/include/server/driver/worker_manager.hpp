@@ -54,11 +54,11 @@ private:
 	mutable std::mutex mu;
 	DuckDB &db;
 
-	// Driver node - only one can be registered at a time.
-	std::unique_ptr<WorkerInfo> driver_node;
+	// Driver node.
+	unique_ptr<WorkerInfo> driver_node;
 
 	// Local workers used for local testing.
-	vector<std::unique_ptr<WorkerNode>> local_workers;
+	vector<unique_ptr<WorkerNode>> local_workers;
 	// Used to track next worker ID for local workers.
 	idx_t next_local_worker_id = 0;
 	// Used to track next available port for local workers.

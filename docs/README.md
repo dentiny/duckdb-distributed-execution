@@ -247,7 +247,7 @@ SELECT duckherder_load_extension('json');
 
 ### Driver/Worker Node Registration
 
-#### Registering Driver Nodes
+#### Starting and Registering Driver Nodes
 
 For distributed execution with external coordination, you can register a driver node location. Unlike worker nodes which can be added incrementally, only one driver node can be registered at a time - registering a new driver will automatically replace any previously registered driver.
 
@@ -267,7 +267,7 @@ SELECT duckherder_register_or_replace_driver('driver-main', 'grpc://192.168.1.10
 SELECT duckherder_register_or_replace_driver('driver-backup', 'grpc://192.168.1.200:8815');
 ```
 
-**Option 3: Using the standalone distributed_server executable**
+**Option 3: Using the standalone distributed server executable**
 ```bash
 # Start the driver server on default host (0.0.0.0) and port (8815)
 ./build/release/distributed_server
@@ -452,7 +452,7 @@ SELECT COUNT(*) FROM duckherder_get_query_history();  -- Returns: 0
 - [ ] Dynamic worker scaling
 - [ ] Query result caching
 - [x] Util function to register driver node and worker nodes
-- [x] Scalar function to register or replace driver node
+- [x] Util function to register or replace the driver node
 
 ## Contributing
 

@@ -116,10 +116,8 @@ void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &re
 
 	auto &driver_id_vector = args.data[0];
 	auto &location_vector = args.data[1];
-
 	auto driver_id_data = FlatVector::GetData<string_t>(driver_id_vector);
 	auto location_data = FlatVector::GetData<string_t>(location_vector);
-
 	string driver_id = driver_id_data[0].GetString();
 	string location = location_data[0].GetString();
 
