@@ -62,7 +62,6 @@ void DistributedFlightServer::Shutdown() {
 }
 
 void DistributedFlightServer::Reset() {
-	// Reinitialize database and components (this clears all workers and driver nodes).
 	Initialize();
 }
 

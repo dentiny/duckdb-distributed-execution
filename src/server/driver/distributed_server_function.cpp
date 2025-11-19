@@ -38,7 +38,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		worker_count = worker_data[0];
 	}
 
-	// If server already exists, Reset all states.
+	// If server already exists, reset all states.
 	if (g_test_server != nullptr) {
 		g_test_server->Reset();
 		for (auto &[worker_port, worker] : g_standalone_workers) {
@@ -73,9 +73,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	}).detach();
 
 	// TODO(hjiang): Use readiness probe to validate driver node up.
-	// Wait for server to be fully ready before returning.
-	// Use longer wait when resetting to ensure old server is fully shut down.
-	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 	result.Reference(Value(SUCCESS));
 }
