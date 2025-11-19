@@ -18,28 +18,7 @@
 namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
-	// Register the Duckling storage extension.
-	DBConfig config;
-	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
-
-	db = make_uniq<DuckDB>(nullptr, &config);
-	conn = make_uniq<Connection>(*db);
-
-	// Attach duckling storage extension.
-	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
-	if (result->HasError()) {
-		throw InternalException(StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
-	}
-
-	// Set duckling as the default database.
-	auto use_result = conn->Query("USE duckling;");
-	if (use_result->HasError()) {
-		throw InternalException(StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
-	}
-
-	// Initialize worker manager and distributed executor
-	worker_manager = make_uniq<WorkerManager>(*db);
-	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
+	Initialize();
 }
 
 DatabaseInstance &DistributedFlightServer::GetDatabaseInstance() {
@@ -80,6 +59,42 @@ arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
 void DistributedFlightServer::Shutdown() {
 	auto status = FlightServerBase::Shutdown();
 	// Ignore shutdown errors in production
+}
+
+void DistributedFlightServer::Reset() {
+	// Reinitialize database and components (this clears all workers and driver nodes).
+	Initialize();
+}
+
+void DistributedFlightServer::Initialize() {
+	// Clear query history.
+	{
+		const std::lock_guard<std::mutex> lock(query_history_mutex);
+		query_history.clear();
+	}
+
+	// Register the Duckling storage extension.
+	DBConfig config;
+	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
+
+	db = make_uniq<DuckDB>(nullptr, &config);
+	conn = make_uniq<Connection>(*db);
+
+	// Attach duckling storage extension.
+	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
+	if (result->HasError()) {
+		throw InternalException(StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
+	}
+
+	// Set duckling as the default database.
+	auto use_result = conn->Query("USE duckling;");
+	if (use_result->HasError()) {
+		throw InternalException(StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
+	}
+
+	// Initialize worker manager and distributed executor.
+	worker_manager = make_uniq<WorkerManager>(*db);
+	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
 }
 
 string DistributedFlightServer::GetLocation() const {

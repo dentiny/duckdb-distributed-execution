@@ -38,13 +38,20 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		worker_count = worker_data[0];
 	}
 
-	// Already registered.
+	// If server already exists, Reset all states.
 	if (g_test_server != nullptr) {
-		result.Reference(Value(SUCCESS));
-		return;
+		g_test_server->Reset();
+		for (auto &[worker_port, worker] : g_standalone_workers) {
+			worker->Shutdown();
+		}
+		g_standalone_workers.clear();
+
+		g_next_standalone_worker_port = 9000;
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	} else {
+		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 	}
 
-	g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 	arrow::Status status;
 	if (worker_count > 0) {
 		status = g_test_server->StartWithWorkers(worker_count);
@@ -66,7 +73,9 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	}).detach();
 
 	// TODO(hjiang): Use readiness probe to validate driver node up.
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	// Wait for server to be fully ready before returning.
+	// Use longer wait when resetting to ensure old server is fully shut down.
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 	result.Reference(Value(SUCCESS));
 }

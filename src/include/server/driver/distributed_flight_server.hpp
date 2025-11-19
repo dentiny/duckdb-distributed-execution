@@ -60,6 +60,9 @@ public:
 	// Stop the server.
 	void Shutdown();
 
+	// Reset all server states.
+	void Reset();
+
 	// Get server location.
 	string GetLocation() const;
 
@@ -148,6 +151,8 @@ private:
 	                                 idx_t *row_count = nullptr);
 
 private:
+	// Initialize DuckDB instance, connection, and components.
+	void Initialize();
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
