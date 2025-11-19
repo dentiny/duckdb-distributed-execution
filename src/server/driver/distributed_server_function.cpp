@@ -38,13 +38,18 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		worker_count = worker_data[0];
 	}
 
-	// Already registered.
+	// If server already exists, reset all states.
 	if (g_test_server != nullptr) {
-		result.Reference(Value(SUCCESS));
-		return;
+		g_test_server->Reset();
+		for (auto &[worker_port, worker] : g_standalone_workers) {
+			worker->Shutdown();
+		}
+		g_standalone_workers.clear();
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	} else {
+		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 	}
 
-	g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 	arrow::Status status;
 	if (worker_count > 0) {
 		status = g_test_server->StartWithWorkers(worker_count);
