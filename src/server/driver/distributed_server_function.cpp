@@ -45,8 +45,6 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 			worker->Shutdown();
 		}
 		g_standalone_workers.clear();
-
-		g_next_standalone_worker_port = 9000;
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	} else {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
