@@ -13,4 +13,7 @@ ScalarFunction GetWorkerCountFunction();
 ScalarFunction GetRegisterWorkerFunction();
 ScalarFunction GetStartStandaloneWorkerFunction();
 
+// Create scalar function for driver node management.
+ScalarFunction GetRegisterOrReplaceDriverFunction();
+
 } // namespace duckdb

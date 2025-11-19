@@ -50,6 +50,9 @@ void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(GetWorkerCountFunction());
 	loader.RegisterFunction(GetRegisterWorkerFunction());
 	loader.RegisterFunction(GetStartStandaloneWorkerFunction());
+
+	// Register driver node management functions.
+	loader.RegisterFunction(GetRegisterOrReplaceDriverFunction());
 }
 
 } // namespace

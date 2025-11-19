@@ -21,6 +21,29 @@ void WorkerManager::RegisterWorker(const string &worker_id, const string &locati
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully registered worker '%s' at '%s'", worker_id, location);
 }
 
+void WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
+	std::lock_guard<std::mutex> lck(mu);
+	auto &db_instance = *db.instance;
+
+	// If a driver node already exists, log replacement.
+	if (driver_node) {
+		DUCKDB_LOG_DEBUG(db_instance, "Replacing existing driver '%s' at '%s' with '%s' at '%s'",
+		                 driver_node->worker_id, driver_node->location, driver_id, location);
+	}
+
+	auto new_driver = make_uniq<WorkerInfo>(driver_id, location);
+
+	// Connect to the driver.
+	auto status = new_driver->client->Connect();
+	if (!status.ok()) {
+		throw IOException("Failed to connect to driver %s at %s: %s", driver_id, location, status.ToString());
+	}
+
+	// Replace the existing driver node.
+	driver_node = std::move(new_driver);
+	DUCKDB_LOG_DEBUG(db_instance, "Successfully registered/replaced driver '%s' at '%s'", driver_id, location);
+}
+
 vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {
 	vector<WorkerInfo *> available;
 	available.reserve(workers.size());

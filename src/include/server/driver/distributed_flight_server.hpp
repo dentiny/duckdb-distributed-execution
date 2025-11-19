@@ -66,6 +66,10 @@ public:
 	// Register an external worker node.
 	void RegisterWorker(const string &worker_id, const string &location);
 
+	// Register or replace the driver node.
+	// Unlike workers, only one driver node can be registered at a time.
+	void RegisterOrReplaceDriver(const string &driver_id, const string &location);
+
 	// Get the number of registered workers.
 	idx_t GetWorkerCount() const;
 

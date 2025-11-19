@@ -247,6 +247,38 @@ SELECT duckherder_load_extension('json');
 
 ### Driver/Worker Node Registration
 
+#### Registering Driver Nodes
+
+For distributed execution with external coordination, you can register a driver node location. Unlike worker nodes which can be added incrementally, only one driver node can be registered at a time - registering a new driver will automatically replace any previously registered driver.
+
+**Option 1: Start local driver server (for testing, debugging and development)**
+```sql
+-- Start a local server on default host (0.0.0.0) and port (8815)
+SELECT duckherder_start_local_server(8815);
+```
+
+**Option 2: Register external driver (for multi-machine setups)**
+```sql
+-- Register an external driver node running on a different machine
+-- Syntax: duckherder_register_or_replace_driver(driver_id, location)
+SELECT duckherder_register_or_replace_driver('driver-main', 'grpc://192.168.1.100:8815');
+
+-- Replacing an existing driver node (automatic replacement)
+SELECT duckherder_register_or_replace_driver('driver-backup', 'grpc://192.168.1.200:8815');
+```
+
+**Option 3: Using the standalone distributed_server executable**
+```bash
+# Start the driver server on default host (0.0.0.0) and port (8815)
+./build/release/distributed_server
+
+# Start the driver server on a specific host and port
+./build/release/distributed_server 192.168.1.100 8815
+
+# Start the driver server with 4 local workers (for single-machine distributed execution)
+./build/release/distributed_server 0.0.0.0 8815 4
+```
+
 #### Starting and Registering Standalone Workers
 
 For distributed execution, you can either use local workers (managed by the driver) or register external standalone workers:
@@ -288,33 +320,37 @@ SELECT duckherder_get_worker_count();  -- Returns: 3
 
 #### Complete Multi-Machine Setup Example
 
-**On the driver machine:**
-```sql
--- Start the driver node
-SELECT duckherder_start_local_server(8815);
+**On the driver machine (192.168.1.100):**
+```bash
+# Start the standalone driver server
+./build/release/distributed_server 0.0.0.0 8815
 ```
 
 **On each worker machine, run:**
 ```bash
-# Worker 1
+# Worker 1 (192.168.1.101)
 ./build/release/distributed_worker 0.0.0.0 8816 worker-1
 
-# Worker 2  
+# Worker 2 (192.168.1.102)
 ./build/release/distributed_worker 0.0.0.0 8816 worker-2
 
-# Worker 3
+# Worker 3 (192.168.1.103)
 ./build/release/distributed_worker 0.0.0.0 8816 worker-3
 ```
 
-**Back on the driver, register the workers:**
+**From a client machine, register nodes and connect:**
 ```sql
+-- Register the driver node
+SELECT duckherder_register_or_replace_driver('driver-main', 'grpc://192.168.1.100:8815');
+
 -- Register each worker with its network location
 SELECT duckherder_register_worker('worker-1', 'grpc://192.168.1.101:8816');
 SELECT duckherder_register_worker('worker-2', 'grpc://192.168.1.102:8816');
 SELECT duckherder_register_worker('worker-3', 'grpc://192.168.1.103:8816');
 
 -- Confirm registration
-SELECT duckherder_get_worker_count();
+SELECT duckherder_get_worker_count();  -- Returns: 3
+```
 
 ### Working with Remote Tables
 
@@ -416,6 +452,7 @@ SELECT COUNT(*) FROM duckherder_get_query_history();  -- Returns: 0
 - [ ] Dynamic worker scaling
 - [ ] Query result caching
 - [x] Util function to register driver node and worker nodes
+- [x] Scalar function to register or replace driver node
 
 ## Contributing
 

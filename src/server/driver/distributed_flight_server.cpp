@@ -93,6 +93,13 @@ void DistributedFlightServer::RegisterWorker(const string &worker_id, const stri
 	worker_manager->RegisterWorker(worker_id, location);
 }
 
+void DistributedFlightServer::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
+	if (!worker_manager) {
+		throw InternalException("WorkerManager not initialized");
+	}
+	worker_manager->RegisterOrReplaceDriver(driver_id, location);
+}
+
 idx_t DistributedFlightServer::GetWorkerCount() const {
 	if (!worker_manager) {
 		return 0;
