@@ -42,6 +42,14 @@ void WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const strin
 	// Replace the existing driver node.
 	driver_node = std::move(new_driver);
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully registered/replaced driver '%s' at '%s'", driver_id, location);
+
+	// TODO(hjiang): When a driver is replaced, the new driver doesn't automatically know about registered workers.
+	if (!workers.empty()) {
+		DUCKDB_LOG_DEBUG(db_instance,
+		                 "Note: %llu worker(s) are registered locally but not automatically synced to the new driver. "
+		                 "Workers may need to be re-registered with the new driver if coordination is required.",
+		                 workers.size());
+	}
 }
 
 vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {
