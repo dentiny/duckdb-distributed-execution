@@ -50,3 +50,10 @@ SELECT id, category, value FROM parallel_test WHERE category = 'electronics';
 ----
 1	electronics	100
 5	electronics	500
+
+# Test 4: Verify execution mode.
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM parallel_test%' AND execution_mode = 'DELEGATED');
+----
+true

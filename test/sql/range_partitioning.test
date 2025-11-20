@@ -3,7 +3,8 @@
 # group: [sql]
 
 # Partitioning method: rowid BETWEEN range_start AND range_end (not aligned with row groups)
-# Dataset: 10,000 rows distributed evenly (2,500 rows per worker with 4 workers)
+# Dataset: 200,000 rows distributed evenly (50,000 rows per worker with 4 workers)
+# This is > 122,880 rows (1 row group) to trigger NATURAL_PARTITION mode
 
 require duckherder
 
@@ -31,11 +32,12 @@ CREATE TABLE large_table (
     amount DECIMAL(10,2)
 );
 
-# Insert 10,000 rows to trigger intelligent range-based partitioning
+# Insert 200,000 rows to trigger intelligent range-based partitioning
 # This ensures:
 # - Natural parallelism > 0
 # - Intelligent partitioning: YES
 # - Range-based partition predicates (rowid BETWEEN x AND y)
+# - Table size > 122,880 rows to use NATURAL_PARTITION mode
 statement ok
 INSERT INTO large_table 
 SELECT 
@@ -49,14 +51,14 @@ SELECT
         ELSE 'furniture'
     END,
     (i * 1.5)::DECIMAL(10,2)
-FROM range(10000) t(i);
+FROM range(200000) t(i);
 
-# Test 1: Verify partition boundary rows (each from different worker)
-# Expected partitioning:
-#   Worker 0: rowid BETWEEN 0 AND 2499       (2500 rows)
-#   Worker 1: rowid BETWEEN 2500 AND 4999    (2500 rows)
-#   Worker 2: rowid BETWEEN 5000 AND 7499    (2500 rows)
-#   Worker 3: rowid BETWEEN 7500 AND 9999    (2500 rows)
+# Test 1: Verify partition boundary rows.
+# Expected partitioning with 4 workers and 200,000 rows:
+#   Worker 0: rowid BETWEEN 0 AND 49999       (50,000 rows)
+#   Worker 1: rowid BETWEEN 50000 AND 99999   (50,000 rows)
+#   Worker 2: rowid BETWEEN 100000 AND 149999 (50,000 rows)
+#   Worker 3: rowid BETWEEN 150000 AND 199999 (50,000 rows)
 
 # Test rows from Worker 0 boundary
 query IIII
@@ -66,99 +68,105 @@ SELECT id, value, category, amount FROM large_table WHERE id = 0;
 
 # Test rows from Worker 1 boundary
 query IIII
-SELECT id, value, category, amount FROM large_table WHERE id = 2500;
+SELECT id, value, category, amount FROM large_table WHERE id = 50000;
 ----
-2500	250000	electronics	3750.00
+50000	5000000	electronics	75000.00
 
 # Test rows from Worker 2 boundary
 query IIII
-SELECT id, value, category, amount FROM large_table WHERE id = 5000;
+SELECT id, value, category, amount FROM large_table WHERE id = 100000;
 ----
-5000	500000	electronics	7500.00
+100000	10000000	electronics	150000.00
 
 # Test rows from Worker 3 boundary
 query IIII
-SELECT id, value, category, amount FROM large_table WHERE id = 7500;
+SELECT id, value, category, amount FROM large_table WHERE id = 150000;
 ----
-7500	750000	electronics	11250.00
+150000	15000000	electronics	225000.00
 
 # Test last row
 query IIII
-SELECT id, value, category, amount FROM large_table WHERE id = 9999;
+SELECT id, value, category, amount FROM large_table WHERE id = 199999;
 ----
-9999	999900	furniture	14998.50
+199999	19999900	furniture	299998.50
 
-# Test 2: Verify rows from first partition (Worker 0: 0-2499)
+# Test 2: Verify rows from first partition (Worker 0: 0-49999)
 query III
 SELECT id, value, category FROM large_table WHERE id = 100;
 ----
 100	10000	electronics
 
-# Test 3: Verify rows from second partition (Worker 1: 2500-4999)
+# Test 3: Verify rows from second partition (Worker 1: 50000-99999)
 query III
-SELECT id, value, category FROM large_table WHERE id = 3000;
+SELECT id, value, category FROM large_table WHERE id = 75000;
 ----
-3000	300000	electronics
+75000	7500000	electronics
 
-# Test 4: Verify rows from third partition (Worker 2: 5000-7499)
+# Test 4: Verify rows from third partition (Worker 2: 100000-149999)
 query III
-SELECT id, value, category FROM large_table WHERE id = 6000;
+SELECT id, value, category FROM large_table WHERE id = 125000;
 ----
-6000	600000	electronics
+125000	12500000	electronics
 
-# Test 5: Verify rows from fourth partition (Worker 3: 7500-9999)
+# Test 5: Verify rows from fourth partition (Worker 3: 150000-199999)
 query III
-SELECT id, value, category FROM large_table WHERE id = 9000;
+SELECT id, value, category FROM large_table WHERE id = 175000;
 ----
-9000	900000	electronics
+175000	17500000	electronics
 
 # Test 6: Filtered query across multiple partitions
 query III
-SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 5002;
+SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 50002;
 ----
-5002	500200	food
+50002	5000200	food
 
 query III
-SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 5007;
+SELECT id, value, category FROM large_table WHERE category = 'food' AND id = 100007;
 ----
-5007	500700	food
+100007	10000700	food
 
 # Test 7: Verify specific rows spanning partition boundaries
 query III
-SELECT id, value, category FROM large_table WHERE id = 2498;
+SELECT id, value, category FROM large_table WHERE id = 49998;
 ----
-2498	249800	books
+49998	4999800	books
 
 query III
-SELECT id, value, category FROM large_table WHERE id = 2502;
+SELECT id, value, category FROM large_table WHERE id = 50002;
 ----
-2502	250200	food
+50002	5000200	food
 
 # Test 8: Query with predicate on non-key column
 query III
-SELECT id, value, category FROM large_table WHERE value = 500000;
+SELECT id, value, category FROM large_table WHERE value = 5000000;
 ----
-5000	500000	electronics
+50000	5000000	electronics
 
 # Test 9: Category-based filtering across all partitions
 query II
-SELECT id, category FROM large_table WHERE category = 'books' AND id = 8003;
+SELECT id, category FROM large_table WHERE category = 'books' AND id = 150003;
 ----
-8003	books
+150003	books
 
 query II
-SELECT id, category FROM large_table WHERE category = 'books' AND id = 8013;
+SELECT id, category FROM large_table WHERE category = 'books' AND id = 150013;
 ----
-8013	books
+150013	books
 
 # Test 10: Verify end boundaries
 query III
-SELECT id, value, category FROM large_table WHERE id = 9995;
+SELECT id, value, category FROM large_table WHERE id = 199995;
 ----
-9995	999500	electronics
+199995	19999500	electronics
 
 query III
-SELECT id, value, category FROM large_table WHERE id = 9999;
+SELECT id, value, category FROM large_table WHERE id = 199999;
 ----
-9999	999900	furniture
+199999	19999900	furniture
 
+# Verify execution mode.
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM large_table%' AND execution_mode = 'NATURAL_PARTITION');
+----
+true

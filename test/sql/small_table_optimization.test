@@ -123,3 +123,11 @@ query II
 SELECT id, value FROM medium_small_table WHERE id = 5000;
 ----
 5000	50000
+
+# Verify execution mode for small tables (< 122,880 rows = 1 row group), which should use DELEGATED mode.
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE (sql LIKE '%FROM tiny_table%' OR sql LIKE '%FROM small_table%' OR sql LIKE '%FROM medium_small_table%')
+                AND execution_mode = 'DELEGATED');
+----
+true
