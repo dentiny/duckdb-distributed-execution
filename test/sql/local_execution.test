@@ -6,10 +6,10 @@ require duckherder
 
 # Start distributed server with 2 workers
 statement ok
-SELECT duckherder_start_local_server(8840, 2);
+SELECT duckherder_start_local_server(8815, 2);
 
 statement ok
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8840);
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
 
 statement ok
 USE dh;
@@ -28,7 +28,7 @@ INSERT INTO local_test VALUES
     (4, 'date', 400),
     (5, 'elderberry', 500);
 
-# Query with ORDER BY - cannot be distributed, should execute locally on the driver node.
+# Query with ORDER BY, which cannot be distributed, should execute locally on the driver node.
 query III
 SELECT id, value, amount FROM local_test ORDER BY id;
 ----
@@ -47,3 +47,12 @@ SELECT id, value, amount FROM local_test ORDER BY amount DESC;
 3	cherry	300
 2	banana	200
 1	apple	100
+
+# Verify execution mode.
+# Queries with ORDER BY cannot be distributed, so they should use LOCAL mode.
+# However, if the table is small, they might use DELEGATED mode instead.
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM local_test%' AND (execution_mode = 'LOCAL' OR execution_mode = 'DELEGATED'));
+----
+true

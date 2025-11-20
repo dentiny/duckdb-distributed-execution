@@ -142,3 +142,10 @@ SELECT COUNT(DISTINCT id) FROM multi_rg_table;
 ----
 500000
 
+# Test 10: Verify execution mode is ROW_GROUP_PARTITION
+# Large tables with multiple row groups should use row-group based partitioning
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM multi_rg_table%' AND execution_mode = 'ROW_GROUP_PARTITION');
+----
+true

@@ -56,3 +56,10 @@ query IT
 SELECT COUNT(*), MAX(id) FROM distributed_basic_table;
 ----
 4	4
+
+# Verify execution mode.
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM distributed_basic_table%' AND execution_mode = 'DELEGATED');
+----
+true
