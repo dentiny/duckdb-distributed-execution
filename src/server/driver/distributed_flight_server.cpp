@@ -297,7 +297,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
 
-			// Map partition strategy to execution mode
 			switch (exec_result.partition_strategy) {
 			case PartitionStrategy::NONE:
 				query_info.execution_mode = QueryExecutionMode::DELEGATED;
@@ -309,8 +308,6 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
 				break;
 			}
-
-			// Record merge strategy
 			query_info.merge_strategy = exec_result.merge_strategy;
 		}
 	}
@@ -333,7 +330,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 		return arrow::Status::OK();
 	}
 
-	// Record all successful query executions (both distributed and local)
+	// Record all successful query executions.
 	RecordQueryExecution(std::move(query_info));
 
 	resp.set_success(true);
@@ -518,7 +515,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	bool was_distributed = false;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = distributed_executor->ExecuteDistributed(sql);
 
@@ -527,7 +523,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 			result = std::move(exec_result.result);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
-			was_distributed = true;
 
 			// Map partition strategy to execution mode
 			switch (exec_result.partition_strategy) {
@@ -541,8 +536,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
 				break;
 			}
-
-			// Record merge strategy
 			query_info.merge_strategy = exec_result.merge_strategy;
 		}
 	}
@@ -550,16 +543,17 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
 		result = conn->Query(sql);
+		query_info.execution_mode = QueryExecutionMode::LOCAL;
+		query_info.num_workers_used = 0;
+		query_info.num_tasks_generated = 0;
 	}
 
 	// Calculate total query duration (using steady_clock for accurate elapsed time)
 	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
-	// Only record if query was actually distributed to workers.
-	if (was_distributed) {
-		RecordQueryExecution(std::move(query_info));
-	}
+	// Record all successful query executions (both distributed and local)
+	RecordQueryExecution(std::move(query_info));
 
 	if (result->HasError()) {
 		return arrow::Status::Invalid("Query error: " + result->GetError());
@@ -621,7 +615,6 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
                                                           std::shared_ptr<arrow::RecordBatchReader> &reader,
                                                           idx_t *row_count) {
-	// Create Arrow schema from DuckDB types.
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
@@ -636,13 +629,11 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 			break;
 		}
 
-		// Convert DataChunk to Arrow using C API.
 		ArrowArray arrow_array;
 		auto extension_types =
 		    ArrowTypeExtensionData::GetExtensionTypes(*result.client_properties.client_context, result.types);
 		ArrowConverter::ToArrowArray(*chunk, &arrow_array, result.client_properties, extension_types);
 
-		// Import to Arrow C++ RecordBatch.
 		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
 		if (!batch_result.ok()) {
 			return arrow::Status::Invalid("Failed to import Arrow batch: " + batch_result.status().ToString());
@@ -676,21 +667,14 @@ vector<QueryExecutionInfo> DistributedFlightServer::GetQueryExecutions() const {
 arrow::Status
 DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQueryExecutionStatsRequest &req,
                                                       distributed::DistributedResponse &resp) {
-
-	// Get query execution history
 	auto query_executions = GetQueryExecutions();
-
-	// Pack into protobuf response
 	resp.set_success(true);
 	auto *stats_resp = resp.mutable_get_query_execution_stats();
 
 	for (const auto &exec_info : query_executions) {
 		auto *query_info = stats_resp->add_query_executions();
-
-		// SQL query
 		query_info->set_sql(exec_info.sql);
 
-		// Execution mode
 		switch (exec_info.execution_mode) {
 		case QueryExecutionMode::LOCAL:
 			query_info->set_execution_mode("LOCAL");
@@ -706,7 +690,6 @@ DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQuer
 			break;
 		}
 
-		// Merge strategy
 		switch (exec_info.merge_strategy) {
 		case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
 			query_info->set_merge_strategy("CONCATENATE");
@@ -722,16 +705,10 @@ DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQuer
 			break;
 		}
 
-		// Query duration in milliseconds
 		query_info->set_query_duration_ms(exec_info.query_duration.count());
-
-		// Number of workers used
 		query_info->set_num_workers_used(exec_info.num_workers_used);
-
-		// Number of tasks generated
 		query_info->set_num_tasks_generated(exec_info.num_tasks_generated);
 
-		// Execution start time as milliseconds since epoch
 		auto time_since_epoch = exec_info.execution_start_time.time_since_epoch();
 		auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_since_epoch).count();
 		query_info->set_execution_start_time_ms(milliseconds);
