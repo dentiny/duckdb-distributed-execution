@@ -130,7 +130,7 @@ SELECT COUNT(DISTINCT id) FROM rg_medium_table;
 ----
 250000
 
-# Test 9: Verify execution mode is ROW_GROUP_PARTITION
+# Verify execution mode.
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
               WHERE sql LIKE '%FROM rg_medium_table%' AND execution_mode = 'NATURAL_PARTITION');
