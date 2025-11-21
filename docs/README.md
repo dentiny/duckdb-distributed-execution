@@ -2,6 +2,10 @@
 
 Duckherder is a DuckDB extension built upon [storage extension](https://github.com/duckdb/duckdb/pull/6066) that enables (certain) distributed query execution across multiple worker nodes using [Arrow Flight](https://arrow.apache.org/docs/format/Flight.html) for efficient data transfer. It allows you to seamlessly work with remote tables and execute queries in parallel across distributed workers while maintaining DuckDB's familiar SQL interface.
 
+## WIP Disclaimer
+This repository is currently a work in progress, and not yet for production usage.
+Feel free to play around with it, give me feedback, and ping me for feature request and collaboration!
+
 ## Table of Contents
 
 - [Overview](#overview)
