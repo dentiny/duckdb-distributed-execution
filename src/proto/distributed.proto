@@ -126,14 +126,10 @@ message WorkerHeartbeatRequest {
 }
 
 // Get query execution stats request.
-message GetQueryExecutionStatsRequest {
-  // Empty - returns all stats
-}
+message GetQueryExecutionStatsRequest {}
 
 // Readiness check request.
-message ReadinessCheckRequest {
-  // Empty - just checks if server is ready
-}
+message ReadinessCheckRequest {}
 
 // Request message for distributed operations.
 message DistributedRequest {

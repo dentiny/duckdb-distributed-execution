@@ -724,8 +724,6 @@ DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQuer
 
 arrow::Status DistributedFlightServer::HandleReadinessCheck(const distributed::ReadinessCheckRequest &req,
                                                             distributed::DistributedResponse &resp) {
-	// Server is ready if it's initialized and can respond
-	// This is a lightweight check that just verifies the server is up and running
 	auto *readiness_resp = resp.mutable_readiness_check();
 	readiness_resp->set_ready(true);
 	resp.set_success(true);
