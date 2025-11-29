@@ -1,5 +1,10 @@
 #include "utils/catalog_utils.hpp"
 
+#include "client/distributed_client.hpp"
+#include "client/duckherder_catalog.hpp"
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 namespace duckdb {
@@ -76,6 +81,23 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 	}
 
 	return sql;
+}
+
+DistributedClient &GetDistributedClient(TableCatalogEntry &table) {
+	auto &catalog = table.ParentCatalog();
+	if (catalog.GetCatalogType() != "duckherder") {
+		throw InternalException("Expected DuckherderCatalog for distributed operation");
+	}
+	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
+	return dh_catalog.GetClient();
+}
+
+DistributedClient &GetDistributedClient(Catalog &catalog) {
+	if (catalog.GetCatalogType() != "duckherder") {
+		throw InternalException("Expected DuckherderCatalog for distributed operation");
+	}
+	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
+	return dh_catalog.GetClient();
 }
 
 } // namespace duckdb

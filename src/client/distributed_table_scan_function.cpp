@@ -7,7 +7,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckherder_catalog.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
@@ -68,14 +68,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	// Get the catalog from the table and use its client (which has the correct server URL)
-	auto &catalog = bind_data.table.ParentCatalog();
-	if (catalog.GetCatalogType() != "duckherder") {
-		throw InternalException("Expected DuckherderCatalog for distributed table scan");
-	}
-	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
-	auto &client = dh_catalog.GetClient();
-
+	auto &client = GetDistributedClient(bind_data.table);
 	if (!client.TableExists(bind_data.remote_table_name)) {
 		output.SetCardinality(0);
 		local_state.finished = true;

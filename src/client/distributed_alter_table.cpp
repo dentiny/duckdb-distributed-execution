@@ -9,7 +9,6 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
-#include "duckherder_catalog.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -60,13 +59,8 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetData(ExecutionContext &con
 	string alter_sql = SanitizeQuery(info->ToString(), catalog_name);
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
-	// Get the catalog and use its client (which has the correct server URL)
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
-	if (catalog.GetCatalogType() != "duckherder") {
-		throw InternalException("Expected DuckherderCatalog for distributed alter table");
-	}
-	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
-	auto &client = dh_catalog.GetClient();
+	auto &client = GetDistributedClient(catalog);
 	auto result = client.ExecuteSQL(alter_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());
