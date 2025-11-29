@@ -5,6 +5,7 @@
 #include "server/driver/distributed_flight_server.hpp"
 #include "utils/network_utils.hpp"
 #include "utils/no_destructor.hpp"
+#include "utils/readiness_probe.hpp"
 #include "utils/thread_utils.hpp"
 
 #include <thread>
@@ -96,8 +97,11 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		}
 	});
 
-	// TODO(hjiang): Should use readiness probe to wait until ready.
-	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	// Use readiness probe to wait until server is ready.
+	string location = StringUtil::Format("grpc://localhost:%d", port);
+	if (!WaitForDriverServerReady(location)) {
+		throw Exception(ExceptionType::IO, "Server failed to become ready within timeout");
+	}
 
 	result.Reference(Value(SUCCESS));
 }
@@ -232,8 +236,11 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 		}
 	});
 
-	// TODO(hjiang): Use readiness probe to validate worker node up.
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	// Use readiness probe to validate worker node is ready.
+	string location = StringUtil::Format("grpc://localhost:%d", port);
+	if (!WaitForWorkerNodeReady(location)) {
+		throw Exception(ExceptionType::IO, "Worker node failed to become ready within timeout");
+	}
 
 	result.Reference(Value(SUCCESS));
 }
