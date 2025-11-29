@@ -63,8 +63,7 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetData(ExecutionContext &co
 	string create_sql = SanitizeQuery(info->ToString(), catalog_name);
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing CREATE INDEX on remote server: %s", create_sql));
 
-	// Execute on remote server using the singleton DistributedClient
-	auto &client = DistributedClient::GetInstance();
+	auto &client = GetDistributedClient(catalog);
 	auto result = client.ExecuteSQL(create_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to create index on server: " + result->GetError());

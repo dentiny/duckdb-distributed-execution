@@ -17,6 +17,7 @@ namespace duckdb {
 // Forward declaration.
 class DuckCatalog;
 class DatabaseInstance;
+class DistributedClient;
 
 // Configuration for remote tables
 struct RemoteTableConfig {
@@ -93,6 +94,9 @@ public:
 	// Get server URL from stored configuration.
 	string GetServerUrl() const;
 
+	// Get the client instance for this catalog.
+	DistributedClient &GetClient();
+
 	// Remote index management.
 	void RegisterRemoteIndex(const string &index_name);
 	void UnregisterRemoteIndex(const string &index_name);
@@ -119,6 +123,10 @@ private:
 	// TODO(hjiang): Currently remote indexes live in memory, should provide options to persist and load.
 	mutable std::mutex remote_indexes_mu;
 	unordered_set<string> remote_indexes;
+
+	// Client instance for this catalog.
+	mutable std::mutex client_mu;
+	unique_ptr<DistributedClient> distributed_client;
 };
 
 } // namespace duckdb

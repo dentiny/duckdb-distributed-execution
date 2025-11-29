@@ -8,6 +8,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
@@ -109,7 +110,7 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	delete_sql += ")";
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing DELETE on remote server: %s", delete_sql));
 
-	auto &client = DistributedClient::GetInstance();
+	auto &client = GetDistributedClient(table);
 	auto result = client.ExecuteSQL(delete_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to delete from server: " + result->GetError());

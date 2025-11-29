@@ -8,6 +8,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
@@ -84,7 +85,7 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 		insert_sql += ")";
 	}
 
-	auto &client = DistributedClient::GetInstance();
+	auto &client = GetDistributedClient(table);
 	auto result = client.InsertInto(insert_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to insert into server: " + result->GetError());

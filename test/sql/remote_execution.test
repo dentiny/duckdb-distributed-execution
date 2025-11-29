@@ -7,10 +7,10 @@
 # require duckherder
 
 # statement ok
-# SELECT duckherder_start_local_server(8815);
+# SELECT duckherder_start_local_server(8823);
 
 # statement ok
-# ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
+# ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8823);
 
 # statement ok
 # PRAGMA duckherder_register_remote_table('remote_exec_table', 'remote_exec_table');

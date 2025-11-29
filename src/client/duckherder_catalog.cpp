@@ -1,5 +1,6 @@
 #include "duckherder_catalog.hpp"
 
+#include "distributed_client.hpp"
 #include "distributed_delete.hpp"
 #include "distributed_insert.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -266,6 +267,14 @@ bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
 
 string DuckherderCatalog::GetServerUrl() const {
 	return StringUtil::Format("grpc://%s:%d", server_host, server_port);
+}
+
+DistributedClient &DuckherderCatalog::GetClient() {
+	std::lock_guard<std::mutex> lock(client_mu);
+	if (!distributed_client) {
+		distributed_client = make_uniq<DistributedClient>(GetServerUrl());
+	}
+	return *distributed_client;
 }
 
 } // namespace duckdb

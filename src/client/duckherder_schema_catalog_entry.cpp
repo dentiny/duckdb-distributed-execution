@@ -193,7 +193,8 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 		create_sql += ")";
 
 		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
-		auto &client = DistributedClient::GetInstance();
+		auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+		auto &client = dh_catalog.GetClient();
 		auto result = client.CreateTable(create_sql);
 		if (result->HasError()) {
 			throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
@@ -342,7 +343,8 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 	drop_sql += info.name;
 
 	const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
-	auto &client = DistributedClient::GetInstance();
+	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+	auto &client = dh_catalog.GetClient();
 	auto result = client.ExecuteSQL(drop_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
@@ -365,7 +367,8 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 	}
 
 	const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
-	auto &client = DistributedClient::GetInstance();
+	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+	auto &client = dh_catalog.GetClient();
 	auto result = client.ExecuteSQL(drop_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
@@ -417,7 +420,8 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			string alter_sql = GenerateAlterTableSQL(table_info, info.name);
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
-			auto &client = DistributedClient::GetInstance();
+			auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+			auto &client = dh_catalog.GetClient();
 			auto result = client.ExecuteSQL(alter_sql);
 			if (result->HasError()) {
 				throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());

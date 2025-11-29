@@ -7,6 +7,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
@@ -67,7 +68,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	auto &client = DistributedClient::GetInstance();
+	auto &client = GetDistributedClient(bind_data.table);
 	if (!client.TableExists(bind_data.remote_table_name)) {
 		output.SetCardinality(0);
 		local_state.finished = true;

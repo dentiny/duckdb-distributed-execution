@@ -6,10 +6,10 @@ require duckherder
 
 # Start distributed server in background thread
 statement ok
-SELECT duckherder_start_local_server(8815);
+SELECT duckherder_start_local_server(8831);
 
 statement ok
-ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
+ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8831);
 
 statement ok
 DROP TABLE IF EXISTS dh.extension_test_table;
