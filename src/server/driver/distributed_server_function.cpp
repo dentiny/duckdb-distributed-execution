@@ -17,10 +17,14 @@ constexpr bool SUCCESS = true;
 
 // Map from of port number server instance for test isolation.
 unique_ptr<DistributedFlightServer> g_test_server;
+// Thread running the server's Serve() method
+unique_ptr<std::thread> g_server_thread;
 constexpr int DEFAULT_SERVER_PORT = 8815;
 
 // Map from port number to standalone worker instance for testing registration.
 unordered_map<int, unique_ptr<WorkerNode>> g_standalone_workers;
+// Map from port number to worker thread for cleanup.
+unordered_map<int, unique_ptr<std::thread>> g_worker_threads;
 // Used to track next available port for standalone workers when port is not specified.
 int g_next_standalone_worker_port = 9000;
 
@@ -38,15 +42,34 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		worker_count = worker_data[0];
 	}
 
-	// If server already exists, reset all states.
+	// If server already exists, properly shut it down first.
 	if (g_test_server != nullptr) {
-		g_test_server->Reset();
+		// Shutdown the server and wait for the thread to finish.
+		g_test_server->Shutdown();
+		if (g_server_thread != nullptr && g_server_thread->joinable()) {
+			g_server_thread->join();
+		}
+		g_server_thread.reset();
+
+		// Shutdown standalone workers and wait for their threads.
 		for (auto &[worker_port, worker] : g_standalone_workers) {
 			worker->Shutdown();
 		}
+		for (auto &[worker_port, thd] : g_worker_threads) {
+			if (thd != nullptr && thd->joinable()) {
+				thd->join();
+			}
+		}
 		g_standalone_workers.clear();
+		g_worker_threads.clear();
+
+		// Create a new server instance (Arrow Flight servers may not support restart after shutdown)
+		g_test_server.reset();
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-	} else {
+	}
+
+	// Create new server instance
+	if (g_test_server == nullptr) {
 		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 	}
 
@@ -60,15 +83,15 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		throw Exception(ExceptionType::IO, "Failed to start local server: " + status.ToString());
 	}
 
-	// Start server in background thread and detach.
-	std::thread([server_ptr = g_test_server.get(), port]() {
+	// Start server in background thread (keep reference for cleanup).
+	g_server_thread = make_uniq<std::thread>([server_ptr = g_test_server.get(), port]() {
 		SetThreadName("LocalDuckSrv");
 
 		auto serve_status = server_ptr->Serve();
 		if (!serve_status.ok()) {
 			throw IOException(StringUtil::Format("Failed to start driver node: %s", serve_status.ToString()));
 		}
-	}).detach();
+	});
 
 	// TODO(hjiang): Use readiness probe to validate driver node up.
 	std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -78,7 +101,27 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 
 void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	if (g_test_server != nullptr) {
+		// Shutdown the server
 		g_test_server->Shutdown();
+
+		// Wait for the server thread to finish
+		if (g_server_thread != nullptr && g_server_thread->joinable()) {
+			g_server_thread->join();
+		}
+		g_server_thread.reset();
+
+		// Shutdown standalone workers and wait for their threads
+		for (auto &[worker_port, worker] : g_standalone_workers) {
+			worker->Shutdown();
+		}
+		for (auto &[worker_port, thread] : g_worker_threads) {
+			if (thread != nullptr && thread->joinable()) {
+				thread->join();
+			}
+		}
+		g_standalone_workers.clear();
+		g_worker_threads.clear();
+
 		g_test_server.reset();
 	}
 	result.Reference(Value(SUCCESS));
@@ -168,13 +211,13 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 	g_next_standalone_worker_port = port + 1;
 
 	// Start worker in background thread.
-	std::thread([worker_ptr, port]() {
+	g_worker_threads[port] = make_uniq<std::thread>([worker_ptr, port]() {
 		SetThreadName("StandaloneWkr");
 		auto serve_status = worker_ptr->Serve();
 		if (!serve_status.ok()) {
 			throw IOException(StringUtil::Format("Failed to start worker node: %s", serve_status.ToString()));
 		}
-	}).detach();
+	});
 
 	// TODO(hjiang): Use readiness probe to validate worker node up.
 	std::this_thread::sleep_for(std::chrono::milliseconds(500));
