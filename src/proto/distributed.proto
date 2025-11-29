@@ -20,6 +20,7 @@ enum RequestType {
   WORKER_REGISTER = 13;
   WORKER_HEARTBEAT = 14;
   GET_QUERY_EXECUTION_STATS = 15;
+  READINESS_CHECK = 16;
 }
 
 // Execute SQL request.
@@ -129,6 +130,11 @@ message GetQueryExecutionStatsRequest {
   // Empty - returns all stats
 }
 
+// Readiness check request.
+message ReadinessCheckRequest {
+  // Empty - just checks if server is ready
+}
+
 // Request message for distributed operations.
 message DistributedRequest {
   // Request-specific parameters.
@@ -147,6 +153,7 @@ message DistributedRequest {
     WorkerRegisterRequest worker_register = 12;
     WorkerHeartbeatRequest worker_heartbeat = 13;
     GetQueryExecutionStatsRequest get_query_execution_stats = 14;
+    ReadinessCheckRequest readiness_check = 15;
   }
 }
 
@@ -221,6 +228,11 @@ message GetQueryExecutionStatsResponse {
   repeated QueryExecutionInfo query_executions = 1;
 }
 
+// Readiness check response.
+message ReadinessCheckResponse {
+  bool ready = 1;
+}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -244,5 +256,6 @@ message DistributedResponse {
     WorkerRegisterResponse worker_register = 14;
     WorkerHeartbeatResponse worker_heartbeat = 15;
     GetQueryExecutionStatsResponse get_query_execution_stats = 16;
+    ReadinessCheckResponse readiness_check = 17;
   }
 }

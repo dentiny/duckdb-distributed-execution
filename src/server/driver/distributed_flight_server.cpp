@@ -175,6 +175,11 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
 		break;
 
+	// ========== Health & Readiness Operations ==========
+	case distributed::DistributedRequest::kReadinessCheck:
+		ARROW_RETURN_NOT_OK(HandleReadinessCheck(request.readiness_check(), response));
+		break;
+
 	// ========== Error Cases ==========
 	case distributed::DistributedRequest::REQUEST_NOT_SET:
 		return arrow::Status::Invalid("Request type not set");
@@ -714,6 +719,16 @@ DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQuer
 		query_info->set_execution_start_time_ms(milliseconds);
 	}
 
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleReadinessCheck(const distributed::ReadinessCheckRequest &req,
+                                                            distributed::DistributedResponse &resp) {
+	// Server is ready if it's initialized and can respond
+	// This is a lightweight check that just verifies the server is up and running
+	auto *readiness_resp = resp.mutable_readiness_check();
+	readiness_resp->set_ready(true);
+	resp.set_success(true);
 	return arrow::Status::OK();
 }
 

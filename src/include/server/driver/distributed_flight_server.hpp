@@ -140,6 +140,11 @@ private:
 	arrow::Status HandleGetQueryExecutionStats(const distributed::GetQueryExecutionStatsRequest &req,
 	                                           distributed::DistributedResponse &resp);
 
+	// Handle READINESS CHECK request.
+	// Returns whether the server is ready to handle requests.
+	arrow::Status HandleReadinessCheck(const distributed::ReadinessCheckRequest &req,
+	                                   distributed::DistributedResponse &resp);
+
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
