@@ -68,9 +68,6 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		}
 		server_state.standalone_workers.clear();
 		server_state.worker_threads.clear();
-
-		// Create a new server instance (Arrow Flight servers may not support restart after shutdown)
-		// No need to wait for port release since each test uses a unique port
 		server_state.test_server.reset();
 	}
 
@@ -89,7 +86,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		throw Exception(ExceptionType::IO, "Failed to start local server: " + status.ToString());
 	}
 
-	// Start server in background thread (keep reference for cleanup).
+	// Start server in background thread.
 	server_state.server_thread = make_uniq<std::thread>([server_ptr = server_state.test_server.get(), port]() {
 		SetThreadName("LocalDuckSrv");
 
@@ -99,8 +96,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		}
 	});
 
-	// Wait for server to be ready. Arrow Flight servers need time to bind to the port.
-	// Use a longer wait to ensure the server is fully ready to accept connections.
+	// TODO(hjiang): Should use readiness probe to wait until ready.
 	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 	result.Reference(Value(SUCCESS));

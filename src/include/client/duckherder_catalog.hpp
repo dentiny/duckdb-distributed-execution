@@ -124,9 +124,9 @@ private:
 	mutable std::mutex remote_indexes_mu;
 	unordered_set<string> remote_indexes;
 
-	// Client instance for this catalog (one client per catalog/server).
+	// Client instance for this catalog.
 	mutable std::mutex client_mu;
-	mutable unique_ptr<DistributedClient> distributed_client;
+	unique_ptr<DistributedClient> distributed_client;
 };
 
 } // namespace duckdb

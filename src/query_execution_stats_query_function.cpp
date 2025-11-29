@@ -1,12 +1,12 @@
 #include "query_execution_stats_query_function.hpp"
 
 #include "client/distributed_client.hpp"
-#include "client/duckherder_catalog.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "utils/catalog_utils.hpp"
 
 namespace duckdb {
 
@@ -69,8 +69,7 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
 	for (auto &db : databases) {
 		auto &catalog = db->GetCatalog();
 		if (catalog.GetCatalogType() == "duckherder") {
-			auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
-			client_to_use = &dh_catalog.GetClient();
+			client_to_use = &GetDistributedClient(catalog);
 			break;
 		}
 	}
