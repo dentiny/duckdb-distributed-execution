@@ -4,6 +4,7 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "server/driver/distributed_flight_server.hpp"
 #include "utils/network_utils.hpp"
+#include "utils/no_destructor.hpp"
 #include "utils/thread_utils.hpp"
 
 #include <thread>
@@ -14,21 +15,26 @@ namespace {
 
 // Success function return value.
 constexpr bool SUCCESS = true;
-
-// Map from of port number server instance for test isolation.
-unique_ptr<DistributedFlightServer> g_test_server;
-// Thread running the server's Serve() method
-unique_ptr<std::thread> g_server_thread;
+// Default server port to start use from.
 constexpr int DEFAULT_SERVER_PORT = 8815;
 
-// Map from port number to standalone worker instance for testing registration.
-unordered_map<int, unique_ptr<WorkerNode>> g_standalone_workers;
-// Map from port number to worker thread for cleanup.
-unordered_map<int, unique_ptr<std::thread>> g_worker_threads;
-// Used to track next available port for standalone workers when port is not specified.
-int g_next_standalone_worker_port = 9000;
+// Global state for test servers and workers; wrap them in NoDestructor to avoid destruct
+struct TestServerState {
+	unique_ptr<DistributedFlightServer> test_server;
+	unique_ptr<std::thread> server_thread;
+	unordered_map<int, unique_ptr<WorkerNode>> standalone_workers;
+	unordered_map<int, unique_ptr<std::thread>> worker_threads;
+	int next_standalone_worker_port = 9000;
+};
+
+static TestServerState &GetTestServerState() {
+	static NoDestructor<TestServerState> state {};
+	return *state;
+}
 
 void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &server_state = GetTestServerState();
+
 	int port = DEFAULT_SERVER_PORT;
 	int worker_count = 0;
 	if (args.ColumnCount() > 0 && args.size() > 0) {
@@ -43,48 +49,48 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 
 	// If server already exists, properly shut it down first.
-	if (g_test_server != nullptr) {
+	if (server_state.test_server != nullptr) {
 		// Shutdown the server and wait for the thread to finish.
-		g_test_server->Shutdown();
-		if (g_server_thread != nullptr && g_server_thread->joinable()) {
-			g_server_thread->join();
+		server_state.test_server->Shutdown();
+		if (server_state.server_thread != nullptr && server_state.server_thread->joinable()) {
+			server_state.server_thread->join();
 		}
-		g_server_thread.reset();
+		server_state.server_thread.reset();
 
 		// Shutdown standalone workers and wait for their threads.
-		for (auto &[worker_port, worker] : g_standalone_workers) {
+		for (auto &[worker_port, worker] : server_state.standalone_workers) {
 			worker->Shutdown();
 		}
-		for (auto &[worker_port, thd] : g_worker_threads) {
+		for (auto &[worker_port, thd] : server_state.worker_threads) {
 			if (thd != nullptr && thd->joinable()) {
 				thd->join();
 			}
 		}
-		g_standalone_workers.clear();
-		g_worker_threads.clear();
+		server_state.standalone_workers.clear();
+		server_state.worker_threads.clear();
 
 		// Create a new server instance (Arrow Flight servers may not support restart after shutdown)
-		g_test_server.reset();
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		// No need to wait for port release since each test uses a unique port
+		server_state.test_server.reset();
 	}
 
 	// Create new server instance
-	if (g_test_server == nullptr) {
-		g_test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
+	if (server_state.test_server == nullptr) {
+		server_state.test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 	}
 
 	arrow::Status status;
 	if (worker_count > 0) {
-		status = g_test_server->StartWithWorkers(worker_count);
+		status = server_state.test_server->StartWithWorkers(worker_count);
 	} else {
-		status = g_test_server->Start();
+		status = server_state.test_server->Start();
 	}
 	if (!status.ok()) {
 		throw Exception(ExceptionType::IO, "Failed to start local server: " + status.ToString());
 	}
 
 	// Start server in background thread (keep reference for cleanup).
-	g_server_thread = make_uniq<std::thread>([server_ptr = g_test_server.get(), port]() {
+	server_state.server_thread = make_uniq<std::thread>([server_ptr = server_state.test_server.get(), port]() {
 		SetThreadName("LocalDuckSrv");
 
 		auto serve_status = server_ptr->Serve();
@@ -93,52 +99,59 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		}
 	});
 
-	// TODO(hjiang): Use readiness probe to validate driver node up.
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	// Wait for server to be ready. Arrow Flight servers need time to bind to the port.
+	// Use a longer wait to ensure the server is fully ready to accept connections.
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 	result.Reference(Value(SUCCESS));
 }
 
 void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
-	if (g_test_server != nullptr) {
+	auto &server_state = GetTestServerState();
+
+	if (server_state.test_server != nullptr) {
 		// Shutdown the server
-		g_test_server->Shutdown();
+		server_state.test_server->Shutdown();
 
 		// Wait for the server thread to finish
-		if (g_server_thread != nullptr && g_server_thread->joinable()) {
-			g_server_thread->join();
+		if (server_state.server_thread != nullptr && server_state.server_thread->joinable()) {
+			server_state.server_thread->join();
 		}
-		g_server_thread.reset();
+		server_state.server_thread.reset();
 
 		// Shutdown standalone workers and wait for their threads
-		for (auto &[worker_port, worker] : g_standalone_workers) {
+		for (auto &[worker_port, worker] : server_state.standalone_workers) {
 			worker->Shutdown();
 		}
-		for (auto &[worker_port, thread] : g_worker_threads) {
+		for (auto &[worker_port, thread] : server_state.worker_threads) {
 			if (thread != nullptr && thread->joinable()) {
 				thread->join();
 			}
 		}
-		g_standalone_workers.clear();
-		g_worker_threads.clear();
+		server_state.standalone_workers.clear();
+		server_state.worker_threads.clear();
 
-		g_test_server.reset();
+		server_state.test_server.reset();
 	}
 	result.Reference(Value(SUCCESS));
 }
 
 void GetWorkerCount(DataChunk &args, ExpressionState &state, Vector &result) {
-	if (g_test_server == nullptr) {
+	auto &server_state = GetTestServerState();
+
+	if (server_state.test_server == nullptr) {
 		result.SetValue(0, Value::BIGINT(0));
 		return;
 	}
 
-	const idx_t count = g_test_server->GetWorkerCount();
+	const idx_t count = server_state.test_server->GetWorkerCount();
 	result.SetValue(0, Value::BIGINT(count));
 }
 
 void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
-	if (g_test_server == nullptr) {
+	auto &server_state = GetTestServerState();
+
+	if (server_state.test_server == nullptr) {
 		throw Exception(ExceptionType::INVALID_INPUT,
 		                "Server not started. Call duckherder_start_local_server() first.");
 	}
@@ -152,12 +165,14 @@ void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	string worker_id = worker_id_data[0].GetString();
 	string location = location_data[0].GetString();
 
-	g_test_server->RegisterWorker(worker_id, location);
+	server_state.test_server->RegisterWorker(worker_id, location);
 	result.Reference(Value(SUCCESS));
 }
 
 void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &result) {
-	if (g_test_server == nullptr) {
+	auto &server_state = GetTestServerState();
+
+	if (server_state.test_server == nullptr) {
 		throw Exception(ExceptionType::INVALID_INPUT,
 		                "Server not started. Call duckherder_start_local_server() first.");
 	}
@@ -169,11 +184,13 @@ void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &re
 	string driver_id = driver_id_data[0].GetString();
 	string location = location_data[0].GetString();
 
-	g_test_server->RegisterOrReplaceDriver(driver_id, location);
+	server_state.test_server->RegisterOrReplaceDriver(driver_id, location);
 	result.Reference(Value(SUCCESS));
 }
 
 void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &server_state = GetTestServerState();
+
 	int port = 0;
 
 	// If port is provided, use it; otherwise, find an available port.
@@ -185,14 +202,14 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 		port = port_data[0];
 	} else {
 		// Find an available port starting from the next tracked port.
-		port = GetAvailablePort(g_next_standalone_worker_port);
+		port = GetAvailablePort(server_state.next_standalone_worker_port);
 		if (port < 0) {
 			throw IOException("Failed to find available port for standalone worker");
 		}
 	}
 
-	auto existing = g_standalone_workers.find(port);
-	if (existing != g_standalone_workers.end()) {
+	auto existing = server_state.standalone_workers.find(port);
+	if (existing != server_state.standalone_workers.end()) {
 		throw InvalidInputException(StringUtil::Format("Worker node with port %d has already been registered.", port));
 	}
 
@@ -205,13 +222,13 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 	}
 
 	auto *worker_ptr = worker.get();
-	g_standalone_workers[port] = std::move(worker);
+	server_state.standalone_workers[port] = std::move(worker);
 
 	// Update next port for future auto-assignment.
-	g_next_standalone_worker_port = port + 1;
+	server_state.next_standalone_worker_port = port + 1;
 
 	// Start worker in background thread.
-	g_worker_threads[port] = make_uniq<std::thread>([worker_ptr, port]() {
+	server_state.worker_threads[port] = make_uniq<std::thread>([worker_ptr, port]() {
 		SetThreadName("StandaloneWkr");
 		auto serve_status = worker_ptr->Serve();
 		if (!serve_status.ok()) {

@@ -1,9 +1,12 @@
 #include "query_execution_stats_query_function.hpp"
 
 #include "client/distributed_client.hpp"
+#include "client/duckherder_catalog.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/database_manager.hpp"
 
 namespace duckdb {
 
@@ -59,8 +62,25 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientContext &context,
                                                                       TableFunctionInitInput &input) {
 	auto result = make_uniq<QueryExecutionStatsData>();
-	auto &client = DistributedClient::GetInstance();
-	auto query_result = client.GetQueryExecutionStats(result->query_stats);
+
+	DistributedClient *client_to_use = nullptr;
+	auto &db_manager = DatabaseManager::Get(context);
+	auto databases = db_manager.GetDatabases();
+	for (auto &db : databases) {
+		auto &catalog = db->GetCatalog();
+		if (catalog.GetCatalogType() == "duckherder") {
+			auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
+			client_to_use = &dh_catalog.GetClient();
+			break;
+		}
+	}
+
+	// Fallback to singleton if no DuckherderCatalog found.
+	if (client_to_use == nullptr) {
+		client_to_use = &DistributedClient::GetInstance();
+	}
+
+	auto query_result = client_to_use->GetQueryExecutionStats(result->query_stats);
 	return std::move(result);
 }
 

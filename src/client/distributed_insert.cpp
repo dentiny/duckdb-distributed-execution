@@ -8,6 +8,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckherder_catalog.hpp"
 
 namespace duckdb {
 
@@ -84,7 +85,13 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 		insert_sql += ")";
 	}
 
-	auto &client = DistributedClient::GetInstance();
+	// Get the catalog from the table and use its client (which has the correct server URL)
+	auto &catalog = table.ParentCatalog();
+	if (catalog.GetCatalogType() != "duckherder") {
+		throw InternalException("Expected DuckherderCatalog for distributed insert");
+	}
+	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
+	auto &client = dh_catalog.GetClient();
 	auto result = client.InsertInto(insert_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to insert into server: " + result->GetError());

@@ -8,6 +8,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckherder_catalog.hpp"
 
 namespace duckdb {
 
@@ -109,7 +110,13 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	delete_sql += ")";
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing DELETE on remote server: %s", delete_sql));
 
-	auto &client = DistributedClient::GetInstance();
+	// Get the catalog from the table and use its client (which has the correct server URL)
+	auto &catalog = table.ParentCatalog();
+	if (catalog.GetCatalogType() != "duckherder") {
+		throw InternalException("Expected DuckherderCatalog for distributed delete");
+	}
+	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
+	auto &client = dh_catalog.GetClient();
 	auto result = client.ExecuteSQL(delete_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to delete from server: " + result->GetError());

@@ -6,10 +6,10 @@ require duckherder
 
 # Start distributed server and workers in background thread
 statement ok
-SELECT duckherder_start_local_server(8815, 4);
+SELECT duckherder_start_local_server(8834, 4);
 
 statement ok
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8815);
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8834);
 
 statement ok
 USE dh;

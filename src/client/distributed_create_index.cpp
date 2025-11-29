@@ -63,8 +63,12 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetData(ExecutionContext &co
 	string create_sql = SanitizeQuery(info->ToString(), catalog_name);
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing CREATE INDEX on remote server: %s", create_sql));
 
-	// Execute on remote server using the singleton DistributedClient
-	auto &client = DistributedClient::GetInstance();
+	// Get the catalog and use its client (which has the correct server URL)
+	if (catalog.GetCatalogType() != "duckherder") {
+		throw InternalException("Expected DuckherderCatalog for distributed create index");
+	}
+	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
+	auto &client = dh_catalog.GetClient();
 	auto result = client.ExecuteSQL(create_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to create index on server: " + result->GetError());
