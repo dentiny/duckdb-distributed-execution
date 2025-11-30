@@ -34,7 +34,8 @@ PhysicalRemoteCreateIndexOperator::PhysicalRemoteCreateIndexOperator(PhysicalPla
                                                                      unique_ptr<CreateIndexInfo> info_p,
                                                                      string catalog_name_p, string schema_name_p,
                                                                      string table_name_p, idx_t estimated_cardinality)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, {LogicalType::BIGINT}, estimated_cardinality),
+    : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, {LogicalType {LogicalTypeId::BIGINT}},
+                       estimated_cardinality),
       info(std::move(info_p)), catalog_name(std::move(catalog_name_p)), schema_name(std::move(schema_name_p)),
       table_name(std::move(table_name_p)) {
 }

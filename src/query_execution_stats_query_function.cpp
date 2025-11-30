@@ -29,31 +29,31 @@ unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context
 	names.reserve(7);
 
 	// SQL query
-	return_types.emplace_back(LogicalType::VARCHAR);
+	return_types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
 	names.emplace_back("sql");
 
 	// Execution mode (partitioning strategy)
-	return_types.emplace_back(LogicalType::VARCHAR);
+	return_types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
 	names.emplace_back("execution_mode");
 
 	// Merge strategy
-	return_types.emplace_back(LogicalType::VARCHAR);
+	return_types.emplace_back(LogicalType {LogicalTypeId::VARCHAR});
 	names.emplace_back("merge_strategy");
 
 	// Total query duration in milliseconds
-	return_types.emplace_back(LogicalType::BIGINT);
+	return_types.emplace_back(LogicalType {LogicalTypeId::BIGINT});
 	names.emplace_back("query_duration_ms");
 
 	// Number of workers used
-	return_types.emplace_back(LogicalType::BIGINT);
+	return_types.emplace_back(LogicalType {LogicalTypeId::BIGINT});
 	names.emplace_back("num_workers_used");
 
 	// Number of tasks generated
-	return_types.emplace_back(LogicalType::BIGINT);
+	return_types.emplace_back(LogicalType {LogicalTypeId::BIGINT});
 	names.emplace_back("num_tasks_generated");
 
 	// Execution start timestamp
-	return_types.emplace_back(LogicalType::TIMESTAMP);
+	return_types.emplace_back(LogicalType {LogicalTypeId::TIMESTAMP});
 	names.emplace_back("execution_start_time");
 
 	return nullptr;
