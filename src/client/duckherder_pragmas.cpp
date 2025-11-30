@@ -29,8 +29,8 @@ namespace duckdb {
 
 	// Register scalar function for loading extensions on server.
 	// Takes 1 argument: extension_name
-	ScalarFunction load_extension_func("duckherder_load_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
-	                                   LoadExtension);
+	ScalarFunction load_extension_func("duckherder_load_extension", {LogicalType {LogicalTypeId::VARCHAR}},
+	                                   LogicalType {LogicalTypeId::BOOLEAN}, LoadExtension);
 	loader.RegisterFunction(load_extension_func);
 }
 

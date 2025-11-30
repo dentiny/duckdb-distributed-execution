@@ -39,7 +39,8 @@ void LoadInternal(ExtensionLoader &loader) {
 	// Register function to clear query recorder stats.
 	ScalarFunction clear_recorder_stats_function("duckherder_clear_query_recorder_stats",
 	                                             /*arguments=*/ {},
-	                                             /*return_type=*/LogicalType::BOOLEAN, ClearQueryRecorderStats);
+	                                             /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN},
+	                                             ClearQueryRecorderStats);
 	loader.RegisterFunction(clear_recorder_stats_function);
 
 	// Register distributed server control functions, which could be local usage.
