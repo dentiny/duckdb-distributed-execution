@@ -6,13 +6,26 @@
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
-#include <functional>
 
 namespace duckdb {
 
 namespace {
 // Minimum required rows per partition to enable intelligent partition.
 constexpr idx_t MIN_ROW_PER_PARTITION_FOR_INTELLI = 100;
+
+// Util function to recursively search for TABLE_SCAN operators in physical plan
+bool ContainsTableScan(const PhysicalOperator &op) {
+	if (op.type == PhysicalOperatorType::TABLE_SCAN) {
+		return true;
+	}
+	for (auto &child : op.children) {
+		if (ContainsTableScan(child.get())) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace
 
 QueryPlanAnalyzer::QueryPlanAnalyzer(Connection &conn_p) : conn(conn_p) {
@@ -79,24 +92,9 @@ PlanPartitionInfo QueryPlanAnalyzer::ExtractPartitionInfo(LogicalOperator &logic
 			// - It's a table scan (most common case) OR
 			// - There's a table scan somewhere in the plan (e.g., with aggregates on top)
 			// - We have enough rows per partition (at least 100 rows per worker)
-			bool has_table_scan = (info.operator_type == PhysicalOperatorType::TABLE_SCAN);
-			
-			// Check if plan contains a table scan by recursively checking children
-			if (!has_table_scan) {
-				std::function<bool(const PhysicalOperator&)> find_table_scan = [&](const PhysicalOperator& op) -> bool {
-					if (op.type == PhysicalOperatorType::TABLE_SCAN) {
-						return true;
-					}
-					for (auto &child : op.children) {
-						if (find_table_scan(child.get())) {
-							return true;
-						}
-					}
-					return false;
-				};
-				has_table_scan = find_table_scan(physical_plan);
-			}
-			
+			bool has_table_scan =
+			    (info.operator_type == PhysicalOperatorType::TABLE_SCAN) || ContainsTableScan(physical_plan);
+
 			if (has_table_scan && info.rows_per_partition >= MIN_ROW_PER_PARTITION_FOR_INTELLI) {
 				info.supports_intelligent_partitioning = true;
 			}

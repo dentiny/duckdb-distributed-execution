@@ -2,18 +2,15 @@
 # description: Test distributed execution with GROUP BY queries
 # group: [sql]
 
-# This test verifies that GROUP BY queries can be distributed across workers
-# after fixing LOGICAL_AGGREGATE_AND_GROUP_BY support
-
 require duckherder
 
 # Start distributed server with 4 workers
 statement ok
-SELECT duckherder_start_local_server(8840, 4);
+SELECT duckherder_start_local_server(8836, 4);
 
 # Attach distributed database
 statement ok
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8840);
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8836);
 
 statement ok
 USE dh;
