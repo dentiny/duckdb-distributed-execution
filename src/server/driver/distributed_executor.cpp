@@ -71,6 +71,7 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	if (logical_plan == nullptr) {
 		return exec_result;
 	}
+	
 	if (!plan_analyzer->IsSupportedPlan(*logical_plan)) {
 		DUCKDB_LOG_DEBUG(db_instance,
 		                 StringUtil::Format("Logical plan for query '%s' contains unsupported operators", sql));
