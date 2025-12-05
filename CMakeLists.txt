@@ -64,6 +64,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/partition_sql_generator.cpp
     src/server/driver/plan_serializer.cpp
     src/server/driver/query_plan_analyzer.cpp
+    src/server/driver/query_utils.cpp
     src/server/driver/result_merger.cpp
     src/server/driver/task_partitioner.cpp
     src/server/driver/worker_manager.cpp)
@@ -125,3 +126,8 @@ add_executable(test_arrow_enum_conversion unit/test_arrow_enum_conversion.cpp
                                           src/arrow_utils.cpp)
 target_link_libraries(test_arrow_enum_conversion duckdb_static
                       Arrow::arrow_static)
+
+add_executable(test_query_plan_analyzer unit/test_query_plan_analyzer.cpp)
+target_link_libraries(
+  test_query_plan_analyzer ${EXTENSION_NAME} duckdb_static Arrow::arrow_static
+  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)

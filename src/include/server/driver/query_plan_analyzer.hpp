@@ -73,9 +73,6 @@ public:
 	};
 	QueryAnalysis AnalyzeQuery(LogicalOperator &logical_plan);
 
-	// Check if a logical plan contains only supported operators.
-	bool IsSupportedPlan(LogicalOperator &op);
-
 private:
 	Connection &conn;
 };

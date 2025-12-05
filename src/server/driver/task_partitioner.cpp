@@ -57,7 +57,7 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 	}
 
 	// Case-1: row group-based partitioning is available.
-	if (row_group_info.valid && row_group_info.total_row_groups > 0) {
+	if (row_group_info.valid && row_group_info.total_row_groups >= num_tasks) {
 		// Assign row groups to tasks
 		// If we have more tasks than row groups, some tasks will be empty
 		// If we have fewer tasks than row groups, distribute row groups across tasks

@@ -1,0 +1,94 @@
+# name: test/sql/group_by_distributed.test
+# description: Test distributed execution with GROUP BY queries
+# group: [sql]
+
+require duckherder
+
+# Start distributed server with 4 workers
+statement ok
+SELECT duckherder_start_local_server(8836, 4);
+
+# Attach distributed database
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8836);
+
+statement ok
+USE dh;
+
+# Register the table for distributed access
+statement ok
+PRAGMA duckherder_register_remote_table('group_by_table', 'group_by_table');
+
+# Create a table with 200,000 rows (enough to trigger distributed execution)
+statement ok
+CREATE TABLE group_by_table (
+    id INTEGER,
+    category VARCHAR,
+    value INTEGER
+);
+
+# Insert 200,000 rows with 3 categories
+statement ok
+INSERT INTO group_by_table 
+SELECT 
+    i AS id,
+    CASE (i % 3)
+        WHEN 0 THEN 'A'
+        WHEN 1 THEN 'B'
+        ELSE 'C'
+    END AS category,
+    i * 10 AS value
+FROM range(200000) t(i);
+
+# Test 1: Verify total row count
+query I
+SELECT COUNT(*) FROM group_by_table;
+----
+200000
+
+# Test 2: Verify each category has correct count (simple WHERE, not GROUP BY yet)
+query I
+SELECT COUNT(*) FROM group_by_table WHERE category = 'A';
+----
+66667
+
+query I
+SELECT COUNT(*) FROM group_by_table WHERE category = 'B';
+----
+66667
+
+query I
+SELECT COUNT(*) FROM group_by_table WHERE category = 'C';
+----
+66666
+
+# Test 3: Simple aggregation without GROUP BY
+query I
+SELECT COUNT(*) FROM group_by_table WHERE id > 100000;
+----
+99999
+
+# Verify distributed execution happened with correct mode
+# With 200K rows and 4 workers, should use NATURAL_PARTITION (range-based)
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM group_by_table%' 
+              AND execution_mode = 'NATURAL_PARTITION');
+----
+true
+
+# Verify 4 workers were used
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM group_by_table%' 
+              AND num_workers_used = 4);
+----
+true
+
+# Verify multiple tasks were generated (should be 4 or more)
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
+              WHERE sql LIKE '%FROM group_by_table%' 
+              AND num_tasks_generated >= 4);
+----
+true

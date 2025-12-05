@@ -1,6 +1,7 @@
 #include "server/driver/query_plan_analyzer.hpp"
 
 #include "server/driver/distributed_executor.hpp"
+#include "server/driver/query_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
@@ -15,22 +16,6 @@ constexpr idx_t MIN_ROW_PER_PARTITION_FOR_INTELLI = 100;
 } // namespace
 
 QueryPlanAnalyzer::QueryPlanAnalyzer(Connection &conn_p) : conn(conn_p) {
-}
-
-bool QueryPlanAnalyzer::IsSupportedPlan(LogicalOperator &op) {
-	switch (op.type) {
-	case LogicalOperatorType::LOGICAL_PROJECTION:
-	case LogicalOperatorType::LOGICAL_FILTER: {
-		if (op.children.size() != 1) {
-			return false;
-		}
-		return IsSupportedPlan(*op.children[0]);
-	}
-	case LogicalOperatorType::LOGICAL_GET:
-		return true;
-	default:
-		return false;
-	}
 }
 
 idx_t QueryPlanAnalyzer::QueryEstimatedParallelism(LogicalOperator &logical_plan) {
@@ -74,10 +59,13 @@ PlanPartitionInfo QueryPlanAnalyzer::ExtractPartitionInfo(LogicalOperator &logic
 			info.rows_per_partition = (info.estimated_cardinality + num_workers - 1) / num_workers;
 
 			// We can use intelligent partitioning if:
-			// - It's a table scan (most common case)
+			// - It's a table scan (most common case) OR
+			// - There's a table scan somewhere in the plan (e.g., with aggregates on top)
 			// - We have enough rows per partition (at least 100 rows per worker)
-			if (info.operator_type == PhysicalOperatorType::TABLE_SCAN &&
-			    info.rows_per_partition >= MIN_ROW_PER_PARTITION_FOR_INTELLI) {
+			bool has_table_scan =
+			    (info.operator_type == PhysicalOperatorType::TABLE_SCAN) || ContainsTableScan(physical_plan);
+
+			if (has_table_scan && info.rows_per_partition >= MIN_ROW_PER_PARTITION_FOR_INTELLI) {
 				info.supports_intelligent_partitioning = true;
 			}
 		}
