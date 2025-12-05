@@ -1,6 +1,7 @@
 #include "server/driver/query_plan_analyzer.hpp"
 
 #include "server/driver/distributed_executor.hpp"
+#include "server/driver/query_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
@@ -12,40 +13,9 @@ namespace duckdb {
 namespace {
 // Minimum required rows per partition to enable intelligent partition.
 constexpr idx_t MIN_ROW_PER_PARTITION_FOR_INTELLI = 100;
-
-// Util function to recursively search for TABLE_SCAN operators in physical plan
-bool ContainsTableScan(const PhysicalOperator &op) {
-	if (op.type == PhysicalOperatorType::TABLE_SCAN) {
-		return true;
-	}
-	for (auto &child : op.children) {
-		if (ContainsTableScan(child.get())) {
-			return true;
-		}
-	}
-	return false;
-}
-
 } // namespace
 
 QueryPlanAnalyzer::QueryPlanAnalyzer(Connection &conn_p) : conn(conn_p) {
-}
-
-bool QueryPlanAnalyzer::IsSupportedPlan(LogicalOperator &op) {
-	switch (op.type) {
-	case LogicalOperatorType::LOGICAL_PROJECTION:
-	case LogicalOperatorType::LOGICAL_FILTER:
-	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
-		if (op.children.size() != 1) {
-			return false;
-		}
-		return IsSupportedPlan(*op.children[0]);
-	}
-	case LogicalOperatorType::LOGICAL_GET:
-		return true;
-	default:
-		return false;
-	}
 }
 
 idx_t QueryPlanAnalyzer::QueryEstimatedParallelism(LogicalOperator &logical_plan) {

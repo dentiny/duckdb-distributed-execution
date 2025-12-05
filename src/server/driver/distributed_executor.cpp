@@ -18,6 +18,7 @@
 #include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/storage/storage_info.hpp"
+#include "server/driver/query_utils.hpp"
 #include "server/driver/worker_manager.hpp"
 
 namespace duckdb {
@@ -71,7 +72,7 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	if (logical_plan == nullptr) {
 		return exec_result;
 	}
-	if (!plan_analyzer->IsSupportedPlan(*logical_plan)) {
+	if (!IsSupportedPlan(*logical_plan)) {
 		DUCKDB_LOG_DEBUG(db_instance,
 		                 StringUtil::Format("Logical plan for query '%s' contains unsupported operators", sql));
 		return exec_result;
@@ -127,7 +128,7 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		if (task_plan == nullptr) {
 			return exec_result;
 		}
-		if (!plan_analyzer->IsSupportedPlan(*task_plan)) {
+		if (!IsSupportedPlan(*task_plan)) {
 			return exec_result;
 		}
 
