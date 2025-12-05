@@ -129,5 +129,10 @@ target_link_libraries(test_arrow_enum_conversion duckdb_static
 
 add_executable(test_query_plan_analyzer unit/test_query_plan_analyzer.cpp)
 target_link_libraries(
-  test_query_plan_analyzer ${EXTENSION_NAME} duckdb_static Arrow::arrow_static
-  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+  test_query_plan_analyzer
+  ${EXTENSION_NAME}
+  duckdb_static
+  Arrow::arrow_static
+  ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf
+  gRPC::grpc++)
