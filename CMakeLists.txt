@@ -80,10 +80,10 @@ set(EXTENSION_SOURCES
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
     src/duckherder_extension.cpp
+    src/duckherder_extension_instance_state.cpp
     src/query_execution_stats_query_function.cpp
     src/query_history_query_function.cpp
-    src/query_recorder.cpp
-    src/query_recorder_factory.cpp)
+    src/query_recorder.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

@@ -1,6 +1,7 @@
 #include "duckherder_schema_catalog_entry.hpp"
 
 #include "distributed_client.hpp"
+
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -10,8 +11,8 @@
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckherder_catalog.hpp"
+#include "duckherder_extension_instance_state.hpp"
 #include "duckherder_index_catalog_entry.hpp"
-#include "query_recorder_factory.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -192,7 +193,8 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 		}
 		create_sql += ")";
 
-		const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(create_sql);
+		auto &instance_state = GetInstanceStateOrThrow(db_instance);
+		const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(create_sql);
 		auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 		auto &client = dh_catalog.GetClient();
 		auto result = client.CreateTable(create_sql);
@@ -342,7 +344,8 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 	}
 	drop_sql += info.name;
 
-	const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
+	auto &instance_state = GetInstanceStateOrThrow(db_instance);
+	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
 	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 	auto &client = dh_catalog.GetClient();
 	auto result = client.ExecuteSQL(drop_sql);
@@ -366,7 +369,8 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 		drop_sql += " CASCADE";
 	}
 
-	const auto query_recorder_handle = GetQueryRecorder().RecordQueryStart(drop_sql);
+	auto &instance_state = GetInstanceStateOrThrow(db_instance);
+	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
 	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 	auto &client = dh_catalog.GetClient();
 	auto result = client.ExecuteSQL(drop_sql);

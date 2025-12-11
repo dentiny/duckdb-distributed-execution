@@ -2,7 +2,7 @@
 
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
-#include "query_recorder_factory.hpp"
+#include "duckherder_extension_instance_state.hpp"
 #include "query_recorder.hpp"
 #include "utils/time_utils.hpp"
 
@@ -38,7 +38,8 @@ unique_ptr<GlobalTableFunctionState> GetQueryHistoryTableFuncInit(ClientContext 
                                                                   TableFunctionInitInput &input) {
 	auto result = make_uniq<GetQueryHistoryData>();
 	auto &query_records = result->query_records;
-	query_records = GetQueryRecorder().GetQueryRecords();
+	auto &instance_state = GetInstanceStateOrThrow(context);
+	query_records = instance_state.GetQueryRecorder()->GetQueryRecords();
 
 	// Sort the results to ensure determinististism and testibility.
 	std::sort(query_records.begin(), query_records.end(),
