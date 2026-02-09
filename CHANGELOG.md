@@ -1,6 +1,18 @@
+## 0.0.7
+
+### Fixed
+
+- Update extension-ci-tools to v1.4.4
+
+## 0.0.6
+
+### Changed
+
+- Update duckdb to v1.4.4
+
 ## 0.0.5
 
-## Changed
+### Changed
 
 - Update duckdb and extension-ci-tools to v1.4.3
 
