@@ -1,5 +1,5 @@
-#define CATCH_CONFIG_MAIN
-#include "catch.hpp"
+#include "catch/catch.hpp"
+
 #include "arrow_utils.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector.hpp"
