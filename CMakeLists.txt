@@ -5,6 +5,9 @@ set(TARGET_NAME duckherder)
 
 set(CMAKE_CXX_STANDARD 17)
 
+set(CMAKE_CXX_FLAGS"${CMAKE_CXX_FLAGS} -Wunused-variable -Wunused-function -Wunused-but-set-variable"
+)
+
 find_package(Arrow REQUIRED CONFIG)
 find_package(ArrowFlight REQUIRED CONFIG)
 find_package(Protobuf REQUIRED)
@@ -17,6 +20,17 @@ include_directories(src/include)
 include_directories(src/include/client)
 include_directories(src/include/server)
 include_directories(${ARROW_INCLUDE_DIR})
+
+if(${BUILD_UNITTESTS})
+  add_subdirectory(test/unittest)
+
+  # Integration test
+  include_directories(duckdb/third_party/catch)
+  add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
+  target_link_libraries(
+    test_distributed_flight ${EXTENSION_NAME} Arrow::arrow_static
+    ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+endif()
 
 # Generate protobuf code.
 set(PROTO_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)
@@ -114,25 +128,3 @@ add_executable(distributed_worker src/server/worker/distributed_worker_main.cpp)
 target_link_libraries(
   distributed_worker ${EXTENSION_NAME} Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
-
-# # Unit tests.
-include_directories(duckdb/third_party/catch)
-add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
-target_link_libraries(
-  test_distributed_flight ${EXTENSION_NAME} Arrow::arrow_static
-  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
-
-add_executable(test_arrow_enum_conversion unit/test_arrow_enum_conversion.cpp
-                                          src/arrow_utils.cpp)
-target_link_libraries(test_arrow_enum_conversion duckdb_static
-                      Arrow::arrow_static)
-
-add_executable(test_query_plan_analyzer unit/test_query_plan_analyzer.cpp)
-target_link_libraries(
-  test_query_plan_analyzer
-  ${EXTENSION_NAME}
-  duckdb_static
-  Arrow::arrow_static
-  ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf
-  gRPC::grpc++)
