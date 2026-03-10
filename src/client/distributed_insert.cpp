@@ -93,8 +93,8 @@ SinkFinalizeType PhysicalDistributedInsert::Finalize(Pipeline &pipeline, Event &
 	return SinkFinalizeType::READY;
 }
 
-SourceResultType PhysicalDistributedInsert::GetData(ExecutionContext &context, DataChunk &chunk,
-                                                    OperatorSourceInput &input) const {
+SourceResultType PhysicalDistributedInsert::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+                                                            OperatorSourceInput &input) const {
 	chunk.SetCardinality(0);
 	return SourceResultType::FINISHED;
 }

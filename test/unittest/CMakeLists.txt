@@ -19,3 +19,6 @@ endif()
 target_link_libraries(
   unittest_duckherder Arrow::arrow_static ArrowFlight::arrow_flight_static
   protobuf::libprotobuf gRPC::grpc++)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_link_libraries(unittest_duckherder -Wl,--allow-multiple-definition)
+endif()

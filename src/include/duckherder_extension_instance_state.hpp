@@ -38,6 +38,10 @@ struct DuckherderInstanceState : public ObjectCacheEntry {
 		return OBJECT_TYPE;
 	}
 
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx {};
+	}
+
 private:
 	mutable std::mutex mu;
 	shared_ptr<BaseQueryRecorder> query_recorder;
