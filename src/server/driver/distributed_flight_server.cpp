@@ -6,6 +6,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/storage/storage_extension.hpp"
 #include "query_common.hpp"
 #include "server/driver/duckling_storage.hpp"
 
@@ -74,7 +75,7 @@ void DistributedFlightServer::Initialize() {
 
 	// Register the Duckling storage extension.
 	DBConfig config;
-	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
+	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);

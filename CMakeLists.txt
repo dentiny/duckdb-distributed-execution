@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 # Set extension name here
 set(TARGET_NAME duckherder)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 
 set(CMAKE_CXX_FLAGS"${CMAKE_CXX_FLAGS} -Wunused-variable -Wunused-function -Wunused-but-set-variable"
 )
@@ -28,8 +28,11 @@ if(${BUILD_UNITTESTS})
   include_directories(duckdb/third_party/catch)
   add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
   target_link_libraries(
-    test_distributed_flight ${EXTENSION_NAME} Arrow::arrow_static
+    test_distributed_flight ${EXTENSION_NAME} dummy_static_extension_loader Arrow::arrow_static
     ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_link_libraries(test_distributed_flight -Wl,--allow-multiple-definition)
+    endif()
 endif()
 
 # Generate protobuf code.
@@ -102,6 +105,11 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
+# Allow duplicate TableCatalogEntry::Name (see extension_config.cmake). Loadable extension gets it via DUCKDB_EXTRA_LINK_FLAGS.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	target_link_libraries(${LOADABLE_EXTENSION_NAME} -Wl,--allow-multiple-definition)
+endif()
+
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
   ${EXTENSION_NAME} Arrow::arrow_static ArrowFlight::arrow_flight_static
@@ -117,14 +125,20 @@ install(
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
 
-# Add distributed server executable.
+# Add distributed server executable. Link all static extensions so LoadAllExtensions resolves.
 add_executable(distributed_server src/server/driver/distributed_server_main.cpp)
 target_link_libraries(
-  distributed_server ${EXTENSION_NAME} Arrow::arrow_static
+  distributed_server ${EXTENSION_NAME} dummy_static_extension_loader Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	target_link_libraries(distributed_server -Wl,--allow-multiple-definition)
+endif()
 
 # Add distributed worker executable.
 add_executable(distributed_worker src/server/worker/distributed_worker_main.cpp)
 target_link_libraries(
-  distributed_worker ${EXTENSION_NAME} Arrow::arrow_static
+  distributed_worker ${EXTENSION_NAME} dummy_static_extension_loader Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	target_link_libraries(distributed_worker -Wl,--allow-multiple-definition)
+endif()

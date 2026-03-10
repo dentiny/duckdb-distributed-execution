@@ -118,8 +118,8 @@ SinkFinalizeType PhysicalDistributedDelete::Finalize(Pipeline &pipeline, Event &
 	return SinkFinalizeType::READY;
 }
 
-SourceResultType PhysicalDistributedDelete::GetData(ExecutionContext &context, DataChunk &chunk,
-                                                    OperatorSourceInput &input) const {
+SourceResultType PhysicalDistributedDelete::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+                                                           OperatorSourceInput &input) const {
 	// TODO(hjiang): Implement return chunk.
 	chunk.SetCardinality(0);
 	return SourceResultType::FINISHED;
