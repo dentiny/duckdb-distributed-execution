@@ -38,7 +38,12 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	TableFunction function("distributed_scan", {}, Execute, Bind, InitGlobal, InitLocal);
 	function.projection_pushdown = true;
 	function.filter_pushdown = false;
+	function.get_bind_info = GetBindInfo;
 	return function;
+}
+
+BindInfo DistributedTableScanFunction::GetBindInfo(optional_ptr<FunctionData> bind_data) {
+	return BindInfo(bind_data->Cast<DistributedTableScanBindData>().table);
 }
 
 unique_ptr<FunctionData> DistributedTableScanFunction::Bind(ClientContext &context, TableFunctionBindInput &input,

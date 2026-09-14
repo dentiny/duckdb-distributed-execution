@@ -74,7 +74,7 @@ void DistributedFlightServer::Initialize() {
 
 	// Register the Duckling storage extension.
 	DBConfig config;
-	config.storage_extensions["duckling"] = make_uniq<DucklingStorageExtension>();
+	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
 
 	db = make_uniq<DuckDB>(nullptr, &config);
 	conn = make_uniq<Connection>(*db);

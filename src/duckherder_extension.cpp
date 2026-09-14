@@ -35,7 +35,7 @@ void ClearQueryRecorderStats(const DataChunk &args, ExpressionState &state, Vect
 void LoadInternal(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
-	config.storage_extensions["duckherder"] = make_uniq<DuckherderStorageExtension>();
+	StorageExtension::Register(config, "duckherder", make_shared_ptr<DuckherderStorageExtension>());
 
 	// Set extension state.
 	SetInstanceState(db, make_shared_ptr<DuckherderInstanceState>());

@@ -34,6 +34,10 @@ struct DuckherderInstanceState : public ObjectCacheEntry {
 		return OBJECT_TYPE;
 	}
 
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx();
+	}
+
 	static string ObjectType() {
 		return OBJECT_TYPE;
 	}
