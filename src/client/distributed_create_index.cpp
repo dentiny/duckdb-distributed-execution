@@ -44,8 +44,8 @@ unique_ptr<GlobalSourceState> PhysicalRemoteCreateIndexOperator::GetGlobalSource
 	return make_uniq<RemoteCreateIndexGlobalState>();
 }
 
-SourceResultType PhysicalRemoteCreateIndexOperator::GetData(ExecutionContext &context, DataChunk &chunk,
-                                                            OperatorSourceInput &input) const {
+SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+                                                                    OperatorSourceInput &input) const {
 	auto &gstate = input.global_state.Cast<RemoteCreateIndexGlobalState>();
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
 

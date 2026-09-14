@@ -189,9 +189,9 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 			std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 			auto status = worker->client->ExecutePartition(req, stream);
 			if (!status.ok()) {
-				DUCKDB_LOG_WARN(db_instance,
-				                StringUtil::Format("Worker %s failed executing task %llu: %s", worker->worker_id,
-				                                   static_cast<long long unsigned>(task.task_id), status.ToString()));
+				DUCKDB_LOG_WARNING(
+				    db_instance, StringUtil::Format("Worker %s failed executing task %llu: %s", worker->worker_id,
+				                                    static_cast<long long unsigned>(task.task_id), status.ToString()));
 				continue;
 			}
 

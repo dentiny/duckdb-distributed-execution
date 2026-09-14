@@ -45,8 +45,8 @@ unique_ptr<GlobalSourceState> PhysicalRemoteAlterTableOperator::GetGlobalSourceS
 	return make_uniq<RemoteAlterTableGlobalState>();
 }
 
-SourceResultType PhysicalRemoteAlterTableOperator::GetData(ExecutionContext &context, DataChunk &chunk,
-                                                           OperatorSourceInput &input) const {
+SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+                                                                   OperatorSourceInput &input) const {
 	auto &gstate = input.global_state.Cast<RemoteAlterTableGlobalState>();
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
 
