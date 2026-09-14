@@ -58,7 +58,8 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	// Get the schema and table to create the catalog entry.
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
 	auto &schema = catalog.GetSchema(context.client, schema_name);
-	auto &table = catalog.GetEntry<TableCatalogEntry>(context.client, schema_name, table_name);
+	auto &entry = catalog.GetEntry(context.client, CatalogType::TABLE_ENTRY, schema_name, table_name);
+	auto &table = entry.Cast<TableCatalogEntry>();
 
 	// Generate CREATE INDEX SQL and remove catalog prefix for remote execution.
 	string create_sql = SanitizeQuery(info->ToString(), catalog_name);
