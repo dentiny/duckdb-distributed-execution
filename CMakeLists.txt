@@ -27,10 +27,13 @@ if(${BUILD_UNITTESTS})
   # Integration test
   include_directories(duckdb/third_party/catch)
   add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
+  target_sources(
+    test_distributed_flight
+    PRIVATE $<TARGET_OBJECTS:duckdb_generated_extension_loader>)
   target_link_libraries(
-    test_distributed_flight duckdb_generated_extension_loader ${EXTENSION_NAME}
-    core_functions_extension parquet_extension Arrow::arrow_static
-    ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+    test_distributed_flight ${EXTENSION_NAME} core_functions_extension
+    parquet_extension Arrow::arrow_static ArrowFlight::arrow_flight_static
+    protobuf::libprotobuf gRPC::grpc++)
 endif()
 
 # Generate protobuf code.
@@ -120,14 +123,18 @@ install(
 
 # Add distributed server executable.
 add_executable(distributed_server src/server/driver/distributed_server_main.cpp)
+target_sources(distributed_server
+               PRIVATE $<TARGET_OBJECTS:duckdb_generated_extension_loader>)
 target_link_libraries(
-  distributed_server duckdb_generated_extension_loader ${EXTENSION_NAME}
-  core_functions_extension parquet_extension Arrow::arrow_static
-  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+  distributed_server ${EXTENSION_NAME} core_functions_extension
+  parquet_extension Arrow::arrow_static ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf gRPC::grpc++)
 
 # Add distributed worker executable.
 add_executable(distributed_worker src/server/worker/distributed_worker_main.cpp)
+target_sources(distributed_worker
+               PRIVATE $<TARGET_OBJECTS:duckdb_generated_extension_loader>)
 target_link_libraries(
-  distributed_worker duckdb_generated_extension_loader ${EXTENSION_NAME}
-  core_functions_extension parquet_extension Arrow::arrow_static
-  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
+  distributed_worker ${EXTENSION_NAME} core_functions_extension
+  parquet_extension Arrow::arrow_static ArrowFlight::arrow_flight_static
+  protobuf::libprotobuf gRPC::grpc++)
