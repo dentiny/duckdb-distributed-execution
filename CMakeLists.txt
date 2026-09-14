@@ -104,6 +104,12 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
+set_target_properties(
+  ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME}
+  PROPERTIES CXX_STANDARD 17
+             CXX_STANDARD_REQUIRED ON
+             CXX_EXTENSIONS OFF)
+
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
   ${EXTENSION_NAME} Arrow::arrow_static ArrowFlight::arrow_flight_static
