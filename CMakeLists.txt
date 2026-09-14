@@ -3,8 +3,6 @@ cmake_minimum_required(VERSION 3.5)
 # Set extension name here
 set(TARGET_NAME duckherder)
 
-set(CMAKE_CXX_STANDARD 17)
-
 set(CMAKE_CXX_FLAGS"${CMAKE_CXX_FLAGS} -Wunused-variable -Wunused-function -Wunused-but-set-variable"
 )
 
@@ -106,10 +104,22 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
+set_target_properties(
+  ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME}
+  PROPERTIES CXX_STANDARD 17
+             CXX_STANDARD_REQUIRED ON
+             CXX_EXTENSIONS OFF)
+
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
   ${EXTENSION_NAME} Arrow::arrow_static ArrowFlight::arrow_flight_static
   protobuf::libprotobuf gRPC::grpc++)
+set_property(
+  TARGET ${EXTENSION_NAME}
+  PROPERTY
+    INTERFACE_LINK_LIBRARIES
+    "duckdb_static;$<LINK_ONLY:Arrow::arrow_static>;$<LINK_ONLY:ArrowFlight::arrow_flight_static>;$<LINK_ONLY:protobuf::libprotobuf>;$<LINK_ONLY:gRPC::grpc++>"
+)
 
 target_link_libraries(
   ${LOADABLE_EXTENSION_NAME} Arrow::arrow_static
