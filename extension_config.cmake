@@ -3,6 +3,7 @@
 # Extension from this repo
 duckdb_extension_load(duckherder
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
+    EXTENSION_VERSION 0.0.9
     LOAD_TESTS
 )
 

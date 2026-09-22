@@ -31,8 +31,8 @@ std::string DuckherderExtension::Name() {
 }
 
 std::string DuckherderExtension::Version() const {
-#ifdef EXT_VERSION_QUACK
-	return EXT_VERSION_QUACK;
+#ifdef EXT_VERSION_DUCKHERDER
+	return EXT_VERSION_DUCKHERDER;
 #else
 	return "";
 #endif
