@@ -2,8 +2,13 @@
 
 ### Added
 
-- Add descriptions, examples, categories, and argument names for all Duckherder
-  SQL and pragma functions in `duckdb_functions()`.
+- Add descriptions, examples, categories, and argument names for all Duckherder SQL and pragma functions in `duckdb_functions()`.
+
+### Fixed
+
+- Fix extension version ([#122])
+
+[#122]: https://github.com/dentiny/duckdb-distributed-execution/pull/122
 
 ## 0.0.9
 
