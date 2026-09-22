@@ -6,7 +6,9 @@
 
 ### Fixed
 
-- Fix extension version
+- Fix extension version ([#122])
+
+[#122]: https://github.com/dentiny/duckdb-distributed-execution/pull/122
 
 ## 0.0.9
 
