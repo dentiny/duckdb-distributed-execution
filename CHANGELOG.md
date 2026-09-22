@@ -1,3 +1,10 @@
+## 0.0.10
+
+### Added
+
+- Add descriptions, examples, categories, and argument names for all Duckherder
+  SQL and pragma functions in `duckdb_functions()`.
+
 ## 0.0.9
 
 ### Changed

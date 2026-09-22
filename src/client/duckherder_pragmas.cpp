@@ -13,25 +13,19 @@
 
 namespace duckdb {
 
-/*static*/ void DuckherderPragmas::RegisterPragmas(ExtensionLoader &loader) {
-	// Register pragma function for registering remote tables.
-	// Takes 2 positional arguments: table_name, remote_table_name
-	auto register_function =
-	    PragmaFunction::PragmaCall("duckherder_register_remote_table", RegisterRemoteTable,
-	                               {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}});
-	loader.RegisterFunction(register_function);
+/*static*/ PragmaFunction DuckherderPragmas::GetRegisterRemoteTableFunction() {
+	return PragmaFunction::PragmaCall("duckherder_register_remote_table", RegisterRemoteTable,
+	                                  {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}});
+}
 
-	// Register pragma function for unregistering remote tables.
-	// Takes 1 argument: table_name
-	auto unregister_function = PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable,
-	                                                      {LogicalType {LogicalTypeId::VARCHAR}});
-	loader.RegisterFunction(unregister_function);
+/*static*/ PragmaFunction DuckherderPragmas::GetUnregisterRemoteTableFunction() {
+	return PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable,
+	                                  {LogicalType {LogicalTypeId::VARCHAR}});
+}
 
-	// Register scalar function for loading extensions on server.
-	// Takes 1 argument: extension_name
-	ScalarFunction load_extension_func("duckherder_load_extension", {LogicalType {LogicalTypeId::VARCHAR}},
-	                                   LogicalType {LogicalTypeId::BOOLEAN}, LoadExtension);
-	loader.RegisterFunction(load_extension_func);
+/*static*/ ScalarFunction DuckherderPragmas::GetLoadExtensionFunction() {
+	return ScalarFunction("duckherder_load_extension", {LogicalType {LogicalTypeId::VARCHAR}},
+	                      LogicalType {LogicalTypeId::BOOLEAN}, LoadExtension);
 }
 
 /*static*/ void DuckherderPragmas::RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters) {

@@ -15,7 +15,9 @@ class Vector;
 // TODO(hjiang): Current implementation assumes hard-coded database and catalog type, remove.
 class DuckherderPragmas {
 public:
-	static void RegisterPragmas(ExtensionLoader &loader);
+	static PragmaFunction GetRegisterRemoteTableFunction();
+	static PragmaFunction GetUnregisterRemoteTableFunction();
+	static ScalarFunction GetLoadExtensionFunction();
 
 private:
 	static void RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
