@@ -1,0 +1,30 @@
+# name: test/sql/function_metadata.test
+# description: test catalog metadata for duckherder functions
+# group: [sql]
+
+require duckherder
+
+query I
+SELECT count(*)
+FROM duckdb_functions()
+WHERE function_name IN (
+    'duckherder_clear_query_recorder_stats',
+    'duckherder_get_query_execution_stats',
+    'duckherder_get_query_history',
+    'duckherder_get_worker_count',
+    'duckherder_load_extension',
+    'duckherder_register_or_replace_driver',
+    'duckherder_register_remote_table',
+    'duckherder_register_worker',
+    'duckherder_start_local_server',
+    'duckherder_start_standalone_worker',
+    'duckherder_stop_local_server',
+    'duckherder_unregister_remote_table'
+)
+AND description IS NOT NULL
+AND len(examples) > 0
+AND len(categories) > 0
+AND NOT list_contains(parameters, 'col0')
+AND NOT list_contains(parameters, 'col1');
+----
+12
