@@ -2,8 +2,11 @@
 
 ### Added
 
-- Add descriptions, examples, categories, and argument names for all Duckherder
-  SQL and pragma functions in `duckdb_functions()`.
+- Add descriptions, examples, categories, and argument names for all Duckherder SQL and pragma functions in `duckdb_functions()`.
+
+### Fixed
+
+- Fix extension version
 
 ## 0.0.9
 
