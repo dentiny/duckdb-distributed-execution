@@ -1,0 +1,55 @@
+# name: test/sql/object_storage_single_writer_reader.test
+# description: A reader connection can read content written to local ObjFS by a writer connection
+# group: [sql]
+
+require duckdb_object_storage
+
+load __TEST_DIR__/object_storage_single_writer_reader_runner.db
+
+statement ok writer
+SET duckdb_objfs_backend = 'local'
+
+statement ok writer
+SET duckdb_objfs_root = '__TEST_DIR___slatedb/{BASE_TEST_NAME}'
+
+statement ok writer
+ATTACH 'duckdb_objfs://shared.db' AS object_db
+
+statement ok writer
+CREATE TABLE object_db.items(i INTEGER, value VARCHAR)
+
+statement ok writer
+INSERT INTO object_db.items VALUES (1, 'one'), (2, 'two')
+
+statement ok writer
+CHECKPOINT object_db
+
+query IT reader
+SELECT i, value FROM object_db.items ORDER BY i
+----
+1	one
+2	two
+
+statement ok writer
+INSERT INTO object_db.items VALUES (3, 'three')
+
+statement ok writer
+CHECKPOINT object_db
+
+statement ok writer
+DETACH object_db
+
+statement ok reader
+ATTACH 'duckdb_objfs://shared.db' AS object_db (READ_ONLY)
+
+query II reader
+SELECT count(*), sum(i) FROM object_db.items
+----
+3	6
+
+query IT reader
+SELECT i, value FROM object_db.items ORDER BY i
+----
+1	one
+2	two
+3	three
