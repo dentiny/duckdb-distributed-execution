@@ -13,4 +13,7 @@ format-all: format
 	@cmake-format -i test/unittest/CMakeLists.txt
 	@buf format -w src/proto/
 
-.PHONY: format-all
+test-object-storage-s3:
+	bash test/object_storage/run_single_writer_reader_e2e.sh
+
+.PHONY: format-all test-object-storage-s3

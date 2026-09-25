@@ -12,6 +12,7 @@ Feel free to play around with it, give me feedback, and ping me for feature requ
 - [Architecture](#architecture)
 - [Distributed Execution System](#distributed-execution-system)
 - [Installation](#installation)
+- [Object Storage](#object-storage)
 - [Usage](#usage)
 - [Roadmap](#roadmap)
 
@@ -177,6 +178,7 @@ The build produces:
 - `./build/release/duckdb` - DuckDB shell with extension pre-loaded
 - `./build/release/test/unittest` - Test runner
 - `./build/release/extension/duckherder/duckherder.duckdb_extension` - Loadable extension
+- `./build/release/extension/duckdb_object_storage/duckdb_object_storage.duckdb_extension` - Object-storage filesystem extension
 - `./build/release/distributed_server` - Standalone distributed driver node
 - `./build/release/distributed_worker` - Standalone distributed worker node
 
@@ -208,6 +210,13 @@ For multi-machine setups, start worker nodes on separate machines:
 # Start a worker on a specific port with custom worker ID
 ./build/release/distributed_worker 0.0.0.0 8817 worker-2
 ```
+
+## Object Storage
+
+The build can attach a native DuckDB database stored in S3-compatible object
+storage. The currently supported deployment is one writer with one or more
+read-only processes. See [Single Writer and Reader on Object
+Storage](object_storage.md) for setup and an end-to-end MinIO test.
 
 ## Usage
 

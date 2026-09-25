@@ -254,6 +254,7 @@ bazel-*
 vcpkg_installed/
 
 # Test database.
+/duckdb_unittest_tempdir/
 md
 md.wal
 dh
