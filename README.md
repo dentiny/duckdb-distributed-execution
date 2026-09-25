@@ -10,6 +10,7 @@ Feel free to play around with it, give me feedback, and ping me for feature requ
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+- [Object-Storage-Backed Deployment Model](#object-storage-backed-deployment-model)
 - [Distributed Execution System](#distributed-execution-system)
 - [Installation](#installation)
 - [Object Storage](#object-storage)
@@ -61,6 +62,70 @@ The extension transparently handles query routing, allowing you to run CREATE, S
 │  └───────────────────────────────────┘  │
 └─────────────────────────────────────────┘
 ```
+
+## Object-Storage-Backed Deployment Model
+
+The target architecture for integrating distributed execution with an
+object-storage-backed DuckDB database follows a **single-writer,
+multiple-reader** model:
+
+- The **Driver/Coordinator owns the only write authority**. In the initial
+  design, the Writer runs inside the Driver process. It owns the read-write
+  database handle and writer lease, applies DDL/DML, and publishes new
+  checkpoints or snapshots to object storage.
+- **All worker nodes are readers**. They execute partitioned read tasks against
+  the snapshot selected by the coordinator and never publish database changes.
+- The **client is a SQL and session endpoint**. It registers storage and cluster
+  configuration, attaches the database, and submits queries without coordinating
+  individual workers or writing database files directly.
+- **Object storage is the source of truth** for database data, manifests, and
+  committed snapshots.
+
+```
++------------------+    SQL / transaction     +------------------------------------+
+| Client CLI / App | -----------------------> | Driver / Coordinator               |
+| - ATTACH         | <----------------------- |                                    |
+| - Session        |         results          |  +------------------------------+  |
++------------------+                          |  | Gateway + Result Merger      |  |
+                                              |  +------------------------------+  |
+                                              |  | Catalog + Query Planner      |  |
+                                              |  | table ID + schema + snapshot |  |
+                                              |  +------------------------------+  |
+                                              |  | Transaction Coordinator      |  |
+                                              |  | BEGIN / COMMIT / ROLLBACK    |  |
+                                              |  +------------------------------+  |
+                                              |  | Writer (READ-WRITE)          |  |
+                                              |  | writer lease + epoch         |  |
+                                              |  | DDL/DML + checkpoint/publish |  |
+                                              |  +------------------------------+  |
+                                              +----------+-------------+-----------+
+                                                         |             |
+                                read tasks + snapshot ID |             | write +
+                                                         |             | publish
+                                                         v             v
+                                              +----------------+  +------------------+
+                                              | Worker Pool    |  | Object Storage   |
+                                              | READ-ONLY      |  | data + manifests |
+                                              | Worker 1 ... N |->| + checkpoints    |
+                                              +-------+--------+  +------------------+
+                                                      |             ^
+                                                      |             |
+                                                      +-------------+
+                                                   read pinned snapshot
+
+                                              partial results return to
+                                              Gateway + Result Merger
+```
+
+Each query is pinned to one committed snapshot before tasks are sent to
+workers. A newly committed write is visible to new queries, while already
+running queries continue reading their original snapshot. The coordinator
+remains the commit authority even if the Writer is later moved from the Driver
+process into a dedicated writer process.
+
+This section describes the intended object-storage-backed distributed
+architecture. Transaction coordination, snapshot propagation, and direct
+worker reads from shared object storage are still work in progress.
 
 ### Distributed Execution Flow
 
@@ -215,8 +280,11 @@ For multi-machine setups, start worker nodes on separate machines:
 
 The build can attach a native DuckDB database stored in S3-compatible object
 storage. The currently supported deployment is one writer with one or more
-read-only processes. See [Single Writer and Reader on Object
-Storage](object_storage.md) for setup and an end-to-end MinIO test.
+read-only processes. In the target distributed deployment, the
+Driver/Coordinator owns that writer and every worker is a read-only process.
+See the [S3 single-writer/read-only-reader test](test/object_storage/run_single_writer_reader_e2e.sh)
+and [local object-storage test](test/sql/object_storage_single_writer_reader.test)
+for executable examples.
 
 ## Usage
 
@@ -469,8 +537,8 @@ SELECT COUNT(*) FROM duckherder_get_query_history();  -- Returns: 0
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for development guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
 ## License
 
-See [LICENSE](../LICENSE) for license information.
+See [LICENSE](LICENSE) for license information.
