@@ -1,6 +1,7 @@
 #include "distributed_client.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
@@ -28,9 +29,10 @@ DistributedClient &DistributedClient::GetInstance() {
 }
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,
-                                                     const vector<LogicalType> *expected_types) {
+                                                     const vector<LogicalType> *expected_types,
+                                                     const ScanTableOptions &options) {
 	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
-	auto status = client->ScanTable(table_name, limit, offset, stream);
+	auto status = client->ScanTable(table_name, limit, offset, stream, options);
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
 	}
@@ -62,6 +64,10 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 			// This is useful to handle types like ENUM that need proper type information.
 			if (expected_types != nullptr) {
 				types = *expected_types;
+				if (schema->num_fields() != NumericCast<int>(types.size())) {
+					return make_uniq<MaterializedQueryResult>(
+					    ErrorData("Remote Arrow schema column count does not match the requested DuckDB types"));
+				}
 			}
 
 			// Convert Arrow schema to DuckDB types and names.
@@ -75,6 +81,12 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 
 			collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 			first_batch = false;
+		}
+
+		if (arrow_batch->num_columns() != NumericCast<int>(types.size()) ||
+		    arrow_batch->num_columns() != NumericCast<int>(names.size())) {
+			return make_uniq<MaterializedQueryResult>(
+			    ErrorData("Remote Arrow batch column count does not match the validated schema"));
 		}
 
 		// Convert Arrow RecordBatch to DuckDB DataChunk.
@@ -107,9 +119,9 @@ bool DistributedClient::TableExists(const string &table_name) {
 	return exists;
 }
 
-unique_ptr<QueryResult> DistributedClient::ExecuteSQL(const string &sql) {
+unique_ptr<QueryResult> DistributedClient::ExecuteSQL(const string &sql, const string &session_id) {
 	distributed::DistributedResponse response;
-	auto status = client->ExecuteSQL(sql, response);
+	auto status = client->ExecuteSQL(sql, response, session_id);
 
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
@@ -118,11 +130,36 @@ unique_ptr<QueryResult> DistributedClient::ExecuteSQL(const string &sql) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
 	}
 
-	vector<string> names;
-	vector<LogicalType> types;
+	vector<string> names {"Count"};
+	vector<LogicalType> types {LogicalType::BIGINT};
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	DataChunk chunk;
+	chunk.Initialize(Allocator::DefaultAllocator(), types);
+	chunk.SetValue(0, 0, Value::BIGINT(response.execute_sql().rows_affected()));
+	chunk.SetCardinality(1);
+	collection->Append(chunk);
 	return make_uniq<MaterializedQueryResult>(StatementType::INSERT_STATEMENT, StatementProperties(), names,
 	                                          std::move(collection), ClientProperties());
+}
+
+string DistributedClient::OpenSession() {
+	string session_id;
+	auto status = client->OpenSession(session_id);
+	if (!status.ok()) {
+		throw IOException("Failed to open remote session: %s", status.ToString());
+	}
+	return session_id;
+}
+
+void DistributedClient::CloseSession(const string &session_id) {
+	distributed::DistributedResponse response;
+	auto status = client->CloseSession(session_id, response);
+	if (!status.ok()) {
+		throw IOException("Failed to close remote session: %s", status.ToString());
+	}
+	if (!response.success()) {
+		throw IOException("Failed to close remote session: %s", response.error_message());
+	}
 }
 
 unique_ptr<QueryResult> DistributedClient::CreateTable(const string &create_sql) {

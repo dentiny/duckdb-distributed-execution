@@ -239,6 +239,12 @@ export VCPKG_TOOLCHAIN_PATH=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) make
 ```
 
+The DuckDB submodule is pinned to the official `v1.5.5` release. Build targets
+idempotently apply the tracked
+`patches/duckdb-v1.5.5-remote-statement.patch`, which adds only the catalog hook
+needed to hand INSERT and DELETE statements to the coordinator before DuckDB
+creates a local DML plan.
+
 The build produces:
 - `./build/release/duckdb` - DuckDB shell with extension pre-loaded
 - `./build/release/test/unittest` - Test runner

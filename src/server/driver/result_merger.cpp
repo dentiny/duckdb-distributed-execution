@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
 
 namespace duckdb {
 
@@ -226,6 +227,12 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	}
 
 	// Finalize phase: Return the aggregated result
+	if (!collection) {
+		// Workers may legitimately return no record batches for an empty scan.
+		// Preserve the planned schema instead of constructing a QueryResult with
+		// a null collection.
+		collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	}
 	// In this simple case, we just return the merged collection
 	// For more complex operators (aggregates, sorts, etc.), additional
 	// finalization logic would go here (e.g., final aggregation, final sort)

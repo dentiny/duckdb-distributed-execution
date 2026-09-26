@@ -1,12 +1,15 @@
 #include "duckherder_functions.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckherder_extension_instance_state.hpp"
 #include "duckherder_pragmas.hpp"
+#include "duckherder_remote_query.hpp"
 #include "query_execution_stats_query_function.hpp"
 #include "query_history_query_function.hpp"
 #include "server/driver/distributed_server_function.hpp"
@@ -112,6 +115,11 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	    "queries.",
 	    /*examples=*/ {"SELECT * FROM duckherder_get_query_execution_stats();"},
 	    /*categories=*/ {"duckherder", "distributed_execution", "observability"});
+	RegisterTableFunction(loader, GetDuckherderRemoteQueryFunction(),
+	                      /*parameter_names=*/ {"catalog_name", "sql", "modification"},
+	                      /*description=*/"Internal execution function for pushed-down Duckherder DML statements.",
+	                      /*examples=*/ {},
+	                      /*categories=*/ {"duckherder", "distributed_execution", "internal"});
 	RegisterScalarFunction(
 	    loader, GetClearQueryRecorderStatsFunction(),
 	    /*parameter_names=*/ {},

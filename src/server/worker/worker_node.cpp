@@ -4,21 +4,35 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
-#include "duckdb/common/enums/pending_execution_result.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/execution/executor.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
+#include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "server/worker/worker_node.hpp"
+#include "server/worker/worker_result_metadata.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
 #include <chrono>
 
 namespace duckdb {
+
+unique_ptr<QueryResult> ApplyCoordinatorResultMetadata(unique_ptr<QueryResult> result, vector<LogicalType> types,
+                                                       const vector<string> &names) {
+	auto &materialized = result->Cast<MaterializedQueryResult>();
+	auto collection = materialized.TakeCollection();
+	collection->Types() = std::move(types);
+	auto result_names = result->names;
+	if (result_names.size() == names.size()) {
+		result_names = names;
+	}
+	return make_uniq<MaterializedQueryResult>(result->statement_type, result->properties, std::move(result_names),
+	                                          std::move(collection), result->client_properties);
+}
 
 WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *shared_db)
     : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p) {
@@ -40,6 +54,10 @@ WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *sh
 	}
 }
 
+WorkerNode::~WorkerNode() {
+	Shutdown();
+}
+
 arrow::Status WorkerNode::Start() {
 	arrow::flight::Location location;
 	ARROW_ASSIGN_OR_RAISE(location, arrow::flight::Location::ForGrpcTcp(host, port));
@@ -54,6 +72,9 @@ arrow::Status WorkerNode::Start() {
 }
 
 void WorkerNode::Shutdown() {
+	if (shutdown_started.exchange(true)) {
+		return;
+	}
 	[[maybe_unused]] auto status = FlightServerBase::Shutdown();
 }
 
@@ -262,11 +283,7 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 		return arrow::Status::Invalid("Worker result column count mismatch with expected types");
 	}
 
-	materialized->types = std::move(types);
-	if (materialized->names.size() == names.size()) {
-		materialized->names = std::move(names);
-	}
-	result = std::move(materialized);
+	result = ApplyCoordinatorResultMetadata(std::move(materialized), std::move(types), names);
 	return arrow::Status::OK();
 }
 

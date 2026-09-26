@@ -1,0 +1,164 @@
+# name: test/sql/delete_operations.test
+# description: Whole-statement remote DELETE, transaction, and fallback safety
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8837, 2);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8837);
+
+statement ok
+USE dh;
+
+statement ok
+PRAGMA duckherder_register_remote_table('delete_wrong_row_test', 'delete_wrong_row_test');
+
+statement ok
+DROP TABLE IF EXISTS delete_wrong_row_test;
+
+statement ok
+CREATE TABLE delete_wrong_row_test (status INTEGER, id INTEGER);
+
+statement ok
+INSERT INTO delete_wrong_row_test VALUES (10, 1), (1, 2);
+
+query I
+DELETE FROM delete_wrong_row_test WHERE id = 1;
+----
+1
+
+query II
+SELECT status, id FROM delete_wrong_row_test;
+----
+1	2
+
+# Duplicate and NULL keys must preserve the original predicate and row count.
+statement ok
+PRAGMA duckherder_register_remote_table('delete_edge_case_test', 'delete_edge_case_test');
+
+statement ok
+DROP TABLE IF EXISTS delete_edge_case_test;
+
+statement ok
+CREATE TABLE delete_edge_case_test (status INTEGER, id INTEGER);
+
+statement ok
+INSERT INTO delete_edge_case_test VALUES (100, 7), (200, 7), (300, NULL), (400, 8);
+
+query I
+DELETE FROM delete_edge_case_test WHERE id = 7;
+----
+2
+
+query I
+DELETE FROM delete_edge_case_test WHERE id IS NULL;
+----
+1
+
+query II
+SELECT status, id FROM delete_edge_case_test;
+----
+400	8
+
+# DELETE is sent as one statement, never rebuilt as client-side IN batching.
+query I
+SELECT count(*)
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'delete from delete_wrong_row_test%'
+  AND lower(sql) LIKE '% in (%';
+----
+0
+
+# Rollback uses the same dedicated server Connection as DELETE and SELECT.
+statement ok
+BEGIN;
+
+query I
+DELETE FROM delete_wrong_row_test WHERE id = 2;
+----
+1
+
+query I
+SELECT count(*) FROM delete_wrong_row_test;
+----
+0
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM delete_wrong_row_test WHERE id = 2;
+----
+1
+
+# Distinct client contexts receive distinct server sessions, and explicit COMMIT is visible cross-session.
+statement ok con1
+BEGIN;
+
+statement ok con1
+INSERT INTO dh.delete_wrong_row_test VALUES (30, 3);
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 3;
+----
+1
+
+query I con2
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 3;
+----
+0
+
+statement ok con1
+COMMIT;
+
+query I con2
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 3;
+----
+1
+
+# A transactional scan establishes and retains its session snapshot across another session's commit.
+statement ok con1
+BEGIN;
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 4;
+----
+0
+
+statement ok con2
+INSERT INTO dh.delete_wrong_row_test VALUES (40, 4);
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 4;
+----
+0
+
+statement ok con1
+COMMIT;
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 4;
+----
+1
+
+# Session scans execute locally on the dedicated Connection and never use workers.
+query I
+SELECT count(*) > 0
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'select % from delete_wrong_row_test%'
+  AND execution_mode = 'LOCAL'
+  AND num_workers_used = 0;
+----
+true
+
+# Autocommit table scans retain the existing worker execution path.
+query I
+SELECT count(*) > 0
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'select % from delete_wrong_row_test%'
+  AND execution_mode = 'DELEGATED';
+----
+true

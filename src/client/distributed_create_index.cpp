@@ -48,6 +48,9 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
                                                                     OperatorSourceInput &input) const {
 	auto &gstate = input.global_state.Cast<RemoteCreateIndexGlobalState>();
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
+	if (!context.client.transaction.IsAutoCommit()) {
+		throw TransactionException("Duckherder remote DDL is not supported inside explicit transactions");
+	}
 
 	// Execute the CREATE INDEX on the remote server and register it locally.
 	lock_guard<mutex> lock(gstate.lock);

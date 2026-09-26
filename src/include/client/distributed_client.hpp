@@ -37,7 +37,11 @@ public:
 	static DistributedClient &GetInstance();
 
 	// Execute arbitrary SQL on the server.
-	unique_ptr<QueryResult> ExecuteSQL(const string &sql);
+	unique_ptr<QueryResult> ExecuteSQL(const string &sql, const string &session_id = "");
+
+	// Manage a server-side session backed by a dedicated connection.
+	string OpenSession();
+	void CloseSession(const string &session_id);
 
 	// Check if table exists.
 	bool TableExists(const string &table_name);
@@ -67,7 +71,8 @@ public:
 	// If [`expected_types`] is unassigned, type information is deduced from arrow schema.
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = NO_QUERY_LIMIT,
 	                                  idx_t offset = NO_QUERY_OFFSET,
-	                                  const vector<LogicalType> *expected_types = nullptr);
+	                                  const vector<LogicalType> *expected_types = nullptr,
+	                                  const ScanTableOptions &options = {});
 
 	// Get query execution statistics from the server.
 	// Returns error QueryResult on failure.

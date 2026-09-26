@@ -7,6 +7,7 @@ include_directories(${DuckDB_SOURCE_DIR}/test/include)
 file(GLOB_RECURSE CATCHFS_UNITTEST_OBJECTS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
 add_executable(unittest_duckherder main.cpp ${CATCHFS_UNITTEST_OBJECTS})
+add_test(NAME duckherder_unittest COMMAND unittest_duckherder)
 
 if(NOT WIN32
    AND NOT SUN

@@ -1,0 +1,143 @@
+diff --git a/src/catalog/catalog.cpp b/src/catalog/catalog.cpp
+index 37f6494ef2..8df3a00487 100644
+--- a/src/catalog/catalog.cpp
++++ b/src/catalog/catalog.cpp
+@@ -27,7 +27,9 @@
+ #include "duckdb/parser/parsed_data/create_type_info.hpp"
+ #include "duckdb/parser/parsed_data/create_view_info.hpp"
+ #include "duckdb/parser/parsed_data/drop_info.hpp"
++#include "duckdb/parser/sql_statement.hpp"
+ #include "duckdb/parser/statement/create_statement.hpp"
++#include "duckdb/parser/tableref.hpp"
+ #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+ #include "duckdb/planner/binder.hpp"
+ #include "duckdb/planner/expression_binder/index_binder.hpp"
+@@ -330,6 +332,10 @@ optional_ptr<CatalogEntry> Catalog::CreateIndex(ClientContext &context, CreateIn
+ 	return CreateIndex(GetCatalogTransaction(context), info);
+ }
+ 
++unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, unique_ptr<SQLStatement> statement) {
++	throw NotImplementedException("Catalog does not support remote statement execution");
++}
++
+ unique_ptr<LogicalOperator> Catalog::BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
+                                                      unique_ptr<LogicalOperator> plan) {
+ 	D_ASSERT(plan->type == LogicalOperatorType::LOGICAL_GET);
+diff --git a/src/include/duckdb/catalog/catalog.hpp b/src/include/duckdb/catalog/catalog.hpp
+index 55297dcde6..230ec4d770 100644
+--- a/src/include/duckdb/catalog/catalog.hpp
++++ b/src/include/duckdb/catalog/catalog.hpp
+@@ -79,6 +79,15 @@ class LogicalDelete;
+ class LogicalUpdate;
+ class CreateStatement;
+ class CatalogEntryRetriever;
++class SQLStatement;
++class TableRef;
++
++//! Capabilities that allow a catalog to take ownership of a statement before
++//! DuckDB creates a local physical DML plan.
++enum class RemoteCapability : uint8_t {
++	IS_REMOTE,
++	EXECUTE_STATEMENT
++};
+ 
+ //! The Catalog object represents the catalog of the database.
+ class Catalog {
+@@ -317,6 +326,10 @@ public:
+ 	virtual PhysicalOperator &PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op);
+ 	virtual PhysicalOperator &PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner,
+ 	                                        LogicalMergeInto &op, PhysicalOperator &plan);
++	virtual bool Supports(RemoteCapability capability) const {
++		return false;
++	}
++	virtual unique_ptr<TableRef> RemoteExecute(ClientContext &context, unique_ptr<SQLStatement> statement);
+ 	virtual unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
+ 	                                                    unique_ptr<LogicalOperator> plan);
+ 	virtual unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
+diff --git a/src/planner/binder/statement/bind_delete.cpp b/src/planner/binder/statement/bind_delete.cpp
+index 8820030d80..743c801f2e 100644
+--- a/src/planner/binder/statement/bind_delete.cpp
++++ b/src/planner/binder/statement/bind_delete.cpp
+@@ -7,6 +7,8 @@
+ #include "duckdb/planner/operator/logical_get.hpp"
+ #include "duckdb/planner/operator/logical_cross_product.hpp"
+ #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
++#include "duckdb/parser/expression/star_expression.hpp"
++#include "duckdb/parser/query_node/select_node.hpp"
+ 
+ namespace duckdb {
+ 
+@@ -29,6 +31,23 @@ BoundStatement Binder::Bind(DeleteStatement &stmt) {
+ 		properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::DELETE_DATA);
+ 	}
+ 
++	// A remote catalog must receive the original statement before DuckDB lowers
++	// the predicate into a local scan. This keeps DELETE selection and mutation
++	// on the same authoritative connection.
++	if (table.catalog.Supports(RemoteCapability::EXECUTE_STATEMENT)) {
++		auto remote_ref = table.catalog.RemoteExecute(context, stmt.Copy());
++		auto remote_select = make_uniq<SelectNode>();
++		remote_select->select_list.push_back(make_uniq<StarExpression>());
++		remote_select->from_table = std::move(remote_ref);
++
++		auto remote_binder = Binder::CreateBinder(context, this);
++		auto result = remote_binder->Bind(*remote_select);
++		auto &properties = GetStatementProperties();
++		properties.output_type = QueryResultOutputType::FORCE_MATERIALIZED;
++		properties.return_type = StatementReturnType::CHANGED_ROWS;
++		return result;
++	}
++
+ 	// plan any tables from the various using clauses
+ 	if (!stmt.using_clauses.empty()) {
+ 		unique_ptr<LogicalOperator> child_operator;
+diff --git a/src/planner/binder/statement/bind_insert.cpp b/src/planner/binder/statement/bind_insert.cpp
+index 1bd2e22251..22cfafb4fe 100644
+--- a/src/planner/binder/statement/bind_insert.cpp
++++ b/src/planner/binder/statement/bind_insert.cpp
+@@ -3,6 +3,7 @@
+ #include "duckdb/parser/expression/conjunction_expression.hpp"
+ #include "duckdb/parser/expression/constant_expression.hpp"
+ #include "duckdb/parser/expression/function_expression.hpp"
++#include "duckdb/parser/expression/star_expression.hpp"
+ #include "duckdb/parser/statement/insert_statement.hpp"
+ #include "duckdb/parser/statement/merge_into_statement.hpp"
+ #include "duckdb/parser/query_node/select_node.hpp"
+@@ -536,11 +537,6 @@ BoundStatement Binder::Bind(InsertStatement &stmt) {
+ 
+ 	BindSchemaOrCatalog(stmt.catalog, stmt.schema);
+ 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.catalog, stmt.schema, stmt.table);
+-	if (stmt.on_conflict_info) {
+-		// generate a MERGE INTO statement and bind it instead
+-		auto merge_into = GenerateMergeInto(stmt, table);
+-		return Bind(*merge_into);
+-	}
+ 	if (table.temporary) {
+ 		// Temporary inserts still need a catalog dependency so prepared statements are rebound if the table is dropped.
+ 		GetStatementProperties().RegisterDBRead(table.catalog, context);
+@@ -550,6 +546,25 @@ BoundStatement Binder::Bind(InsertStatement &stmt) {
+ 		GetStatementProperties().RegisterDBModify(table.catalog, context, modification_type);
+ 	}
+ 
++	if (table.catalog.Supports(RemoteCapability::EXECUTE_STATEMENT)) {
++		auto remote_ref = table.catalog.RemoteExecute(context, stmt.Copy());
++		auto remote_select = make_uniq<SelectNode>();
++		remote_select->select_list.push_back(make_uniq<StarExpression>());
++		remote_select->from_table = std::move(remote_ref);
++
++		auto remote_binder = Binder::CreateBinder(context, this);
++		auto remote_result = remote_binder->Bind(*remote_select);
++		auto &properties = GetStatementProperties();
++		properties.output_type = QueryResultOutputType::FORCE_MATERIALIZED;
++		properties.return_type = StatementReturnType::CHANGED_ROWS;
++		return remote_result;
++	}
++	if (stmt.on_conflict_info) {
++		// generate a MERGE INTO statement and bind it instead
++		auto merge_into = GenerateMergeInto(stmt, table);
++		return Bind(*merge_into);
++	}
++
+ 	auto insert = make_uniq<LogicalInsert>(table, GenerateTableIndex());
+ 
+ 	auto values_list = stmt.GetValuesList();
