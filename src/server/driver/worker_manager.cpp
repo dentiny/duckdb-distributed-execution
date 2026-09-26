@@ -5,6 +5,10 @@
 
 namespace duckdb {
 
+WorkerManager::~WorkerManager() {
+	Shutdown();
+}
+
 void WorkerManager::RegisterWorker(const string &worker_id, const string &location) {
 	std::lock_guard<std::mutex> lck(mu);
 	auto &db_instance = *db.instance;
@@ -105,6 +109,16 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully started %llu local workers (total workers: %llu)", num_workers,
 	                 workers.size());
+}
+
+void WorkerManager::Shutdown() {
+	std::lock_guard<std::mutex> lock(mu);
+	for (auto &worker : local_workers) {
+		worker->Shutdown();
+	}
+	workers.clear();
+	driver_node.reset();
+	local_workers.clear();
 }
 
 } // namespace duckdb

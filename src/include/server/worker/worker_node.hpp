@@ -6,6 +6,7 @@
 #include "duckdb/common/unique_ptr.hpp"
 
 #include <arrow/flight/api.h>
+#include <atomic>
 #include <memory>
 
 namespace duckdb {
@@ -14,7 +15,7 @@ namespace duckdb {
 class WorkerNode : public arrow::flight::FlightServerBase {
 public:
 	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0, DuckDB *shared_db = nullptr);
-	~WorkerNode() override = default;
+	~WorkerNode() override;
 
 	arrow::Status Start();
 	void Shutdown();
@@ -51,6 +52,7 @@ private:
 	DuckDB *db;
 	unique_ptr<DuckDB> owned_db;
 	unique_ptr<Connection> conn;
+	std::atomic<bool> shutdown_started {false};
 };
 
 } // namespace duckdb

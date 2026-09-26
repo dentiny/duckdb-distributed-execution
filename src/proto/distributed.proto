@@ -4,13 +4,14 @@ package duckdb.distributed;
 
 // Request types for distributed operations.
 enum RequestType {
+  reserved 6;
+
   REQUEST_TYPE_UNSPECIFIED = 0;
   EXECUTE_SQL = 1;
   CREATE_TABLE = 2;
   DROP_TABLE = 3;
   INSERT_DATA = 4;
   SCAN_TABLE = 5;
-  DELETE_DATA = 6;
   TABLE_EXISTS = 7;
   CREATE_INDEX = 8;
   DROP_INDEX = 9;
@@ -20,11 +21,26 @@ enum RequestType {
   WORKER_REGISTER = 13;
   WORKER_HEARTBEAT = 14;
   GET_QUERY_EXECUTION_STATS = 15;
+  SESSION_OPEN = 16;
+  SESSION_CLOSE = 17;
 }
 
 // Execute SQL request.
 message ExecuteSQLRequest {
   string sql = 1;
+  string session_id = 2;
+  uint32 protocol_version = 3;
+}
+
+message SessionOpenRequest {
+  uint32 protocol_version = 1;
+  uint64 required_capabilities = 2;
+  string session_id = 3;
+}
+
+message SessionCloseRequest {
+  string session_id = 1;
+  uint32 protocol_version = 2;
 }
 
 // Create table request.
@@ -45,12 +61,11 @@ message ScanTableRequest {
   string table_name = 1;
   uint64 limit = 2;
   uint64 offset = 3;
-}
-
-// Delete data request.
-message DeleteDataRequest {
-  string table_name = 1;
-  string where_clause = 2;
+  string session_id = 4;
+  bool include_rowid = 5;
+  bool project_columns = 6;
+  repeated string projected_columns = 7;
+  uint32 protocol_version = 8;
 }
 
 // Table exists request.
@@ -131,13 +146,14 @@ message GetQueryExecutionStatsRequest {
 
 // Request message for distributed operations.
 message DistributedRequest {
+  reserved 5;
+
   // Request-specific parameters.
   oneof request {
     ExecuteSQLRequest execute_sql = 1;
     CreateTableRequest create_table = 2;
     DropTableRequest drop_table = 3;
     ScanTableRequest scan_table = 4;
-    DeleteDataRequest delete_data = 5;
     TableExistsRequest table_exists = 6;
     CreateIndexRequest create_index = 7;
     DropIndexRequest drop_index = 8;
@@ -147,13 +163,23 @@ message DistributedRequest {
     WorkerRegisterRequest worker_register = 12;
     WorkerHeartbeatRequest worker_heartbeat = 13;
     GetQueryExecutionStatsRequest get_query_execution_stats = 14;
+    SessionOpenRequest session_open = 15;
+    SessionCloseRequest session_close = 16;
   }
 }
 
 // Execute SQL response.
 message ExecuteSQLResponse {
-  uint64 rows_affected = 1;
+  int64 rows_affected = 1;
 }
+
+message SessionOpenResponse {
+  string session_id = 1;
+  uint32 protocol_version = 2;
+  uint64 capabilities = 3;
+}
+
+message SessionCloseResponse {}
 
 // Create table response.
 message CreateTableResponse {}
@@ -164,11 +190,6 @@ message DropTableResponse {}
 // Scan table response, data returned via Arrow Flight.
 message ScanTableResponse {
   uint64 row_count = 1;
-}
-
-// Delete data response.
-message DeleteDataResponse {
-  uint64 rows_deleted = 1;
 }
 
 // Table exists response.
@@ -223,6 +244,8 @@ message GetQueryExecutionStatsResponse {
 
 // Response message for distributed operations.
 message DistributedResponse {
+  reserved 7;
+
   // Whether option succeeds.
   // TODO(hjiang): We don't need to craft error message inside of the response, instead we could use grpc response directly.
   bool success = 1;
@@ -234,7 +257,6 @@ message DistributedResponse {
     CreateTableResponse create_table = 4;
     DropTableResponse drop_table = 5;
     ScanTableResponse scan_table = 6;
-    DeleteDataResponse delete_data = 7;
     TableExistsResponse table_exists = 8;
     CreateIndexResponse create_index = 9;
     DropIndexResponse drop_index = 10;
@@ -244,5 +266,7 @@ message DistributedResponse {
     WorkerRegisterResponse worker_register = 14;
     WorkerHeartbeatResponse worker_heartbeat = 15;
     GetQueryExecutionStatsResponse get_query_execution_stats = 16;
+    SessionOpenResponse session_open = 17;
+    SessionCloseResponse session_close = 18;
   }
 }

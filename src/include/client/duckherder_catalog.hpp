@@ -18,6 +18,7 @@ namespace duckdb {
 class DuckCatalog;
 class DatabaseInstance;
 class DistributedClient;
+class BaseTableRef;
 
 // Configuration for remote tables
 struct RemoteTableConfig {
@@ -44,6 +45,9 @@ public:
 	string GetCatalogType() override {
 		return "duckherder";
 	}
+
+	bool Supports(RemoteCapability capability) const override;
+	unique_ptr<TableRef> RemoteExecute(ClientContext &context, unique_ptr<SQLStatement> statement) override;
 
 	optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;
 	void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
@@ -89,6 +93,7 @@ public:
 	void RegisterRemoteTable(const string &table_name, const string &server_url, const string &remote_table_name);
 	void UnregisterRemoteTable(const string &table_name);
 	bool IsRemoteTable(const string &table_name) const;
+	bool IsRegisteredRemoteTarget(const string &local_table_name, const BaseTableRef &target) const;
 	RemoteTableConfig GetRemoteTableConfig(const string &table_name) const;
 
 	// Get server URL from stored configuration.

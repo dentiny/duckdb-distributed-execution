@@ -20,6 +20,7 @@ include_directories(src/include/server)
 include_directories(${ARROW_INCLUDE_DIR})
 
 if(${BUILD_UNITTESTS})
+  enable_testing()
   add_subdirectory(test/unittest)
 
   # Integration test
@@ -28,7 +29,7 @@ if(${BUILD_UNITTESTS})
   target_link_libraries(
     test_distributed_flight Arrow::arrow_static
     ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
-  link_extension_libraries(test_distributed_flight "")
+  add_test(NAME duckherder_distributed_flight COMMAND test_distributed_flight)
 endif()
 
 # Generate protobuf code.
@@ -45,11 +46,10 @@ set(CLIENT_SOURCES
     src/client/distributed_alter_table.cpp
     src/client/distributed_client.cpp
     src/client/distributed_create_index.cpp
-    src/client/distributed_delete.cpp
     src/client/distributed_flight_client.cpp
-    src/client/distributed_insert.cpp
     src/client/distributed_table_scan_function.cpp
     src/client/duckherder_catalog.cpp
+    src/client/duckherder_remote_query.cpp
     src/client/duckherder_index_catalog_entry.cpp
     src/client/duckherder_pragmas.cpp
     src/client/duckherder_storage.cpp
@@ -101,6 +101,10 @@ set(EXTENSION_SOURCES
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
+
+if(${BUILD_UNITTESTS})
+  link_extension_libraries(test_distributed_flight "")
+endif()
 
 set_target_properties(
   ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME}

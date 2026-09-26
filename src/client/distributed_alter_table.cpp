@@ -49,6 +49,9 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
                                                                    OperatorSourceInput &input) const {
 	auto &gstate = input.global_state.Cast<RemoteAlterTableGlobalState>();
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
+	if (!context.client.transaction.IsAutoCommit()) {
+		throw TransactionException("Duckherder remote DDL is not supported inside explicit transactions");
+	}
 
 	// Execute the ALTER TABLE on the remote server.
 	lock_guard<mutex> lock(gstate.lock);

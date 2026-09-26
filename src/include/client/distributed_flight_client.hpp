@@ -3,6 +3,7 @@
 #pragma once
 
 #include "distributed.pb.h"
+#include "distributed_protocol.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/main/query_result.hpp"
@@ -13,6 +14,14 @@
 
 namespace duckdb {
 
+struct ScanTableOptions {
+	string session_id;
+	bool include_rowid = false;
+	bool project_columns = false;
+	vector<string> projected_columns;
+	uint32_t protocol_version = DUCKHERDER_PROTOCOL_VERSION;
+};
+
 class DistributedFlightClient {
 public:
 	explicit DistributedFlightClient(string server_url);
@@ -22,7 +31,12 @@ public:
 	arrow::Status Connect();
 
 	// Execute arbitrary SQL.
-	arrow::Status ExecuteSQL(const string &sql, distributed::DistributedResponse &response);
+	arrow::Status ExecuteSQL(const string &sql, distributed::DistributedResponse &response,
+	                         const string &session_id = "");
+
+	// Open/close a server-side session backed by a dedicated DuckDB connection.
+	arrow::Status OpenSession(string &session_id, uint32_t protocol_version = DUCKHERDER_PROTOCOL_VERSION);
+	arrow::Status CloseSession(const string &session_id, distributed::DistributedResponse &response);
 
 	// Create table.
 	arrow::Status CreateTable(const string &create_sql, distributed::DistributedResponse &response);
@@ -49,7 +63,8 @@ public:
 
 	// Scan table and get Arrow Flight stream
 	arrow::Status ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
-	                        std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
+	                        std::unique_ptr<arrow::flight::FlightStreamReader> &stream,
+	                        const ScanTableOptions &options = {});
 
 	// Get query execution statistics from the server
 	arrow::Status GetQueryExecutionStats(distributed::DistributedResponse &response);

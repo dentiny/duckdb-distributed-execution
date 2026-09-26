@@ -1,11 +1,16 @@
 #include "server/driver/distributed_flight_server.hpp"
 
+#include "distributed_protocol.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/qualified_name.hpp"
+#include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
 #include "query_common.hpp"
 #include "server/driver/duckling_storage.hpp"
 
@@ -19,6 +24,13 @@ namespace duckdb {
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
 	Initialize();
+	session_sweeper = std::thread(&DistributedFlightServer::SessionSweepLoop, this);
+}
+
+DistributedFlightServer::~DistributedFlightServer() {
+	Shutdown();
+	const std::unique_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
+	DestroyState();
 }
 
 DatabaseInstance &DistributedFlightServer::GetDatabaseInstance() {
@@ -57,15 +69,26 @@ arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
 }
 
 void DistributedFlightServer::Shutdown() {
+	StopSessionSweeper();
+	if (shutdown_started.exchange(true)) {
+		return;
+	}
+	// Stop accepting work and wait for in-flight RPCs without holding the
+	// lifecycle mutex: active RPCs need its shared side to complete.
 	auto status = FlightServerBase::Shutdown();
+	(void)status;
+	const std::unique_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
+	CloseAllSessions();
 	// Ignore shutdown errors in production
 }
 
 void DistributedFlightServer::Reset() {
+	const std::unique_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
 	Initialize();
 }
 
 void DistributedFlightServer::Initialize() {
+	DestroyState();
 	// Clear query history.
 	{
 		const std::lock_guard<std::mutex> lock(query_history_mutex);
@@ -94,6 +117,17 @@ void DistributedFlightServer::Initialize() {
 	// Initialize worker manager and distributed executor.
 	worker_manager = make_uniq<WorkerManager>(*db);
 	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
+}
+
+void DistributedFlightServer::DestroyState() {
+	CloseAllSessions();
+	distributed_executor.reset();
+	if (worker_manager) {
+		worker_manager->Shutdown();
+		worker_manager.reset();
+	}
+	conn.reset();
+	db.reset();
 }
 
 string DistributedFlightServer::GetLocation() const {
@@ -163,6 +197,12 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 	case distributed::DistributedRequest::kExecuteSql:
 		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
 		break;
+	case distributed::DistributedRequest::kSessionOpen:
+		ARROW_RETURN_NOT_OK(HandleSessionOpen(request.session_open(), response));
+		break;
+	case distributed::DistributedRequest::kSessionClose:
+		ARROW_RETURN_NOT_OK(HandleSessionClose(request.session_close(), response));
+		break;
 	case distributed::DistributedRequest::kTableExists:
 		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
 		break;
@@ -195,6 +235,7 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 arrow::Status DistributedFlightServer::DoAction(const arrow::flight::ServerCallContext &context,
                                                 const arrow::flight::Action &action,
                                                 std::unique_ptr<arrow::flight::ResultStream> *result) {
+	const std::shared_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
 	try {
 		return DoActionImpl(context, action, result);
 	} catch (const std::exception &e) {
@@ -225,6 +266,7 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 arrow::Status DistributedFlightServer::DoGet(const arrow::flight::ServerCallContext &context,
                                              const arrow::flight::Ticket &ticket,
                                              std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
+	const std::shared_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
 	try {
 		return DoGetImpl(context, ticket, stream);
 	} catch (const std::exception &e) {
@@ -270,6 +312,7 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallContext &context,
                                              std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                              std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
+	const std::shared_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
 	try {
 		return DoPutImpl(context, std::move(reader), std::move(writer));
 	} catch (const std::exception &e) {
@@ -278,18 +321,282 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 	}
 }
 
+shared_ptr<DistributedFlightServer::FlightSession> DistributedFlightServer::GetSession(const string &session_id) {
+	const std::lock_guard<std::mutex> lock(sessions_mutex);
+	auto entry = sessions.find(session_id);
+	if (entry == sessions.end()) {
+		return nullptr;
+	}
+	return entry->second;
+}
+
+bool DistributedFlightServer::ValidateProtocol(uint32_t version, uint64_t required_capabilities, string &error) {
+	if (version != DUCKHERDER_PROTOCOL_VERSION) {
+		error = StringUtil::Format("Unsupported Duckherder protocol version %u (server requires %u)", version,
+		                           DUCKHERDER_PROTOCOL_VERSION);
+		return false;
+	}
+	if ((required_capabilities & DUCKHERDER_REQUIRED_CAPABILITIES) != required_capabilities) {
+		error = "Server does not support the requested Duckherder protocol capabilities";
+		return false;
+	}
+	return true;
+}
+
+void DistributedFlightServer::SetSessionTimeoutForTesting(std::chrono::milliseconds timeout) {
+	const std::lock_guard<std::mutex> lock(sessions_mutex);
+	session_timeout = timeout;
+	session_sweeper_cv.notify_all();
+}
+
+void DistributedFlightServer::FailNextCommitResponseForTesting() {
+	FailCommitResponsesForTesting(1);
+}
+
+void DistributedFlightServer::FailCommitResponsesForTesting(uint32_t count) {
+	fail_commit_responses = count;
+}
+
+bool DistributedFlightServer::ShouldFailCommitResponseForTesting() {
+	auto remaining = fail_commit_responses.load();
+	while (remaining > 0 && !fail_commit_responses.compare_exchange_weak(remaining, remaining - 1)) {
+	}
+	return remaining > 0;
+}
+
+void DistributedFlightServer::SessionSweepLoop() {
+	std::unique_lock<std::mutex> lock(session_sweeper_mutex);
+	while (!stop_session_sweeper) {
+		session_sweeper_cv.wait_for(lock, std::chrono::milliseconds(100));
+		if (stop_session_sweeper) {
+			break;
+		}
+		lock.unlock();
+		{
+			const std::shared_lock<std::shared_mutex> lifecycle_lock(lifecycle_mutex);
+			SweepExpiredSessions();
+		}
+		lock.lock();
+	}
+}
+
+void DistributedFlightServer::StopSessionSweeper() {
+	if (stop_session_sweeper.exchange(true)) {
+		return;
+	}
+	session_sweeper_cv.notify_all();
+	if (session_sweeper.joinable()) {
+		session_sweeper.join();
+	}
+}
+
+void DistributedFlightServer::SweepExpiredSessions() {
+	vector<shared_ptr<FlightSession>> expired;
+	auto now = std::chrono::steady_clock::now();
+	{
+		const std::lock_guard<std::mutex> sessions_lock(sessions_mutex);
+		for (auto entry = sessions.begin(); entry != sessions.end();) {
+			auto &session = *entry->second;
+			const std::lock_guard<std::mutex> session_lock(session.mutex);
+			if (!session.closing && now - session.last_used < session_timeout) {
+				++entry;
+				continue;
+			}
+			session.closing = true;
+			expired.push_back(entry->second);
+			entry = sessions.erase(entry);
+		}
+	}
+	for (auto &session : expired) {
+		const std::lock_guard<std::mutex> lock(session->mutex);
+		if (session->connection->HasActiveTransaction()) {
+			session->connection->Query("ROLLBACK");
+		}
+	}
+}
+
+void DistributedFlightServer::CloseAllSessions() {
+	unordered_map<string, shared_ptr<FlightSession>> sessions_to_close;
+	{
+		const std::lock_guard<std::mutex> lock(sessions_mutex);
+		sessions_to_close.swap(sessions);
+	}
+	for (auto &entry : sessions_to_close) {
+		auto &session = *entry.second;
+		const std::lock_guard<std::mutex> lock(session.mutex);
+		session.closing = true;
+		if (session.connection->HasActiveTransaction()) {
+			session.connection->Query("ROLLBACK");
+		}
+	}
+}
+
+arrow::Status DistributedFlightServer::HandleSessionOpen(const distributed::SessionOpenRequest &req,
+                                                         distributed::DistributedResponse &resp) {
+	string protocol_error;
+	if (!ValidateProtocol(req.protocol_version(), req.required_capabilities(), protocol_error)) {
+		resp.set_success(false);
+		resp.set_error_message(protocol_error);
+		return arrow::Status::OK();
+	}
+	if (req.session_id().empty()) {
+		resp.set_success(false);
+		resp.set_error_message("Session identifier must not be empty");
+		return arrow::Status::OK();
+	}
+	SweepExpiredSessions();
+	if (auto existing = GetSession(req.session_id())) {
+		const std::lock_guard<std::mutex> lock(existing->mutex);
+		if (!existing->closing) {
+			existing->last_used = std::chrono::steady_clock::now();
+			resp.set_success(true);
+			auto *open_response = resp.mutable_session_open();
+			open_response->set_session_id(req.session_id());
+			open_response->set_protocol_version(DUCKHERDER_PROTOCOL_VERSION);
+			open_response->set_capabilities(DUCKHERDER_REQUIRED_CAPABILITIES);
+			return arrow::Status::OK();
+		}
+	}
+
+	auto session_connection = make_uniq<Connection>(*db);
+	auto use_result = session_connection->Query("USE duckling");
+	if (use_result->HasError()) {
+		resp.set_success(false);
+		resp.set_error_message(use_result->GetError());
+		return arrow::Status::OK();
+	}
+
+	auto session = make_shared_ptr<FlightSession>(std::move(session_connection));
+	{
+		const std::lock_guard<std::mutex> lock(sessions_mutex);
+		auto inserted = sessions.emplace(req.session_id(), session);
+		if (!inserted.second) {
+			session = inserted.first->second;
+		}
+	}
+
+	resp.set_success(true);
+	auto *open_response = resp.mutable_session_open();
+	open_response->set_session_id(req.session_id());
+	open_response->set_protocol_version(DUCKHERDER_PROTOCOL_VERSION);
+	open_response->set_capabilities(DUCKHERDER_REQUIRED_CAPABILITIES);
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleSessionClose(const distributed::SessionCloseRequest &req,
+                                                          distributed::DistributedResponse &resp) {
+	string protocol_error;
+	if (!ValidateProtocol(req.protocol_version(), DUCKHERDER_CAPABILITY_SESSIONS, protocol_error)) {
+		resp.set_success(false);
+		resp.set_error_message(protocol_error);
+		return arrow::Status::OK();
+	}
+	SweepExpiredSessions();
+	shared_ptr<FlightSession> session;
+	{
+		const std::lock_guard<std::mutex> lock(sessions_mutex);
+		auto entry = sessions.find(req.session_id());
+		if (entry == sessions.end()) {
+			// Close is deliberately idempotent so a lost response can be retried.
+			resp.set_success(true);
+			resp.mutable_session_close();
+			return arrow::Status::OK();
+		}
+		session = entry->second;
+		sessions.erase(entry);
+	}
+
+	const std::lock_guard<std::mutex> lock(session->mutex);
+	session->closing = true;
+	if (session->connection->HasActiveTransaction()) {
+		auto rollback_result = session->connection->Query("ROLLBACK");
+		if (rollback_result->HasError()) {
+			resp.set_success(false);
+			resp.set_error_message(rollback_result->GetError());
+			return arrow::Status::OK();
+		}
+	}
+	resp.set_success(true);
+	resp.mutable_session_close();
+	return arrow::Status::OK();
+}
+
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
                                                         distributed::DistributedResponse &resp) {
+	if (req.session_id().empty()) {
+		const std::lock_guard<std::mutex> lock(connection_mutex);
+		return ExecuteSQLOnConnection(*conn, req.sql(), resp, true);
+	}
+
+	string protocol_error;
+	if (!ValidateProtocol(req.protocol_version(), DUCKHERDER_CAPABILITY_SESSIONS, protocol_error)) {
+		resp.set_success(false);
+		resp.set_error_message(protocol_error);
+		return arrow::Status::OK();
+	}
+	SweepExpiredSessions();
+	auto session = GetSession(req.session_id());
+	if (!session) {
+		resp.set_success(false);
+		resp.set_error_message("Unknown session");
+		return arrow::Status::OK();
+	}
+	const std::lock_guard<std::mutex> lock(session->mutex);
+	if (session->closing) {
+		resp.set_success(false);
+		resp.set_error_message("Session is closed");
+		return arrow::Status::OK();
+	}
+	session->last_used = std::chrono::steady_clock::now();
+	const bool is_begin = StringUtil::CIEquals(req.sql(), "BEGIN TRANSACTION");
+	const bool is_commit = StringUtil::CIEquals(req.sql(), "COMMIT");
+	const bool is_rollback = StringUtil::CIEquals(req.sql(), "ROLLBACK");
+	if ((is_begin && session->transaction_status == SessionTransactionStatus::ACTIVE) ||
+	    (is_commit && session->transaction_status == SessionTransactionStatus::COMMITTED) ||
+	    (is_rollback && session->transaction_status == SessionTransactionStatus::ROLLED_BACK)) {
+		session->last_used = std::chrono::steady_clock::now();
+		resp.set_success(true);
+		resp.mutable_execute_sql()->set_rows_affected(0);
+		if (is_commit && ShouldFailCommitResponseForTesting()) {
+			return arrow::Status::IOError("Injected lost COMMIT response");
+		}
+		return arrow::Status::OK();
+	}
+	// Session statements are deliberately kept on the control connection. In particular,
+	// uncommitted state is not visible to worker connections.
+	auto status = ExecuteSQLOnConnection(*session->connection, req.sql(), resp, false);
+	if (!status.ok() || !resp.success()) {
+		session->last_used = std::chrono::steady_clock::now();
+		return status;
+	}
+	if (is_begin) {
+		session->transaction_status = SessionTransactionStatus::ACTIVE;
+	} else if (is_commit) {
+		session->transaction_status = SessionTransactionStatus::COMMITTED;
+	} else if (is_rollback) {
+		session->transaction_status = SessionTransactionStatus::ROLLED_BACK;
+	}
+	if (is_commit && ShouldFailCommitResponseForTesting()) {
+		session->last_used = std::chrono::steady_clock::now();
+		return arrow::Status::IOError("Injected lost COMMIT response");
+	}
+	session->last_used = std::chrono::steady_clock::now();
+	return status;
+}
+
+arrow::Status DistributedFlightServer::ExecuteSQLOnConnection(Connection &connection, const string &sql,
+                                                              distributed::DistributedResponse &resp,
+                                                              bool allow_workers) {
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
-	query_info.sql = req.sql();
+	query_info.sql = sql;
 	auto query_start = std::chrono::steady_clock::now();
 	query_info.execution_start_time = std::chrono::system_clock::now();
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
-		auto exec_result = distributed_executor->ExecuteDistributed(req.sql());
+	if (allow_workers && worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
+		auto exec_result = distributed_executor->ExecuteDistributed(sql);
 
 		if (exec_result.result != nullptr) {
 			// Query was executed in distributed mode
@@ -314,7 +621,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
-		result = conn->Query(req.sql());
+		result = connection.Query(sql);
 		// Mark as local execution for non-distributed queries
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
 		query_info.num_workers_used = 0;
@@ -329,18 +636,26 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
-
 	// Record all successful query executions.
 	RecordQueryExecution(std::move(query_info));
 
 	resp.set_success(true);
 	auto *exec_resp = resp.mutable_execute_sql();
-	exec_resp->set_rows_affected(0);
+	int64_t rows_affected = 0;
+	auto materialized = dynamic_cast<MaterializedQueryResult *>(result.get());
+	if (materialized && result->ColumnCount() == 1 && materialized->RowCount() == 1) {
+		auto count = materialized->GetValue(0, 0);
+		if (!count.IsNull() && count.type() == LogicalType::BIGINT) {
+			rows_affected = count.GetValue<int64_t>();
+		}
+	}
+	exec_resp->set_rows_affected(rows_affected);
 	return arrow::Status::OK();
 }
 
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
@@ -357,6 +672,7 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 
 arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTableRequest &req,
                                                        distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
 	auto result = conn->Query(sql);
 
@@ -373,6 +689,7 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
@@ -389,6 +706,7 @@ arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::Crea
 
 arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIndexRequest &req,
                                                        distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	auto sql = "DROP INDEX IF EXISTS " + req.index_name();
 	auto result = conn->Query(sql);
 
@@ -405,6 +723,7 @@ arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIn
 
 arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::AlterTableRequest &req,
                                                         distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	auto result = conn->Query(req.sql());
 
 	if (result->HasError()) {
@@ -420,6 +739,7 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 
 arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
                                                            distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	auto &db_instance = *db->instance;
 
 	// Execute INSTALL first.
@@ -459,6 +779,7 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 
 arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
                                                          distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	string sql =
 	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
 
@@ -483,22 +804,54 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
+	string protocol_error;
+	if (!ValidateProtocol(req.protocol_version(), DUCKHERDER_CAPABILITY_STRUCTURAL_SCAN, protocol_error)) {
+		return arrow::Status::Invalid(protocol_error);
+	}
+	if (req.session_id().empty()) {
+		const std::lock_guard<std::mutex> lock(connection_mutex);
+		return HandleScanTableOnConnection(*conn, req, stream, true);
+	}
+
+	SweepExpiredSessions();
+	auto session = GetSession(req.session_id());
+	if (!session) {
+		return arrow::Status::Invalid("Unknown session");
+	}
+	const std::lock_guard<std::mutex> lock(session->mutex);
+	if (session->closing) {
+		return arrow::Status::Invalid("Session is closed");
+	}
+	session->last_used = std::chrono::steady_clock::now();
+	auto status = HandleScanTableOnConnection(*session->connection, req, stream, false);
+	session->last_used = std::chrono::steady_clock::now();
+	return status;
+}
+
+arrow::Status
+DistributedFlightServer::HandleScanTableOnConnection(Connection &connection, const distributed::ScanTableRequest &req,
+                                                     std::unique_ptr<arrow::flight::FlightDataStream> &stream,
+                                                     bool allow_workers) {
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
 
-	// TODO(hjiang): aggregate pushdown fix:
-	// Check if table_name actually contains full SQL (temp hack for testing)
-	// In the future, this should come from a dedicated field in the protocol
-	string sql;
-	string table_identifier = req.table_name();
-
-	// If it looks like SQL (contains SELECT), use it as-is
-	// Otherwise, generate SELECT * FROM table
-	if (StringUtil::Contains(StringUtil::Upper(table_identifier), "SELECT")) {
-		sql = table_identifier;
-	} else {
-		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
+	// The scan protocol accepts a structural table identifier, never an arbitrary query string.
+	auto table_identifier = QualifiedName::Parse(req.table_name()).ToString();
+	vector<string> select_list;
+	if (req.include_rowid()) {
+		select_list.emplace_back("rowid");
 	}
+	if (req.project_columns()) {
+		for (auto &column : req.projected_columns()) {
+			select_list.push_back(KeywordHelper::WriteOptionallyQuoted(column));
+		}
+		if (select_list.empty()) {
+			return arrow::Status::Invalid("Projected scan must request at least one column");
+		}
+	} else {
+		select_list.emplace_back("*");
+	}
+	string sql = StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), table_identifier);
 
 	if (req.limit() != NO_QUERY_LIMIT && req.limit() != STANDARD_VECTOR_SIZE) {
 		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
@@ -515,7 +868,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
+	if (allow_workers && worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = distributed_executor->ExecuteDistributed(sql);
 
 		if (exec_result.result != nullptr) {
@@ -542,7 +895,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
-		result = conn->Query(sql);
+		result = connection.Query(sql);
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
 		query_info.num_workers_used = 0;
 		query_info.num_tasks_generated = 0;
@@ -560,7 +913,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	}
 
 	if (!result->client_properties.client_context) {
-		result->client_properties.client_context = conn->context.get();
+		result->client_properties.client_context = connection.context.get();
 	}
 
 	std::shared_ptr<arrow::RecordBatchReader> reader;
@@ -573,6 +926,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table_name,
                                                         std::shared_ptr<arrow::RecordBatch> batch,
                                                         distributed::DistributedResponse &resp) {
+	const std::lock_guard<std::mutex> lock(connection_mutex);
 	// TODO(hjiang): Current implementation is pretty insufficient, which directly executes insertion statement.
 	// Better to call native duckdb APIs for ingestion.
 
