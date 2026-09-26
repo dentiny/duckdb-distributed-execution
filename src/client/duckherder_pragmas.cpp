@@ -23,6 +23,19 @@ namespace duckdb {
 	                                  {LogicalType {LogicalTypeId::VARCHAR}});
 }
 
+/*static*/ ScalarFunction DuckherderPragmas::GetRegisterRemoteTableScalarFunction() {
+	return ScalarFunction("duckherder_register_remote_table",
+	                      {FunctionParameter("local_table_name", LogicalType::VARCHAR),
+	                       FunctionParameter("remote_table_name", LogicalType::VARCHAR)},
+	                      LogicalType::BOOLEAN, RegisterRemoteTableScalar);
+}
+
+/*static*/ ScalarFunction DuckherderPragmas::GetUnregisterRemoteTableScalarFunction() {
+	return ScalarFunction("duckherder_unregister_remote_table",
+	                      {FunctionParameter("local_table_name", LogicalType::VARCHAR)}, LogicalType::BOOLEAN,
+	                      UnregisterRemoteTableScalar);
+}
+
 /*static*/ ScalarFunction DuckherderPragmas::GetLoadExtensionFunction() {
 	return ScalarFunction("duckherder_load_extension", {LogicalType {LogicalTypeId::VARCHAR}},
 	                      LogicalType {LogicalTypeId::BOOLEAN}, LoadExtension);
@@ -73,6 +86,27 @@ namespace duckdb {
 		throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
 	}
 	dh_catalog_ptr->UnregisterRemoteTable(table_name);
+}
+
+/*static*/ void DuckherderPragmas::RegisterRemoteTableScalar(DataChunk &args, ExpressionState &state, Vector &result) {
+	BinaryExecutor::Execute<string_t, string_t, bool>(args.data[0], args.data[1], result, args.size(),
+	                                                  [&](string_t table_name, string_t remote_table_name) {
+		                                                  FunctionParameters parameters;
+		                                                  parameters.values.emplace_back(table_name.GetString());
+		                                                  parameters.values.emplace_back(remote_table_name.GetString());
+		                                                  RegisterRemoteTable(state.GetContext(), parameters);
+		                                                  return true;
+	                                                  });
+}
+
+/*static*/ void DuckherderPragmas::UnregisterRemoteTableScalar(DataChunk &args, ExpressionState &state,
+                                                               Vector &result) {
+	UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](string_t table_name) {
+		FunctionParameters parameters;
+		parameters.values.emplace_back(table_name.GetString());
+		UnregisterRemoteTable(state.GetContext(), parameters);
+		return true;
+	});
 }
 
 /*static*/ void DuckherderPragmas::LoadExtension(DataChunk &args, ExpressionState &state, Vector &result) {

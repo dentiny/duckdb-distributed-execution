@@ -28,6 +28,16 @@ Duckherder implements a client-server architecture with distributed query execut
 
 The extension transparently handles query routing, allowing you to run CREATE, SELECT, INSERT, DELETE, and ALTER operations on remote tables through DuckDB's storage extension interface.
 
+> **Transaction authority:** Durable transaction state lives only on the control-node session `Connection`.
+> DuckDB-side transaction state is bookkeeping, transactional DDL is disabled, and mixed local/remote writes are
+> rejected. The stable session identifier makes `COMMIT` replay idempotent after a lost response; if recovery cannot
+> determine the remote outcome (for example, after server state loss), the client returns an explicit unknown-outcome
+> error.
+>
+> **Remote-authoritative catalogs:** Duckherder tables hold local catalog metadata, but durable table data belongs to
+> the control node. Physical `INSERT`, `DELETE`, and `UPDATE` against unregistered Duckherder tables are rejected rather
+> than falling back to a second local writable store.
+
 ## Architecture
 
 ### High-Level System Architecture

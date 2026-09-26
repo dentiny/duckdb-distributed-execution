@@ -204,9 +204,9 @@ QueryPlanAnalyzer::QueryAnalysis QueryPlanAnalyzer::AnalyzeQuery(LogicalOperator
 
 			// Extract aggregate function names
 			for (auto &expr : agg_op.expressions) {
-				if (expr->type == ExpressionType::BOUND_AGGREGATE) {
+				if (expr->GetExpressionType() == ExpressionType::BOUND_AGGREGATE) {
 					auto &agg_expr = expr->Cast<BoundAggregateExpression>();
-					analysis.aggregate_functions.push_back(agg_expr.function.name);
+					analysis.aggregate_functions.push_back(agg_expr.Function().GetName().GetIdentifierName());
 				}
 			}
 		}

@@ -1,5 +1,7 @@
 #include "duckherder_extension_instance_state.hpp"
 
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/database.hpp"
 #include "query_recorder.hpp"
 
 namespace duckdb {

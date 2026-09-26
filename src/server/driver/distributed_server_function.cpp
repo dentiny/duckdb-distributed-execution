@@ -99,7 +99,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	// TODO(hjiang): Should use readiness probe to wait until ready.
 	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -129,7 +129,7 @@ void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		server_state.test_server.reset();
 	}
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void GetWorkerCount(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -162,7 +162,7 @@ void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	string location = location_data[0].GetString();
 
 	server_state.test_server->RegisterWorker(worker_id, location);
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -181,7 +181,7 @@ void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &re
 	string location = location_data[0].GetString();
 
 	server_state.test_server->RegisterOrReplaceDriver(driver_id, location);
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -235,7 +235,7 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 	// TODO(hjiang): Use readiness probe to validate worker node up.
 	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 } // namespace
@@ -243,8 +243,9 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 ScalarFunction GetStartLocalServerFunction() {
 	auto start_func = ScalarFunction("duckherder_start_local_server",
 	                                 /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
-	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer);
-	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
+	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer,
+	                                 /*bind=*/nullptr, /*statistics=*/nullptr, /*init_local_state=*/nullptr,
+	                                 /*varargs=*/LogicalType {LogicalTypeId::INTEGER});
 	return start_func;
 }
 
@@ -269,8 +270,9 @@ ScalarFunction GetRegisterWorkerFunction() {
 ScalarFunction GetStartStandaloneWorkerFunction() {
 	auto start_func = ScalarFunction("duckherder_start_standalone_worker",
 	                                 /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
-	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartStandaloneWorker);
-	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
+	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartStandaloneWorker,
+	                                 /*bind=*/nullptr, /*statistics=*/nullptr, /*init_local_state=*/nullptr,
+	                                 /*varargs=*/LogicalType {LogicalTypeId::INTEGER});
 	return start_func;
 }
 

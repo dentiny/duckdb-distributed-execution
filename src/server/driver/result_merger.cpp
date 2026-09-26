@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/main/query_result.hpp"
 
 namespace duckdb {
 
@@ -226,11 +227,17 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	}
 
 	// Finalize phase: Return the aggregated result
+	if (!collection) {
+		// Workers may legitimately return no record batches for an empty scan.
+		// Preserve the planned schema instead of constructing a QueryResult with
+		// a null collection.
+		collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	}
 	// In this simple case, we just return the merged collection
 	// For more complex operators (aggregates, sorts, etc.), additional
 	// finalization logic would go here (e.g., final aggregation, final sort)
-	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties {}, names,
-	                                          std::move(collection), ClientProperties {});
+	return make_uniq<QueryResult>(StatementType::SELECT_STATEMENT, StatementProperties {}, StringsToIdentifiers(names),
+	                              std::move(collection), ClientProperties {});
 }
 
 unique_ptr<QueryResult>
@@ -245,8 +252,7 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 		return partial_result;
 	}
 
-	auto materialized = dynamic_cast<MaterializedQueryResult *>(partial_result.get());
-	if (!materialized || materialized->RowCount() == 0) {
+	if (partial_result->RowCount() == 0) {
 		return partial_result;
 	}
 
@@ -275,7 +281,7 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	idx_t inserted_rows = 0;
 
 	// Get the collection from materialized result
-	auto &collection = materialized->Collection();
+	auto &collection = partial_result->Collection();
 
 	// Iterate through all chunks in the collection
 	ColumnDataScanState scan_state;

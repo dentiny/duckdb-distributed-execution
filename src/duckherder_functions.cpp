@@ -1,12 +1,15 @@
 #include "duckherder_functions.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckherder_extension_instance_state.hpp"
 #include "duckherder_pragmas.hpp"
+#include "duckherder_remote_query.hpp"
 #include "query_execution_stats_query_function.hpp"
 #include "query_history_query_function.hpp"
 #include "server/driver/distributed_server_function.hpp"
@@ -29,6 +32,14 @@ void AddDescription(CreateFunctionInfo &info, vector<string> parameter_names, st
 
 void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, vector<string> parameter_names,
                             string description, vector<string> examples, vector<string> categories) {
+	auto &signature = function.GetSignature();
+	idx_t name_idx = 0;
+	for (idx_t parameter_idx = 0; parameter_idx < signature.GetParameterCount(); parameter_idx++) {
+		auto &parameter = signature.GetParameter(parameter_idx);
+		if (!parameter.IsVariadic() && name_idx < parameter_names.size()) {
+			parameter.SetName(Identifier(parameter_names[name_idx++]));
+		}
+	}
 	CreateScalarFunctionInfo info(std::move(function));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	AddDescription(info, std::move(parameter_names), std::move(description), std::move(examples),
@@ -70,7 +81,7 @@ void ClearQueryRecorderStats(const DataChunk &args, ExpressionState &state, Vect
 	auto &duckdb_instance = GetDatabaseInstance(state);
 	auto &instance_state = GetInstanceStateOrThrow(duckdb_instance);
 	instance_state.GetQueryRecorder()->ClearQueryRecords();
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 ScalarFunction GetClearQueryRecorderStatsFunction() {
@@ -94,6 +105,17 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	                       /*examples=*/ {"PRAGMA duckherder_unregister_remote_table('orders');"},
 	                       /*categories=*/ {"duckherder", "distributed_execution", "catalog"});
 	RegisterScalarFunction(
+	    loader, DuckherderPragmas::GetRegisterRemoteTableScalarFunction(),
+	    /*parameter_names=*/ {"local_table_name", "remote_table_name"},
+	    /*description=*/"Registers a local table name as a mapping to a table on the attached Duckherder server.",
+	    /*examples=*/ {"SELECT duckherder_register_remote_table('orders', 'remote_orders');"},
+	    /*categories=*/ {"duckherder", "distributed_execution", "catalog"});
+	RegisterScalarFunction(loader, DuckherderPragmas::GetUnregisterRemoteTableScalarFunction(),
+	                       /*parameter_names=*/ {"local_table_name"},
+	                       /*description=*/"Removes a remote table mapping from the attached Duckherder catalog.",
+	                       /*examples=*/ {"SELECT duckherder_unregister_remote_table('orders');"},
+	                       /*categories=*/ {"duckherder", "distributed_execution", "catalog"});
+	RegisterScalarFunction(
 	    loader, DuckherderPragmas::GetLoadExtensionFunction(),
 	    /*parameter_names=*/ {"extension_name"},
 	    /*description=*/"Loads an extension on the attached Duckherder server and attempts to load it on the client.",
@@ -112,6 +134,11 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	    "queries.",
 	    /*examples=*/ {"SELECT * FROM duckherder_get_query_execution_stats();"},
 	    /*categories=*/ {"duckherder", "distributed_execution", "observability"});
+	RegisterTableFunction(loader, GetDuckherderRemoteQueryFunction(),
+	                      /*parameter_names=*/ {"catalog_name", "sql", "modification"},
+	                      /*description=*/"Internal execution function for pushed-down Duckherder DML statements.",
+	                      /*examples=*/ {},
+	                      /*categories=*/ {"duckherder", "distributed_execution", "internal"});
 	RegisterScalarFunction(
 	    loader, GetClearQueryRecorderStatsFunction(),
 	    /*parameter_names=*/ {},

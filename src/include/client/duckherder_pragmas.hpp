@@ -17,11 +17,15 @@ class DuckherderPragmas {
 public:
 	static PragmaFunction GetRegisterRemoteTableFunction();
 	static PragmaFunction GetUnregisterRemoteTableFunction();
+	static ScalarFunction GetRegisterRemoteTableScalarFunction();
+	static ScalarFunction GetUnregisterRemoteTableScalarFunction();
 	static ScalarFunction GetLoadExtensionFunction();
 
 private:
 	static void RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
 	static void UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
+	static void RegisterRemoteTableScalar(DataChunk &args, ExpressionState &state, Vector &result);
+	static void UnregisterRemoteTableScalar(DataChunk &args, ExpressionState &state, Vector &result);
 	static void LoadExtension(DataChunk &args, ExpressionState &state, Vector &result);
 };
 

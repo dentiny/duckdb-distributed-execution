@@ -11,7 +11,7 @@ class DuckTransactionManager;
 class DucklingTransaction : public Transaction {
 public:
 	DucklingTransaction(DuckTransactionManager &manager, ClientContext &context, transaction_t start_time,
-	                    transaction_t transaction_id, idx_t catalog_version);
+	                    SnapshotView view, idx_t catalog_version);
 
 	~DucklingTransaction() override;
 

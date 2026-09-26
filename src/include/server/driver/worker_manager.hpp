@@ -31,6 +31,7 @@ class WorkerManager {
 public:
 	explicit WorkerManager(DuckDB &db_ref) : db(db_ref) {
 	}
+	~WorkerManager();
 
 	// Register a single external worker node.
 	void RegisterWorker(const string &worker_id, const string &location);
@@ -48,6 +49,7 @@ public:
 	// Start a number of local worker nodes in background threads.
 	// Only used for local testing and dev.
 	void StartLocalWorkers(idx_t num_workers);
+	void Shutdown();
 
 private:
 	vector<std::unique_ptr<WorkerInfo>> workers;

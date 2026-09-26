@@ -9,6 +9,9 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
 #include <arrow/array.h>
@@ -83,13 +86,13 @@ void StoreEnumValue(Vector &duckdb_vector, idx_t duck_idx, const LogicalType &ty
 	auto physical_type = type.InternalType();
 	switch (physical_type) {
 	case PhysicalType::UINT8:
-		FlatVector::GetData<uint8_t>(duckdb_vector)[duck_idx] = static_cast<uint8_t>(value);
+		FlatVector::GetDataMutable<uint8_t>(duckdb_vector)[duck_idx] = static_cast<uint8_t>(value);
 		break;
 	case PhysicalType::UINT16:
-		FlatVector::GetData<uint16_t>(duckdb_vector)[duck_idx] = static_cast<uint16_t>(value);
+		FlatVector::GetDataMutable<uint16_t>(duckdb_vector)[duck_idx] = static_cast<uint16_t>(value);
 		break;
 	case PhysicalType::UINT32:
-		FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(value);
+		FlatVector::GetDataMutable<uint32_t>(duckdb_vector)[duck_idx] = static_cast<uint32_t>(value);
 		break;
 	default:
 		throw NotImplementedException("Unsupported physical type %s for ENUM type %s (enum value: %lld)",
@@ -106,63 +109,64 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		break;
 	case LogicalTypeId::BOOLEAN: {
 		auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(arrow_array);
-		FlatVector::GetData<bool>(duckdb_vector)[duck_idx] = bool_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<bool>(duckdb_vector)[duck_idx] = bool_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::TINYINT: {
 		auto int_array = std::static_pointer_cast<arrow::Int8Array>(arrow_array);
-		FlatVector::GetData<int8_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<int8_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::SMALLINT: {
 		auto int_array = std::static_pointer_cast<arrow::Int16Array>(arrow_array);
-		FlatVector::GetData<int16_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<int16_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::INTEGER: {
 		auto int_array = std::static_pointer_cast<arrow::Int32Array>(arrow_array);
-		FlatVector::GetData<int32_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<int32_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::BIGINT: {
 		auto int_array = std::static_pointer_cast<arrow::Int64Array>(arrow_array);
-		FlatVector::GetData<int64_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<int64_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::UTINYINT: {
 		auto int_array = std::static_pointer_cast<arrow::UInt8Array>(arrow_array);
-		FlatVector::GetData<uint8_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<uint8_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::USMALLINT: {
 		auto int_array = std::static_pointer_cast<arrow::UInt16Array>(arrow_array);
-		FlatVector::GetData<uint16_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<uint16_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::UINTEGER: {
 		auto int_array = std::static_pointer_cast<arrow::UInt32Array>(arrow_array);
-		FlatVector::GetData<uint32_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<uint32_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::UBIGINT: {
 		auto int_array = std::static_pointer_cast<arrow::UInt64Array>(arrow_array);
-		FlatVector::GetData<uint64_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<uint64_t>(duckdb_vector)[duck_idx] = int_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::FLOAT: {
 		if (arrow_array->type_id() == arrow::Type::HALF_FLOAT) {
 			auto half_array = std::static_pointer_cast<arrow::HalfFloatArray>(arrow_array);
-			FlatVector::GetData<float>(duckdb_vector)[duck_idx] = static_cast<float>(half_array->Value(arrow_idx));
+			FlatVector::GetDataMutable<float>(duckdb_vector)[duck_idx] =
+			    static_cast<float>(half_array->Value(arrow_idx));
 		} else {
 			D_ASSERT(arrow_array->type_id() == arrow::Type::FLOAT);
 			auto float_array = std::static_pointer_cast<arrow::FloatArray>(arrow_array);
-			FlatVector::GetData<float>(duckdb_vector)[duck_idx] = float_array->Value(arrow_idx);
+			FlatVector::GetDataMutable<float>(duckdb_vector)[duck_idx] = float_array->Value(arrow_idx);
 		}
 		break;
 	}
 	case LogicalTypeId::DOUBLE: {
 		auto double_array = std::static_pointer_cast<arrow::DoubleArray>(arrow_array);
-		FlatVector::GetData<double>(duckdb_vector)[duck_idx] = double_array->Value(arrow_idx);
+		FlatVector::GetDataMutable<double>(duckdb_vector)[duck_idx] = double_array->Value(arrow_idx);
 		break;
 	}
 	case LogicalTypeId::CHAR:
@@ -172,16 +176,19 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			auto dict_array = std::static_pointer_cast<arrow::DictionaryArray>(arrow_array);
 			auto idx_value = GetDictionaryIndex(dict_array->indices(), arrow_idx);
 			auto str_val = GetDictionaryString(dict_array->dictionary(), idx_value);
-			FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = StringVector::AddString(duckdb_vector, str_val);
+			FlatVector::GetDataMutable<string_t>(duckdb_vector)[duck_idx] =
+			    StringVector::AddString(duckdb_vector, str_val);
 		} else if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
 			auto str_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
 			auto str_val = str_array->GetString(arrow_idx);
-			FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = StringVector::AddString(duckdb_vector, str_val);
+			FlatVector::GetDataMutable<string_t>(duckdb_vector)[duck_idx] =
+			    StringVector::AddString(duckdb_vector, str_val);
 		} else {
 			D_ASSERT(arrow_array->type_id() == arrow::Type::STRING);
 			auto str_array = std::static_pointer_cast<arrow::StringArray>(arrow_array);
 			auto str_val = str_array->GetString(arrow_idx);
-			FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = StringVector::AddString(duckdb_vector, str_val);
+			FlatVector::GetDataMutable<string_t>(duckdb_vector)[duck_idx] =
+			    StringVector::AddString(duckdb_vector, str_val);
 		}
 		break;
 	}
@@ -207,7 +214,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			blob_val =
 			    StringVector::AddStringOrBlob(duckdb_vector, string_t(reinterpret_cast<const char *>(data), length));
 		}
-		FlatVector::GetData<string_t>(duckdb_vector)[duck_idx] = blob_val;
+		FlatVector::GetDataMutable<string_t>(duckdb_vector)[duck_idx] = blob_val;
 		break;
 	}
 	case LogicalTypeId::UUID: {
@@ -227,7 +234,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 
 		hugeint_t uuid_val;
 		memcpy(&uuid_val, data, 16);
-		FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = uuid_val;
+		FlatVector::GetDataMutable<hugeint_t>(duckdb_vector)[duck_idx] = uuid_val;
 		break;
 	}
 	case LogicalTypeId::DATE: {
@@ -242,7 +249,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			auto ms = date_array->Value(arrow_idx);
 			date_val = Date::EpochDaysToDate(static_cast<int32_t>(ms / (1000 * 60 * 60 * 24)));
 		}
-		FlatVector::GetData<date_t>(duckdb_vector)[duck_idx] = date_val;
+		FlatVector::GetDataMutable<date_t>(duckdb_vector)[duck_idx] = date_val;
 		break;
 	}
 	case LogicalTypeId::TIME:
@@ -272,7 +279,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				time_val = dtime_t(value / 1000);
 			}
 		}
-		FlatVector::GetData<dtime_t>(duckdb_vector)[duck_idx] = time_val;
+		FlatVector::GetDataMutable<dtime_t>(duckdb_vector)[duck_idx] = time_val;
 		break;
 	}
 	case LogicalTypeId::TIMESTAMP_SEC:
@@ -300,7 +307,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			ts_val = Timestamp::FromEpochNanoSeconds(value);
 			break;
 		}
-		FlatVector::GetData<timestamp_t>(duckdb_vector)[duck_idx] = ts_val;
+		FlatVector::GetDataMutable<timestamp_t>(duckdb_vector)[duck_idx] = ts_val;
 		break;
 	}
 	case LogicalTypeId::INTERVAL: {
@@ -346,7 +353,7 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 				break;
 			}
 		}
-		FlatVector::GetData<interval_t>(duckdb_vector)[duck_idx] = interval_val;
+		FlatVector::GetDataMutable<interval_t>(duckdb_vector)[duck_idx] = interval_val;
 		break;
 	}
 	case LogicalTypeId::HUGEINT:
@@ -368,16 +375,16 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 			auto physical_type = type.InternalType();
 			switch (physical_type) {
 			case PhysicalType::INT16:
-				FlatVector::GetData<int16_t>(duckdb_vector)[duck_idx] = static_cast<int16_t>(value.lower);
+				FlatVector::GetDataMutable<int16_t>(duckdb_vector)[duck_idx] = static_cast<int16_t>(value.lower);
 				break;
 			case PhysicalType::INT32:
-				FlatVector::GetData<int32_t>(duckdb_vector)[duck_idx] = static_cast<int32_t>(value.lower);
+				FlatVector::GetDataMutable<int32_t>(duckdb_vector)[duck_idx] = static_cast<int32_t>(value.lower);
 				break;
 			case PhysicalType::INT64:
-				FlatVector::GetData<int64_t>(duckdb_vector)[duck_idx] = static_cast<int64_t>(value.lower);
+				FlatVector::GetDataMutable<int64_t>(duckdb_vector)[duck_idx] = static_cast<int64_t>(value.lower);
 				break;
 			case PhysicalType::INT128:
-				FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = value;
+				FlatVector::GetDataMutable<hugeint_t>(duckdb_vector)[duck_idx] = value;
 				break;
 			default:
 				throw NotImplementedException("Unsupported physical type %s for DECIMAL %s",
@@ -639,8 +646,8 @@ void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_
 
 			// Create a list entry in the DuckDB vector.
 			auto old_size = ListVector::GetListSize(duckdb_vector);
-			FlatVector::GetData<list_entry_t>(duckdb_vector)[row_idx].offset = old_size;
-			FlatVector::GetData<list_entry_t>(duckdb_vector)[row_idx].length = length;
+			FlatVector::GetDataMutable<list_entry_t>(duckdb_vector)[row_idx].offset = old_size;
+			FlatVector::GetDataMutable<list_entry_t>(duckdb_vector)[row_idx].length = length;
 
 			// Get the child vector from the LIST vector.
 			auto &child_vector = ListVector::GetEntry(duckdb_vector);

@@ -1,9 +1,22 @@
 #include "catch/catch.hpp"
 
 #include "duckdb.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/planner/logical_operator.hpp"
 #include "server/driver/query_utils.hpp"
 
 using namespace duckdb; // NOLINT
+
+static bool PlanContainsTableScan(Connection &con, unique_ptr<LogicalOperator> plan) {
+	bool result = false;
+	con.context->RunFunctionInTransaction([&]() {
+		auto cloned_plan = plan->Copy(*con.context);
+		PhysicalPlanGenerator generator(*con.context);
+		auto physical_plan = generator.Plan(std::move(cloned_plan));
+		result = ContainsTableScan(physical_plan->Root());
+	});
+	return result;
+}
 
 TEST_CASE("ContainsTableScan Tests", "[query_utils]") {
 	DuckDB db(nullptr);
@@ -19,11 +32,7 @@ TEST_CASE("ContainsTableScan Tests", "[query_utils]") {
 		auto plan = con.ExtractPlan("SELECT * FROM test_table");
 		REQUIRE(plan != nullptr);
 
-		PhysicalPlanGenerator generator(*con.context);
-		auto physical_plan = generator.Plan(std::move(plan));
-
-		bool contains_scan = ContainsTableScan(physical_plan->Root());
-		REQUIRE(contains_scan == true);
+		REQUIRE(PlanContainsTableScan(con, std::move(plan)));
 	}
 
 	SECTION("SELECT with GROUP BY (TABLE_SCAN as child)") {
@@ -33,11 +42,7 @@ TEST_CASE("ContainsTableScan Tests", "[query_utils]") {
 		auto plan = con.ExtractPlan("SELECT category, SUM(value) FROM group_test GROUP BY category");
 		REQUIRE(plan != nullptr);
 
-		PhysicalPlanGenerator generator(*con.context);
-		auto physical_plan = generator.Plan(std::move(plan));
-
-		bool contains_scan = ContainsTableScan(physical_plan->Root());
-		REQUIRE(contains_scan == true);
+		REQUIRE(PlanContainsTableScan(con, std::move(plan)));
 	}
 
 	SECTION("SELECT with WHERE clause") {
@@ -47,25 +52,21 @@ TEST_CASE("ContainsTableScan Tests", "[query_utils]") {
 		auto plan = con.ExtractPlan("SELECT * FROM filter_test WHERE status = 'active'");
 		REQUIRE(plan != nullptr);
 
-		PhysicalPlanGenerator generator(*con.context);
-		auto physical_plan = generator.Plan(std::move(plan));
-
-		bool contains_scan = ContainsTableScan(physical_plan->Root());
-		REQUIRE(contains_scan == true);
+		REQUIRE(PlanContainsTableScan(con, std::move(plan)));
 	}
 
 	SECTION("SELECT with multiple aggregates") {
 		con.Query("CREATE TABLE agg_test (category VARCHAR, amount INTEGER, quantity INTEGER)");
 		con.Query("INSERT INTO agg_test VALUES ('X', 100, 5), ('Y', 200, 10)");
 
-		auto plan =
-		    con.ExtractPlan("SELECT category, COUNT(*), SUM(amount), AVG(quantity) FROM agg_test GROUP BY category");
+		auto plan = con.ExtractPlan("SELECT category, COUNT(*), SUM(amount) FROM agg_test GROUP BY category");
 		REQUIRE(plan != nullptr);
 
-		PhysicalPlanGenerator generator(*con.context);
-		auto physical_plan = generator.Plan(std::move(plan));
+		REQUIRE(PlanContainsTableScan(con, std::move(plan)));
 
-		bool contains_scan = ContainsTableScan(physical_plan->Root());
-		REQUIRE(contains_scan == true);
+		auto avg_plan = con.ExtractPlan("SELECT category, AVG(quantity) FROM agg_test GROUP BY category");
+		REQUIRE(avg_plan != nullptr);
+
+		REQUIRE(PlanContainsTableScan(con, std::move(avg_plan)));
 	}
 }

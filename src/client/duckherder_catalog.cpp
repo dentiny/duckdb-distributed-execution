@@ -1,32 +1,93 @@
 #include "duckherder_catalog.hpp"
 
 #include "distributed_client.hpp"
-#include "distributed_delete.hpp"
-#include "distributed_insert.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
+#include "duckdb/common/enums/database_modification_type.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/query_node/delete_query_node.hpp"
+#include "duckdb/parser/query_node/insert_query_node.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
+#include "duckdb/planner/operator/logical_update.hpp"
 #include "logical_remote_create_index.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "duckherder_schema_catalog_entry.hpp"
 #include "duckherder_transaction.hpp"
 
 namespace duckdb {
+
+namespace {
+
+optional_ptr<const BaseTableRef> GetDMLTarget(const QueryNode &node) {
+	switch (node.type) {
+	case QueryNodeType::DELETE_QUERY_NODE: {
+		auto &target = node.Cast<DeleteQueryNode>().table;
+		return target && target->type == TableReferenceType::BASE_TABLE ? &target->Cast<BaseTableRef>() : nullptr;
+	}
+	default:
+		return nullptr;
+	}
+}
+
+bool HasReturning(const QueryNode &node) {
+	switch (node.type) {
+	case QueryNodeType::INSERT_QUERY_NODE:
+		return !node.Cast<InsertQueryNode>().returning_list.empty();
+	case QueryNodeType::DELETE_QUERY_NODE:
+		return !node.Cast<DeleteQueryNode>().returning_list.empty();
+	default:
+		return false;
+	}
+}
+
+bool IsSupportedGenerator(const TableRef &ref) {
+	if (ref.type != TableReferenceType::TABLE_FUNCTION) {
+		return false;
+	}
+	auto &table_function = ref.Cast<TableFunctionRef>();
+	if (!table_function.function || table_function.function->GetExpressionClass() != ExpressionClass::FUNCTION) {
+		return false;
+	}
+	auto &name = table_function.function->Cast<FunctionExpression>().FunctionName();
+	return name == "range" || name == "generate_series";
+}
+
+unique_ptr<TableRef> CreateRemoteDMLRef(const Identifier &catalog_name, string sql,
+                                        DatabaseModificationType modification) {
+	vector<unique_ptr<ParsedExpression>> arguments;
+	arguments.push_back(ConstantExpression::String(catalog_name.GetIdentifierName()));
+	arguments.push_back(ConstantExpression::String(std::move(sql)));
+	if (modification.InsertData()) {
+		arguments.push_back(ConstantExpression::Integer(DatabaseModificationType::INSERT_DATA));
+	} else {
+		D_ASSERT(modification.DeleteData());
+		arguments.push_back(ConstantExpression::Integer(DatabaseModificationType::DELETE_DATA));
+	}
+	auto result = make_uniq<TableFunctionRef>();
+	result->function = make_uniq<FunctionExpression>(Identifier("duckherder_remote_query"), std::move(arguments));
+	return std::move(result);
+}
+
+} // namespace
 
 DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
                                      string server_db_path_p)
@@ -38,6 +99,96 @@ DuckherderCatalog::~DuckherderCatalog() = default;
 
 void DuckherderCatalog::Initialize(bool load_builtin) {
 	duckdb_catalog->Initialize(load_builtin);
+}
+
+bool DuckherderCatalog::Supports(RemoteCapability capability) const {
+	switch (capability) {
+	case RemoteCapability::IS_REMOTE:
+	case RemoteCapability::EXECUTE_QUERY_NODE:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool DuckherderCatalog::SupportsPushdown(const TableRef &ref) {
+	switch (ref.type) {
+	case TableReferenceType::BASE_TABLE:
+		return IsRemoteTable(ref.Cast<BaseTableRef>().Table().GetIdentifierName());
+	case TableReferenceType::EXPRESSION_LIST:
+	case TableReferenceType::EMPTY_FROM:
+		return true;
+	case TableReferenceType::TABLE_FUNCTION:
+		return IsSupportedGenerator(ref);
+	default:
+		return false;
+	}
+}
+
+bool DuckherderCatalog::SupportsPushdown(const QueryNode &node) {
+	if (HasReturning(node)) {
+		return false;
+	}
+	switch (node.type) {
+	case QueryNodeType::SELECT_NODE: {
+		auto &select = node.Cast<SelectNode>();
+		return select.from_table && (select.from_table->type == TableReferenceType::EXPRESSION_LIST ||
+		                             IsSupportedGenerator(*select.from_table));
+	}
+	case QueryNodeType::INSERT_QUERY_NODE: {
+		auto &insert = node.Cast<InsertQueryNode>();
+		if (!IsRemoteTable(insert.qualified_name.Name().GetIdentifierName()) || insert.on_conflict_info) {
+			return false;
+		}
+		if (!insert.select_statement || insert.select_statement->node->type != QueryNodeType::SELECT_NODE) {
+			return false;
+		}
+		auto &select = insert.select_statement->node->Cast<SelectNode>();
+		return select.from_table && (select.from_table->type == TableReferenceType::EXPRESSION_LIST ||
+		                             IsSupportedGenerator(*select.from_table));
+	}
+	case QueryNodeType::DELETE_QUERY_NODE: {
+		auto &del = node.Cast<DeleteQueryNode>();
+		auto target = GetDMLTarget(node);
+		return target && del.using_clauses.empty() && IsRemoteTable(target->Table().GetIdentifierName());
+	}
+	default:
+		return false;
+	}
+}
+
+unique_ptr<TableRef> DuckherderCatalog::RemoteExecute(ClientContext &context, unique_ptr<QueryNode> node) {
+	if (HasReturning(*node)) {
+		throw NotImplementedException("Duckherder remote DML does not support RETURNING");
+	}
+
+	DatabaseModificationType modification;
+	string local_table_name;
+	switch (node->type) {
+	case QueryNodeType::INSERT_QUERY_NODE: {
+		auto &insert = node->Cast<InsertQueryNode>();
+		local_table_name = insert.qualified_name.Name().GetIdentifierName();
+		auto config = GetRemoteTableConfig(local_table_name);
+		insert.qualified_name = QualifiedName::Parse(config.remote_table_name);
+		modification = DatabaseModificationType::INSERT_DATA;
+		break;
+	}
+	case QueryNodeType::DELETE_QUERY_NODE: {
+		auto &target = node->Cast<DeleteQueryNode>().table->Cast<BaseTableRef>();
+		local_table_name = target.Table().GetIdentifierName();
+		auto config = GetRemoteTableConfig(local_table_name);
+		target.SetQualifiedName(QualifiedName::Parse(config.remote_table_name));
+		modification = DatabaseModificationType::DELETE_DATA;
+		break;
+	}
+	default:
+		throw NotImplementedException("Duckherder only supports remote INSERT and DELETE query nodes");
+	}
+
+	if (!IsRemoteTable(local_table_name)) {
+		throw InternalException("Remote execution requested for an unregistered Duckherder table");
+	}
+	return CreateRemoteDMLRef(GetName(), node->ToString(), modification);
 }
 
 optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
@@ -60,7 +211,7 @@ optional_ptr<SchemaCatalogEntry> DuckherderCatalog::LookupSchema(CatalogTransact
 		}
 
 		auto create_schema_info = make_uniq<CreateSchemaInfo>();
-		create_schema_info->schema = catalog_entry->name;
+		create_schema_info->SetSchema(catalog_entry->name);
 		create_schema_info->comment = catalog_entry->comment;
 		create_schema_info->tags = catalog_entry->tags;
 
@@ -82,7 +233,7 @@ void DuckherderCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 PhysicalOperator &DuckherderCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                        LogicalCreateTable &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanCreateTableAs");
-	return duckdb_catalog->PlanCreateTableAs(context, planner, op, plan);
+	throw NotImplementedException("Duckherder catalogs are remote-authoritative; CREATE TABLE AS is unsupported");
 }
 
 PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -90,19 +241,16 @@ PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, Physical
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanInsert");
 
 	// Attempt insertion into remote table if registered.
-	bool is_remote = IsRemoteTable(op.table.name);
+	bool is_remote = IsRemoteTable(op.table.name.GetIdentifierName());
 	if (is_remote) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote insertion to table %s", op.table.name));
-
-		D_ASSERT(plan);
-		auto &distributed_insert = planner.Make<PhysicalDistributedInsert>(op.table, *plan, op.estimated_cardinality);
-		// Note: children are added in the PhysicalDistributedInsert, don't add here.
-		return distributed_insert;
+		if (op.return_chunk) {
+			throw NotImplementedException("Duckherder remote INSERT does not support RETURNING");
+		}
+		throw NotImplementedException("Unsupported remote INSERT; refusing physical fallback");
 	}
 
-	// Fallback to local insertion.
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local insertion to table %s", op.table.name));
-	return duckdb_catalog->PlanInsert(context, planner, op, plan);
+	throw NotImplementedException(
+	    "Duckherder catalogs are remote-authoritative; INSERT into an unregistered local table is unsupported");
 }
 
 PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -110,26 +258,29 @@ PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, Physical
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanDelete");
 
 	// Attempt deletion from remote table if registered.
-	bool is_remote = IsRemoteTable(op.table.name);
+	bool is_remote = IsRemoteTable(op.table.name.GetIdentifierName());
 	if (is_remote) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote deletion from table %s", op.table.name));
-
-		auto &bound_ref = op.expressions[0]->Cast<BoundReferenceExpression>();
-		auto &distributed_delete = planner.Make<PhysicalDistributedDelete>(op.types, op.table, plan, bound_ref.index,
-		                                                                   op.estimated_cardinality, op.return_chunk);
-		// Note: children are added in the PhysicalDistributedDelete, don't add here.
-		return distributed_delete;
+		if (op.return_chunk) {
+			throw NotImplementedException("Duckherder remote DELETE does not support RETURNING");
+		}
+		throw NotImplementedException("Unsupported remote DELETE; refusing physical fallback");
 	}
 
-	// Fallback to local deletion.
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local deletion from table %s", op.table.name));
-	return duckdb_catalog->PlanDelete(context, planner, op, plan);
+	throw NotImplementedException(
+	    "Duckherder catalogs are remote-authoritative; DELETE from an unregistered local table is unsupported");
 }
 
 PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalUpdate &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanUpdate");
-	return duckdb_catalog->PlanUpdate(context, planner, op, plan);
+	if (IsRemoteTable(op.table.name.GetIdentifierName())) {
+		if (op.return_chunk) {
+			throw NotImplementedException("Duckherder remote UPDATE does not support RETURNING");
+		}
+		throw NotImplementedException("Duckherder remote UPDATE is unsupported; refusing physical fallback");
+	}
+	throw NotImplementedException(
+	    "Duckherder catalogs are remote-authoritative; UPDATE of an unregistered local table is unsupported");
 }
 
 unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
@@ -138,7 +289,7 @@ unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, C
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::BindCreateIndex");
 
 	// Attempt remote table if applicable.
-	string table_name = table.name;
+	string table_name = table.name.GetIdentifierName();
 	if (IsRemoteTable(table_name)) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Bind CREATE INDEX on remote table %s", table_name));
 		// For remote tables, we use a custom logical operator that doesn't require scanning the table locally.
@@ -228,6 +379,16 @@ bool DuckherderCatalog::IsRemoteTable(const string &table_name) const {
 	auto it = remote_tables.find(table_name);
 	bool found = it != remote_tables.end() && it->second.is_distributed;
 	return found;
+}
+
+bool DuckherderCatalog::IsRegisteredRemoteTarget(const QualifiedName &target) const {
+	std::lock_guard<std::mutex> lck(remote_tables_mu);
+	for (auto &entry : remote_tables) {
+		if (entry.second.is_distributed && QualifiedName::Parse(entry.second.remote_table_name) == target) {
+			return true;
+		}
+	}
+	return false;
 }
 
 RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &table_name) const {

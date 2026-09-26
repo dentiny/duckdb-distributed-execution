@@ -33,18 +33,18 @@
 using namespace duckdb;
 
 namespace {
-std::unique_ptr<DistributedFlightServer> g_server;
+DistributedFlightServer *g_server = nullptr;
 
 void SignalHandler(int signal) {
 	std::cout << "Received signal " << signal << ", shutting down..." << std::endl;
 	if (g_server) {
 		g_server->Shutdown();
 	}
-	exit(0);
 }
 } // namespace
 
 int main(int argc, char *argv[]) {
+	std::unique_ptr<DistributedFlightServer> server;
 	std::string host = "0.0.0.0";
 	int port = 8815;
 	int num_workers = 0; // 0 = no distributed execution, run locally
@@ -70,7 +70,8 @@ int main(int argc, char *argv[]) {
 
 	try {
 		// Create and start Flight server.
-		g_server = std::make_unique<DistributedFlightServer>(host, port);
+		server = std::make_unique<DistributedFlightServer>(host, port);
+		g_server = server.get();
 
 		auto LogServerError = [&](const string &message) {
 			if (g_server) {
@@ -116,5 +117,6 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	g_server = nullptr;
 	return 0;
 }
