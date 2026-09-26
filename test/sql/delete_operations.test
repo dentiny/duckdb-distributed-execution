@@ -1,0 +1,34 @@
+# name: test/sql/delete_operations.test
+# description: Vverifying correct row deletion when filtered column is not the first column
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8837);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8837);
+
+statement ok
+USE dh;
+
+statement ok
+PRAGMA duckherder_register_remote_table('delete_wrong_row_test', 'delete_wrong_row_test');
+
+statement ok
+DROP TABLE IF EXISTS delete_wrong_row_test;
+
+statement ok
+CREATE TABLE delete_wrong_row_test (status INTEGER, id INTEGER);
+
+statement ok
+INSERT INTO delete_wrong_row_test VALUES (10, 1), (1, 2);
+
+statement ok
+DELETE FROM delete_wrong_row_test WHERE id = 1;
+
+query II
+SELECT status, id FROM delete_wrong_row_test;
+----
+1	2
