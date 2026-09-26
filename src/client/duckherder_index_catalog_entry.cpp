@@ -15,25 +15,26 @@ namespace duckdb {
 	// Create a dummy DataTableInfo that can safely handle CommitDrop() and RemoveIndex() calls.
 	// The TableIndexList inside will be empty, so all operations will safely no-op.
 	auto &db = catalog.GetAttached();
-	return make_shared_ptr<DataTableInfo>(db, /*table_io_manager_p=*/nullptr, "remote_dummy_schema",
-	                                      "remote_dummy_table");
+	return make_shared_ptr<DataTableInfo>(db, /*table_io_manager_p=*/nullptr,
+	                                      vector<Identifier> {Identifier("remote_dummy_schema")},
+	                                      Identifier("remote_dummy_table"));
 }
 
 DuckherderIndexCatalogEntry::DuckherderIndexCatalogEntry(Catalog &duckherder_catalog_p, SchemaCatalogEntry &schema,
                                                          CreateIndexInfo &info)
     : DuckIndexEntry(duckherder_catalog_p, schema, info,
-                     make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckherder_catalog_p), info.index_name)),
+                     make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckherder_catalog_p))),
       duckherder_catalog_ref(duckherder_catalog_p), remote_schema_name(schema.name), remote_table_name(info.table) {
 }
 
 DuckherderIndexCatalogEntry::~DuckherderIndexCatalogEntry() {
 }
 
-string DuckherderIndexCatalogEntry::GetSchemaName() const {
+Identifier DuckherderIndexCatalogEntry::GetSchemaName() const {
 	return remote_schema_name;
 }
 
-string DuckherderIndexCatalogEntry::GetTableName() const {
+Identifier DuckherderIndexCatalogEntry::GetTableName() const {
 	return remote_table_name;
 }
 

@@ -112,8 +112,8 @@ TableFunction DuckherderTableCatalogEntry::GetScanFunction(ClientContext &contex
 
 	// Attempt distributed execution for registered remote table.
 	auto *dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
-	if (dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(name)) {
-		auto config = dh_catalog_ptr->GetRemoteTableConfig(name);
+	if (dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(name.GetIdentifierName())) {
+		auto config = dh_catalog_ptr->GetRemoteTableConfig(name.GetIdentifierName());
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Table query %s is distributed. Using remote scan from %s.",
 		                                                 name, config.server_url));
 
@@ -132,8 +132,8 @@ TableFunction DuckherderTableCatalogEntry::GetScanFunction(ClientContext &contex
 
 	// Attempt distributed execution for registered remote table.
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
-	if (dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(name)) {
-		auto config = dh_catalog_ptr->GetRemoteTableConfig(name);
+	if (dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(name.GetIdentifierName())) {
+		auto config = dh_catalog_ptr->GetRemoteTableConfig(name.GetIdentifierName());
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Table query %s is distributed. Using remote scan from %s.",
 		                                                 name, config.server_url));
 

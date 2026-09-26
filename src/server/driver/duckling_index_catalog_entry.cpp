@@ -11,24 +11,26 @@ namespace duckdb {
 /*static*/ shared_ptr<DataTableInfo> DucklingIndexCatalogEntry::GetDummyDataTableInfo(Catalog &catalog) {
 	// Create a dummy DataTableInfo for index operations.
 	auto &db = catalog.GetAttached();
-	return make_shared_ptr<DataTableInfo>(db, /*table_io_manager_p=*/nullptr, "duckling_schema", "duckling_table");
+	return make_shared_ptr<DataTableInfo>(db, /*table_io_manager_p=*/nullptr,
+	                                      vector<Identifier> {Identifier("duckling_schema")},
+	                                      Identifier("duckling_table"));
 }
 
 DucklingIndexCatalogEntry::DucklingIndexCatalogEntry(Catalog &duckling_catalog_p, SchemaCatalogEntry &schema,
                                                      CreateIndexInfo &info)
     : DuckIndexEntry(duckling_catalog_p, schema, info,
-                     make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckling_catalog_p), info.index_name)),
+                     make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckling_catalog_p))),
       duckling_catalog_ref(duckling_catalog_p), schema_name(schema.name), table_name(info.table) {
 }
 
 DucklingIndexCatalogEntry::~DucklingIndexCatalogEntry() {
 }
 
-string DucklingIndexCatalogEntry::GetSchemaName() const {
+Identifier DucklingIndexCatalogEntry::GetSchemaName() const {
 	return schema_name;
 }
 
-string DucklingIndexCatalogEntry::GetTableName() const {
+Identifier DucklingIndexCatalogEntry::GetTableName() const {
 	return table_name;
 }
 

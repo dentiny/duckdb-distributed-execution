@@ -8,7 +8,7 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
@@ -141,11 +141,11 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
 		// Propagate the error instead of continuing
-		exec_result.result = make_uniq<MaterializedQueryResult>(prepared->GetErrorObject());
+		exec_result.result = make_uniq<QueryResult>(prepared->GetErrorObject());
 		return exec_result;
 	}
 
-	vector<string> names = prepared->GetNames();
+	vector<string> names = IdentifiersToStrings(prepared->GetNames());
 	vector<LogicalType> types = prepared->GetTypes();
 	vector<string> serialized_types;
 	serialized_types.reserve(types.size());

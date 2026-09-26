@@ -3,6 +3,8 @@
 #include "arrow_utils.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
 
 #include <arrow/array.h>
 #include <arrow/builder.h>
@@ -13,7 +15,7 @@ using namespace duckdb;
 TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 	// Create a DuckDB ENUM type: ENUM('happy', 'sad', 'neutral')
 	Vector enum_values(LogicalType {LogicalTypeId::VARCHAR}, 3);
-	auto values_ptr = FlatVector::GetData<string_t>(enum_values);
+	auto values_ptr = FlatVector::GetDataMutable<string_t>(enum_values);
 	values_ptr[0] = StringVector::AddString(enum_values, "happy");
 	values_ptr[1] = StringVector::AddString(enum_values, "sad");
 	values_ptr[2] = StringVector::AddString(enum_values, "neutral");
@@ -146,7 +148,7 @@ TEST_CASE("Arrow ENUM with larger physical types", "[arrow][enum]") {
 	Vector enum_values(LogicalType {LogicalTypeId::VARCHAR}, 300);
 	for (idx_t idx = 0; idx < 300; idx++) {
 		auto str = "value_" + std::to_string(idx);
-		FlatVector::GetData<string_t>(enum_values)[idx] = StringVector::AddString(enum_values, str);
+		FlatVector::GetDataMutable<string_t>(enum_values)[idx] = StringVector::AddString(enum_values, str);
 	}
 
 	auto enum_type = LogicalType::ENUM("large_enum", enum_values, 300);

@@ -17,9 +17,9 @@ PhysicalOperator &LogicalRemoteAlterTableOperator::CreatePlan(ClientContext &con
 	auto info_copy = unique_ptr_cast<AlterInfo, AlterTableInfo>(info->Copy());
 
 	// Pass the catalog, schema, and table names instead of references to avoid dangling reference issues.
-	string catalog_name = schema.catalog.GetName();
-	string schema_name = schema.name;
-	string table_name = table.name;
+	string catalog_name = schema.catalog.GetName().GetIdentifierName();
+	string schema_name = schema.name.GetIdentifierName();
+	string table_name = table.name.GetIdentifierName();
 
 	return planner.Make<PhysicalRemoteAlterTableOperator>(std::move(info_copy), std::move(catalog_name),
 	                                                      std::move(schema_name), std::move(table_name),

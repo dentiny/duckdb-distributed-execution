@@ -1,0 +1,506 @@
+# name: test/sql/delete_operations.test
+# description: Whole-statement remote DELETE, transaction, and fallback safety
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8837, 2);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8837);
+
+statement ok
+USE dh;
+
+statement ok
+PRAGMA duckherder_register_remote_table('delete_wrong_row_test', 'delete_wrong_row_test');
+
+statement ok
+DROP TABLE IF EXISTS delete_wrong_row_test;
+
+statement ok
+CREATE TABLE delete_wrong_row_test (status INTEGER, id INTEGER);
+
+statement ok
+INSERT INTO delete_wrong_row_test VALUES (10, 1), (1, 2);
+
+query I
+DELETE FROM delete_wrong_row_test WHERE id = 1;
+----
+1
+
+query II
+SELECT status, id FROM delete_wrong_row_test;
+----
+1	2
+
+# Remote DML preserves DuckDB's signed BIGINT count contract.
+query IT
+SELECT "Count", typeof("Count")
+FROM duckherder_remote_query('dh', 'DELETE FROM delete_wrong_row_test WHERE false', 2);
+----
+0	BIGINT
+
+# Direct calls cannot execute a mismatched, multi-statement, transactional, DDL, or unregistered target.
+statement error
+SELECT * FROM duckherder_remote_query('dh', 'DROP TABLE delete_wrong_row_test', 2);
+----
+
+statement error
+SELECT * FROM duckherder_remote_query('dh', 'BEGIN TRANSACTION', 2);
+----
+
+statement error
+SELECT * FROM duckherder_remote_query(
+    'dh',
+    'DELETE FROM delete_wrong_row_test WHERE false; DELETE FROM delete_wrong_row_test',
+    2
+);
+----
+
+statement error
+SELECT * FROM duckherder_remote_query('dh', 'DELETE FROM delete_wrong_row_test WHERE false', 1);
+----
+
+statement error
+SELECT * FROM duckherder_remote_query('dh', 'DELETE FROM unregistered_remote_target', 2);
+----
+
+# EXPLAIN and PREPARE bind the remote table function without executing it.
+query I
+SELECT count(*) FROM delete_wrong_row_test;
+----
+1
+
+statement ok
+EXPLAIN DELETE FROM delete_wrong_row_test WHERE id = 2;
+
+query I
+SELECT count(*) FROM delete_wrong_row_test;
+----
+1
+
+statement ok
+PREPARE prepared_delete AS DELETE FROM delete_wrong_row_test WHERE id = 2;
+
+query I
+SELECT count(*) FROM delete_wrong_row_test;
+----
+1
+
+query I
+EXECUTE prepared_delete;
+----
+1
+
+query I
+SELECT count(*) FROM delete_wrong_row_test;
+----
+0
+
+statement ok
+DEALLOCATE prepared_delete;
+
+# The server observed one whole DELETE for each execution, not client-side key batching.
+query I
+SELECT count(*)
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'delete from delete_wrong_row_test%';
+----
+3
+
+query I
+SELECT count(*)
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'delete from delete_wrong_row_test%'
+  AND lower(sql) LIKE '% in (%';
+----
+0
+
+# Rollback uses the same dedicated server Connection as DELETE and SELECT.
+statement ok
+INSERT INTO delete_wrong_row_test VALUES (20, 2);
+
+statement ok
+BEGIN;
+
+query I
+DELETE FROM delete_wrong_row_test WHERE id = 2;
+----
+1
+
+query I
+SELECT count(*) FROM delete_wrong_row_test;
+----
+0
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM delete_wrong_row_test WHERE id = 2;
+----
+1
+
+# Distinct client contexts receive distinct server sessions, and explicit COMMIT is visible cross-session.
+statement ok con1
+BEGIN;
+
+statement ok con1
+INSERT INTO dh.delete_wrong_row_test VALUES (30, 3);
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 3;
+----
+1
+
+query I con2
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 3;
+----
+0
+
+statement ok con1
+COMMIT;
+
+query I con2
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 3;
+----
+1
+
+# A transactional scan establishes and retains its session snapshot across another session's commit.
+statement ok con1
+BEGIN;
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 4;
+----
+0
+
+statement ok con2
+INSERT INTO dh.delete_wrong_row_test VALUES (40, 4);
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 4;
+----
+0
+
+statement ok con1
+COMMIT;
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 4;
+----
+1
+
+# Session scans execute locally on the dedicated Connection and never use workers.
+query I
+SELECT count(*) > 0
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'select % from delete_wrong_row_test%'
+  AND execution_mode = 'LOCAL'
+  AND num_workers_used = 0;
+----
+true
+
+# INSERT rollback uses the same session and does not leak into another client.
+statement ok con1
+BEGIN;
+
+statement ok con1
+INSERT INTO dh.delete_wrong_row_test VALUES (60, 6);
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 6;
+----
+1
+
+statement ok con1
+ROLLBACK;
+
+query I con2
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 6;
+----
+0
+
+# Autocommit closes each remote lifecycle and makes the write immediately visible.
+statement ok con2
+INSERT INTO dh.delete_wrong_row_test VALUES (50, 5);
+
+query I con1
+SELECT count(*) FROM dh.delete_wrong_row_test WHERE id = 5;
+----
+1
+
+# Autocommit table scans retain the existing worker execution path.
+query I
+SELECT count(*) > 0
+FROM duckherder_get_query_execution_stats()
+WHERE lower(sql) LIKE 'select % from delete_wrong_row_test%'
+  AND execution_mode = 'DELEGATED';
+----
+true
+
+statement ok
+PRAGMA duckherder_register_remote_table('structural_remote_name', 'structural_remote_name');
+
+statement ok
+CREATE TABLE structural_remote_name (id INTEGER);
+
+statement ok
+CREATE TABLE structural_local_name (id INTEGER);
+
+# Local-to-remote names are rewritten on the parsed DML target, not by SQL replacement.
+statement ok
+PRAGMA duckherder_register_remote_table('structural_local_name', 'structural_remote_name');
+
+statement ok
+INSERT INTO structural_local_name VALUES (42);
+
+query I
+SELECT count(*) FROM structural_remote_name;
+----
+1
+
+statement ok
+CREATE TABLE "Quoted Local Alias" (id INTEGER);
+
+statement ok
+PRAGMA duckherder_register_remote_table('Quoted Local Alias', 'structural_remote_name');
+
+statement ok
+INSERT INTO "Quoted Local Alias" VALUES (84);
+
+query I
+SELECT sum(id) FROM structural_remote_name;
+----
+126
+
+# Prepared DML revalidates its mapping immediately before execution.
+statement ok
+PRAGMA duckherder_register_remote_table('prepared_remote_a', 'prepared_remote_a');
+
+statement ok
+CREATE TABLE prepared_remote_a (id INTEGER);
+
+statement ok
+PRAGMA duckherder_unregister_remote_table('prepared_remote_a');
+
+statement ok
+CREATE TABLE prepared_mapping_local (id INTEGER);
+
+statement ok
+PRAGMA duckherder_register_remote_table('prepared_mapping_local', 'prepared_remote_a');
+
+statement ok
+INSERT INTO prepared_mapping_local VALUES (1);
+
+statement ok
+PREPARE stale_mapping_delete AS DELETE FROM prepared_mapping_local WHERE id = 1;
+
+statement ok
+PRAGMA duckherder_unregister_remote_table('prepared_mapping_local');
+
+statement error
+EXECUTE stale_mapping_delete;
+----
+
+statement ok
+CREATE TABLE prepared_mapping_inspect (id INTEGER);
+
+statement ok
+PRAGMA duckherder_register_remote_table('prepared_mapping_inspect', 'prepared_remote_a');
+
+query I
+SELECT count(*) FROM prepared_mapping_inspect;
+----
+1
+
+statement ok
+DEALLOCATE stale_mapping_delete;
+
+# Qualified remote names retain normal scan semantics.
+statement ok
+CREATE TABLE qualified_local_alias (status INTEGER, id INTEGER);
+
+statement ok
+PRAGMA duckherder_register_remote_table('qualified_local_alias', 'main.delete_wrong_row_test');
+
+query II
+SELECT status, id FROM qualified_local_alias WHERE id = 2;
+----
+20	2
+
+# A missing qualified remote table is an execution error, never an empty scan.
+statement ok
+CREATE TABLE missing_qualified_local (id INTEGER);
+
+statement ok
+PRAGMA duckherder_register_remote_table('missing_qualified_local', 'main.missing_remote_table');
+
+statement error
+SELECT * FROM missing_qualified_local;
+----
+
+# Unsupported DML shapes fail closed and leave remote data unchanged.
+statement error
+UPDATE delete_wrong_row_test SET status = 99 WHERE id = 2;
+----
+
+statement error
+DELETE FROM delete_wrong_row_test AS target
+USING delete_wrong_row_test AS other
+WHERE target.id = other.id AND target.id = 2;
+----
+
+statement error
+INSERT INTO delete_wrong_row_test SELECT * FROM delete_wrong_row_test;
+----
+
+query II
+SELECT status, id FROM delete_wrong_row_test WHERE id = 2;
+----
+20	2
+
+# RETURNING is rejected rather than being represented as a bogus count row.
+statement error
+DELETE FROM delete_wrong_row_test WHERE id = 2 RETURNING *;
+----
+
+# Duckherder catalogs are remote-authoritative: metadata-only local tables
+# cannot become a second writable resource.
+statement ok
+CREATE TABLE local_write_rejected (id INTEGER);
+
+statement error
+INSERT INTO local_write_rejected VALUES (1);
+----
+
+statement error
+DELETE FROM local_write_rejected;
+----
+
+statement error
+UPDATE local_write_rejected SET id = 2;
+----
+
+query I
+SELECT count(*) FROM local_write_rejected;
+----
+0
+
+# A rejected local write cannot be mixed with an active remote transaction.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO delete_wrong_row_test VALUES (70, 7);
+
+statement error
+INSERT INTO local_write_rejected VALUES (7);
+----
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM delete_wrong_row_test WHERE id = 7;
+----
+0
+
+# Remote DDL is rejected before execution in an explicit transaction.
+statement ok
+BEGIN;
+
+statement error
+ALTER TABLE delete_wrong_row_test ADD COLUMN forbidden_column INTEGER;
+----
+
+statement ok
+ROLLBACK;
+
+statement error
+SELECT forbidden_column FROM delete_wrong_row_test;
+----
+
+statement ok
+BEGIN;
+
+statement error
+CREATE INDEX forbidden_explicit_index ON delete_wrong_row_test(id);
+----
+
+statement ok
+ROLLBACK;
+
+# A successful autocommit create proves the failed statement left no index.
+statement ok
+CREATE INDEX forbidden_explicit_index ON delete_wrong_row_test(id);
+
+statement ok
+BEGIN;
+
+statement error
+DROP TABLE delete_wrong_row_test;
+----
+
+statement ok
+ROLLBACK;
+
+query II
+SELECT status, id FROM delete_wrong_row_test WHERE id = 2;
+----
+20	2
+
+statement ok
+PRAGMA duckherder_register_remote_table('explicit_create_rejected', 'explicit_create_rejected');
+
+statement ok
+BEGIN;
+
+statement error
+CREATE TABLE explicit_create_rejected (id INTEGER);
+----
+
+statement ok
+ROLLBACK;
+
+# A successful autocommit create proves no remote or metadata side effect.
+statement ok
+CREATE TABLE explicit_create_rejected (id INTEGER);
+
+# CTAS cannot bypass the remote-authoritative physical DML policy.
+statement error
+CREATE TABLE unregistered_ctas_rejected AS SELECT 1 AS id;
+----
+
+query I
+SELECT count(*)
+FROM duckdb_tables()
+WHERE database_name = 'dh' AND table_name = 'unregistered_ctas_rejected';
+----
+0
+
+statement ok
+PRAGMA duckherder_register_remote_table('registered_ctas_rejected', 'registered_ctas_rejected');
+
+statement error
+CREATE TABLE registered_ctas_rejected AS
+SELECT id FROM delete_wrong_row_test;
+----
+
+query I
+SELECT count(*)
+FROM duckdb_tables()
+WHERE database_name = 'dh' AND table_name = 'registered_ctas_rejected';
+----
+0
+
+# Successful ordinary creation proves CTAS left no remote table behind.
+statement ok
+CREATE TABLE registered_ctas_rejected (id INTEGER);
+
+query I
+SELECT count(*) FROM registered_ctas_rejected;
+----
+0

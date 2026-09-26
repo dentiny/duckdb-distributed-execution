@@ -7,10 +7,9 @@
 namespace duckdb {
 
 DuckherderTransaction::DuckherderTransaction(DuckTransactionManager &manager, ClientContext &context,
-                                             transaction_t start_time, transaction_t transaction_id,
-                                             idx_t catalog_version)
+                                             transaction_t start_time, SnapshotView view, idx_t catalog_version)
     : Transaction(manager, context),
-      duckdb_transaction(make_uniq<DuckTransaction>(manager, context, start_time, transaction_id, catalog_version)) {
+      duckdb_transaction(make_uniq<DuckTransaction>(manager, context, start_time, view, catalog_version)) {
 }
 
 DuckherderTransaction::~DuckherderTransaction() = default;

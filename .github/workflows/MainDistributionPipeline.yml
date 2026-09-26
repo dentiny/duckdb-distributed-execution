@@ -12,19 +12,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  duckdb-submodule-version:
+    uses: duckdb/extension-ci-tools/.github/workflows/_submodule_version.yml@9b1020499dc85966be3342541f98c8e8e4aada89
+
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.4.1
+    needs: duckdb-submodule-version
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@9b1020499dc85966be3342541f98c8e8e4aada89
     with:
-      duckdb_version: v1.4.1
-      ci_tools_version: v1.4.1
-      extension_name: motherduck
+      duckdb_version: ${{ needs.duckdb-submodule-version.outputs.version }}
+      ci_tools_version: 9b1020499dc85966be3342541f98c8e8e4aada89
+      extension_name: duckherder
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.4.1
+    needs: duckdb-submodule-version
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@9b1020499dc85966be3342541f98c8e8e4aada89
     with:
-      duckdb_version: v1.4.1
-      ci_tools_version: v1.4.1
-      extension_name: motherduck
+      duckdb_version: ${{ needs.duckdb-submodule-version.outputs.version }}
+      ci_tools_version: 9b1020499dc85966be3342541f98c8e8e4aada89
+      extension_name: duckherder
       format_checks: 'format;tidy'

@@ -1,0 +1,78 @@
+diff --git a/src/duckdb_object_storage_extension.cpp b/src/duckdb_object_storage_extension.cpp
+index efb5ab7..b12361c 100644
+--- a/src/duckdb_object_storage_extension.cpp
++++ b/src/duckdb_object_storage_extension.cpp
+@@ -7,6 +7,7 @@
+ #include "slatedb_io_stats.hpp"
+ #include "duckdb/common/crypto/md5.hpp"
+ #include "duckdb/function/pragma_function.hpp"
++#include "duckdb/main/attached_database.hpp"
+ #include "duckdb/main/database.hpp"
+ #include "duckdb/main/database_manager.hpp"
+ #include "duckdb/parser/keyword_helper.hpp"
+@@ -22,7 +23,7 @@ namespace {
+ 
+ string AttachMappedDatabase(ClientContext &context, const FunctionParameters &parameters) {
+ 	auto &database_manager = DatabaseManager::Get(context);
+-	auto &default_database_name = DatabaseManager::GetDefaultDatabase(context);
++	auto default_database_name = DatabaseManager::GetDefaultDatabase(context);
+ 	auto default_database = database_manager.GetDatabase(context, default_database_name);
+ 	if (!default_database) {
+ 		throw InternalException("Cannot resolve the current database for SlateDB path mapping");
+diff --git a/src/slatedb_cache_stats.cpp b/src/slatedb_cache_stats.cpp
+index 2e183f2..d219a3a 100644
+--- a/src/slatedb_cache_stats.cpp
++++ b/src/slatedb_cache_stats.cpp
+@@ -37,7 +37,7 @@ struct CacheStatsGlobalState : GlobalTableFunctionState {
+ };
+ 
+ unique_ptr<FunctionData> CacheStatsBind(ClientContext &, TableFunctionBindInput &input,
+-                                        vector<LogicalType> &return_types, vector<string> &names) {
++                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
+ 	names.emplace_back("cache");
+ 	return_types.emplace_back(LogicalType::VARCHAR);
+ 	names.emplace_back("hit_count");
+diff --git a/src/slatedb_config_utils.cpp b/src/slatedb_config_utils.cpp
+index 5691455..3029222 100644
+--- a/src/slatedb_config_utils.cpp
++++ b/src/slatedb_config_utils.cpp
+@@ -10,7 +10,7 @@ namespace duckdb {
+ 
+ string GetRequiredSetting(optional_ptr<FileOpener> opener, const string &name) {
+ 	Value value;
+-	if (!FileOpener::TryGetCurrentSetting(opener, name, value) || value.IsNull()) {
++	if (!FileOpener::TryGetCurrentSetting(opener, Identifier(name), value) || value.IsNull()) {
+ 		throw InvalidConfigurationException("Required setting '%s' is not configured", name);
+ 	}
+ 	auto result = value.GetValue<string>();
+@@ -22,7 +22,7 @@ string GetRequiredSetting(optional_ptr<FileOpener> opener, const string &name) {
+ 
+ string GetOptionalSetting(optional_ptr<FileOpener> opener, const string &name) {
+ 	Value value;
+-	if (!FileOpener::TryGetCurrentSetting(opener, name, value) || value.IsNull()) {
++	if (!FileOpener::TryGetCurrentSetting(opener, Identifier(name), value) || value.IsNull()) {
+ 		return "";
+ 	}
+ 	return value.GetValue<string>();
+@@ -31,7 +31,7 @@ string GetOptionalSetting(optional_ptr<FileOpener> opener, const string &name) {
+ template <class T>
+ T GetSettingOrDefault(optional_ptr<FileOpener> opener, const string &name, T default_value) {
+ 	Value value;
+-	if (!FileOpener::TryGetCurrentSetting(opener, name, value) || value.IsNull()) {
++	if (!FileOpener::TryGetCurrentSetting(opener, Identifier(name), value) || value.IsNull()) {
+ 		return default_value;
+ 	}
+ 	return value.GetValue<T>();
+diff --git a/src/slatedb_io_stats.cpp b/src/slatedb_io_stats.cpp
+index 2ac8537..bd241e5 100644
+--- a/src/slatedb_io_stats.cpp
++++ b/src/slatedb_io_stats.cpp
+@@ -37,7 +37,7 @@ struct IoStatsGlobalState : GlobalTableFunctionState {
+ };
+ 
+ unique_ptr<FunctionData> IoStatsBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+-                                     vector<string> &names) {
++                                     vector<Identifier> &names) {
+ 	names.emplace_back("operation");
+ 	return_types.emplace_back(LogicalType::VARCHAR);
+ 	names.emplace_back("request_count");

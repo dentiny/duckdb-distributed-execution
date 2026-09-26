@@ -18,6 +18,18 @@
 namespace duckdb {
 
 namespace {
+void RejectExplicitRemoteDDL(ClientContext &context) {
+	if (!context.transaction.IsAutoCommit()) {
+		throw TransactionException("Duckherder remote DDL is not supported inside explicit transactions");
+	}
+}
+
+void RejectExplicitRemoteDDL(CatalogTransaction &transaction) {
+	if (transaction.HasContext()) {
+		RejectExplicitRemoteDDL(transaction.GetContext());
+	}
+}
+
 vector<unique_ptr<Constraint>> CopyConstraints(const vector<unique_ptr<Constraint>> &constraints) {
 	vector<unique_ptr<Constraint>> res;
 	res.reserve(constraints.size());
@@ -122,13 +134,14 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTran
                                                                      CreateIndexInfo &info, TableCatalogEntry &table) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateIndex");
 
-	string index_name = info.index_name;
-	string table_name = table.name;
+	string index_name = info.GetIndexName().GetIdentifierName();
+	string table_name = table.name.GetIdentifierName();
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
 	const bool is_remote_table = dh_catalog_ptr != nullptr && dh_catalog_ptr->IsRemoteTable(table_name);
 
 	if (is_remote_table) {
+		RejectExplicitRemoteDDL(transaction);
 		DUCKDB_LOG_DEBUG(db_instance,
 		                 StringUtil::Format("Creating remote index %s on table %s", index_name, table_name));
 
@@ -175,11 +188,12 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateTable");
 
 	auto &create_info = info.Base();
-	string table_name = create_info.table;
+	string table_name = create_info.GetTableName().GetIdentifierName();
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
 	const bool is_remote = dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(table_name);
 	if (is_remote) {
+		RejectExplicitRemoteDDL(transaction);
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote table %s", table_name));
 
 		// Generate CREATE TABLE SQL from info.
@@ -261,7 +275,7 @@ CatalogEntry *DuckherderSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 	D_ASSERT(table_catalog_entry != nullptr);
 
 	auto create_table_info = make_uniq<CreateTableInfo>();
-	create_table_info->table = table_catalog_entry->name;
+	create_table_info->SetTableName(table_catalog_entry->name);
 	create_table_info->columns = table_catalog_entry->GetColumns().Copy();
 	create_table_info->constraints = CopyConstraints(table_catalog_entry->GetConstraints());
 	create_table_info->temporary = table_catalog_entry->temporary;
@@ -336,13 +350,15 @@ SimilarCatalogEntry DuckherderSchemaCatalogEntry::GetSimilarEntry(CatalogTransac
 
 void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropInfo &info,
                                                    DuckherderCatalog &md_catalog) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote index: %s", info.name));
+	RejectExplicitRemoteDDL(context);
+	const auto &index_name = info.GetQualifiedName().Name().GetIdentifierName();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote index: %s", index_name));
 
 	string drop_sql = "DROP INDEX ";
 	if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
 		drop_sql += "IF EXISTS ";
 	}
-	drop_sql += info.name;
+	drop_sql += index_name;
 
 	auto &instance_state = GetInstanceStateOrThrow(db_instance);
 	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
@@ -353,18 +369,20 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 		throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
 	}
 
-	md_catalog.UnregisterRemoteIndex(info.name);
+	md_catalog.UnregisterRemoteIndex(index_name);
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropInfo &info,
                                                    DuckherderCatalog &md_catalog) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote table: %s", info.name));
+	RejectExplicitRemoteDDL(context);
+	const auto &table_name = info.GetQualifiedName().Name().GetIdentifierName();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote table: %s", table_name));
 
 	string drop_sql = "DROP TABLE ";
 	if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION) {
 		drop_sql += "IF EXISTS ";
 	}
-	drop_sql += info.name;
+	drop_sql += table_name;
 	if (info.cascade) {
 		drop_sql += " CASCADE";
 	}
@@ -378,24 +396,25 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 		throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
 	}
 
-	md_catalog.UnregisterRemoteTable(info.name);
+	md_catalog.UnregisterRemoteTable(table_name);
 }
 
 void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
+	const auto &entry_name = info.GetQualifiedName().Name().GetIdentifierName();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderSchemaCatalogEntry::DropEntry - type=%s name=%s",
-	                                                 CatalogTypeToString(info.type), info.name));
+	                                                 CatalogTypeToString(info.type), entry_name));
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
 
 	// Handle remote index drops.
 	if (info.type == CatalogType::INDEX_ENTRY && dh_catalog_ptr != nullptr &&
-	    dh_catalog_ptr->IsRemoteIndex(info.name)) {
+	    dh_catalog_ptr->IsRemoteIndex(entry_name)) {
 		DropRemoteIndex(context, info, *dh_catalog_ptr);
 	}
 
 	// Handle remote table drops.
 	else if (info.type == CatalogType::TABLE_ENTRY && dh_catalog_ptr != nullptr &&
-	         dh_catalog_ptr->IsRemoteTable(info.name)) {
+	         dh_catalog_ptr->IsRemoteTable(entry_name)) {
 		DropRemoteTable(context, info, *dh_catalog_ptr);
 	}
 
@@ -405,7 +424,7 @@ void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 	// Remove from cache after successful drop.
 	EntryLookupInfoKey key {
 	    .type = info.type,
-	    .name = info.name,
+	    .name = entry_name,
 	};
 	std::lock_guard<std::mutex> lck(mu);
 	// Here we don't check erase result since we haven't implemented all catalog entry types.
@@ -419,9 +438,11 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 	auto *dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
 	if (dh_catalog_ptr != nullptr && info.type == AlterType::ALTER_TABLE) {
 		auto &table_info = info.Cast<AlterTableInfo>();
+		const auto &table_name = info.GetQualifiedName().Name().GetIdentifierName();
 
-		if (dh_catalog_ptr->IsRemoteTable(info.name)) {
-			string alter_sql = GenerateAlterTableSQL(table_info, info.name);
+		if (dh_catalog_ptr->IsRemoteTable(table_name)) {
+			RejectExplicitRemoteDDL(transaction);
+			string alter_sql = GenerateAlterTableSQL(table_info, table_name);
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
 			auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
@@ -434,11 +455,11 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			// Clear cache for remote tables since cache entry is already stale.
 			EntryLookupInfoKey key {
 			    .type = CatalogType::TABLE_ENTRY,
-			    .name = info.name,
+			    .name = table_name,
 			};
 			std::lock_guard<std::mutex> lck(mu);
 			catalog_entries.erase(key);
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", table_name));
 		}
 	}
 

@@ -13,8 +13,8 @@ public:
 	DucklingIndexCatalogEntry(Catalog &duckling_catalog_p, SchemaCatalogEntry &schema, CreateIndexInfo &info);
 	~DucklingIndexCatalogEntry() override;
 
-	string GetSchemaName() const override;
-	string GetTableName() const override;
+	Identifier GetSchemaName() const override;
+	Identifier GetTableName() const override;
 	void Rollback(CatalogEntry &prev_entry) override;
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
@@ -23,8 +23,8 @@ public:
 
 private:
 	Catalog &duckling_catalog_ref;
-	string schema_name;
-	string table_name;
+	Identifier schema_name;
+	Identifier table_name;
 };
 
 } // namespace duckdb

@@ -28,7 +28,7 @@ void DucklingCatalog::Initialize(bool load_builtin) {
 }
 
 optional_ptr<CatalogEntry> DucklingCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::CreateSchema: %s", info.schema));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DucklingCatalog::CreateSchema: %s", info.SchemaName()));
 	return duckdb_catalog->CreateSchema(std::move(transaction), info);
 }
 
@@ -46,7 +46,7 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
 		}
 
 		auto create_schema_info = make_uniq<CreateSchemaInfo>();
-		create_schema_info->schema = catalog_entry->name;
+		create_schema_info->SetSchema(catalog_entry->name);
 		create_schema_info->comment = catalog_entry->comment;
 		create_schema_info->tags = catalog_entry->tags;
 

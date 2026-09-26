@@ -1,6 +1,7 @@
 #include "query_execution_stats_query_function.hpp"
 
 #include "client/distributed_client.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector.hpp"
@@ -20,7 +21,8 @@ struct QueryExecutionStatsData : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> QueryExecutionStatsTableFuncBind(ClientContext &context, TableFunctionBindInput &input,
-                                                          vector<LogicalType> &return_types, vector<string> &names) {
+                                                          vector<LogicalType> &return_types,
+                                                          vector<Identifier> &names) {
 	D_ASSERT(return_types.empty());
 	D_ASSERT(names.empty());
 

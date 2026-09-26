@@ -3,6 +3,8 @@
 #include "distributed.pb.h"
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/shared_ptr.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
@@ -10,9 +12,13 @@
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <thread>
 
 namespace duckdb {
 
@@ -44,7 +50,7 @@ struct QueryExecutionInfo {
 class DistributedFlightServer : public arrow::flight::FlightServerBase {
 public:
 	explicit DistributedFlightServer(string host_p = "0.0.0.0", int port_p = 8815);
-	~DistributedFlightServer() override = default;
+	~DistributedFlightServer() override;
 
 	// Start the server.
 	arrow::Status Start();
@@ -95,6 +101,10 @@ public:
 
 	DatabaseInstance &GetDatabaseInstance();
 
+	void SetSessionTimeoutForTesting(std::chrono::milliseconds timeout);
+	void FailNextCommitResponseForTesting();
+	void FailCommitResponsesForTesting(uint32_t count);
+
 private:
 	// Implementation methods for Flight RPC handlers, without exception handling.
 	arrow::Status DoActionImpl(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
@@ -109,6 +119,11 @@ private:
 
 	// Process different request types using protobuf messages directly.
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status ExecuteSQLOnConnection(Connection &connection, const string &sql,
+	                                     distributed::DistributedResponse &resp, bool allow_workers);
+	arrow::Status HandleSessionOpen(const distributed::SessionOpenRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleSessionClose(const distributed::SessionCloseRequest &req,
+	                                 distributed::DistributedResponse &resp);
 
 	// Handle CREATE TABLE request.
 	// Return error status if the table already exists.
@@ -143,6 +158,9 @@ private:
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
+	arrow::Status HandleScanTableOnConnection(Connection &connection, const distributed::ScanTableRequest &req,
+	                                          std::unique_ptr<arrow::flight::FlightDataStream> &stream,
+	                                          bool allow_workers);
 	arrow::Status HandleInsertData(const std::string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
 	                               distributed::DistributedResponse &resp);
 
@@ -153,12 +171,46 @@ private:
 private:
 	// Initialize DuckDB instance, connection, and components.
 	void Initialize();
+	void DestroyState();
+	enum class SessionTransactionStatus : uint8_t { NONE, ACTIVE, COMMITTED, ROLLED_BACK };
+
+	struct FlightSession {
+		explicit FlightSession(unique_ptr<Connection> connection_p)
+		    : connection(std::move(connection_p)), last_used(std::chrono::steady_clock::now()) {
+		}
+
+		unique_ptr<Connection> connection;
+		std::mutex mutex;
+		bool closing = false;
+		std::chrono::steady_clock::time_point last_used;
+		SessionTransactionStatus transaction_status = SessionTransactionStatus::NONE;
+	};
+
+	shared_ptr<FlightSession> GetSession(const string &session_id);
+	void CloseAllSessions();
+	void SweepExpiredSessions();
+	void SessionSweepLoop();
+	void StopSessionSweeper();
+	bool ShouldFailCommitResponseForTesting();
+	static bool ValidateProtocol(uint32_t version, uint64_t required_capabilities, string &error);
+
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
 	unique_ptr<Connection> conn;
 	unique_ptr<WorkerManager> worker_manager;
 	unique_ptr<DistributedExecutor> distributed_executor;
+	std::mutex connection_mutex;
+	std::mutex sessions_mutex;
+	unordered_map<string, shared_ptr<FlightSession>> sessions;
+	std::chrono::milliseconds session_timeout = std::chrono::minutes(5);
+	mutable std::shared_mutex lifecycle_mutex;
+	std::atomic<uint32_t> fail_commit_responses {0};
+	std::atomic<bool> shutdown_started {false};
+	std::atomic<bool> stop_session_sweeper {false};
+	std::mutex session_sweeper_mutex;
+	std::condition_variable session_sweeper_cv;
+	std::thread session_sweeper;
 
 	// Query execution tracking.
 	mutable std::mutex query_history_mutex;

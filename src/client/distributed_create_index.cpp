@@ -48,6 +48,9 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
                                                                     OperatorSourceInput &input) const {
 	auto &gstate = input.global_state.Cast<RemoteCreateIndexGlobalState>();
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
+	if (!context.client.transaction.IsAutoCommit()) {
+		throw TransactionException("Duckherder remote DDL is not supported inside explicit transactions");
+	}
 
 	// Execute the CREATE INDEX on the remote server and register it locally.
 	lock_guard<mutex> lock(gstate.lock);
@@ -56,9 +59,10 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	}
 
 	// Get the schema and table to create the catalog entry.
-	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
-	auto &schema = catalog.GetSchema(context.client, schema_name);
-	auto &entry = catalog.GetEntry(context.client, CatalogType::TABLE_ENTRY, schema_name, table_name);
+	auto &catalog = Catalog::GetCatalog(context.client, Identifier(catalog_name));
+	auto &schema = catalog.GetSchema(context.client, Identifier(schema_name));
+	auto &entry =
+	    catalog.GetEntry(context.client, CatalogType::TABLE_ENTRY, Identifier(schema_name), Identifier(table_name));
 	auto &table = entry.Cast<TableCatalogEntry>();
 
 	// Generate CREATE INDEX SQL and remove catalog prefix for remote execution.
@@ -76,7 +80,7 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	auto index_entry = schema.CreateIndex(transaction, *info, table);
 	if (index_entry == nullptr) {
 		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to create catalog entry for index %s", info->index_name));
+		                StringUtil::Format("Failed to create catalog entry for index %s", info->GetIndexName()));
 	}
 
 	gstate.executed = true;

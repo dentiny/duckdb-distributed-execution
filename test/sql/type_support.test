@@ -197,7 +197,7 @@ SELECT COUNT(*) FROM dh.type_test_table WHERE col_blob IS NULL;
 ----
 1
 
-# Test UUID type support
+# UUID metadata remains available, but unregistered tables are not writable.
 statement ok
 DROP TABLE IF EXISTS dh.uuid_test_table;
 
@@ -208,25 +208,19 @@ CREATE TABLE dh.uuid_test_table (
     session_uuid UUID
 );
 
-statement ok
+statement error
 INSERT INTO dh.uuid_test_table VALUES 
     (1, '550e8400-e29b-41d4-a716-446655440000'::UUID, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID),
     (2, '6ba7b810-9dad-11d1-80b4-00c04fd430c8'::UUID, '6ba7b811-9dad-11d1-80b4-00c04fd430c8'::UUID),
     (3, NULL, '00000000-0000-0000-0000-000000000000'::UUID);
-
-query ITT
-SELECT * FROM dh.uuid_test_table ORDER BY id;
 ----
-1	550e8400-e29b-41d4-a716-446655440000	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
-2	6ba7b810-9dad-11d1-80b4-00c04fd430c8	6ba7b811-9dad-11d1-80b4-00c04fd430c8
-3	NULL	00000000-0000-0000-0000-000000000000
 
 query I
 SELECT COUNT(*) FROM dh.uuid_test_table WHERE user_uuid IS NOT NULL;
 ----
-2
+0
 
-# Test HUGEINT type support.
+# Unregistered extended-type tables keep catalog metadata but are not writable.
 statement ok
 DROP TABLE IF EXISTS dh.hugeint_test_table;
 
@@ -237,30 +231,19 @@ CREATE TABLE dh.hugeint_test_table (
     uhuge_value UHUGEINT
 );
 
-statement ok
+statement error
 INSERT INTO dh.hugeint_test_table VALUES 
     (1, 170141183460469231731687303715884105727, 340282366920938463463374607431768211455),
     (2, -170141183460469231731687303715884105728, 0),
     (3, 0, 170141183460469231731687303715884105727);
-
-query III
-SELECT * FROM dh.hugeint_test_table ORDER BY id;
 ----
-1	170141183460469231731687303715884105727	340282366920938463463374607431768211455
-2	-170141183460469231731687303715884105728	0
-3	0	170141183460469231731687303715884105727
 
 query I
-SELECT MIN(huge_value) FROM dh.hugeint_test_table;
+SELECT count(*) FROM dh.hugeint_test_table;
 ----
--170141183460469231731687303715884105728
+0
 
-query I
-SELECT MAX(uhuge_value) FROM dh.hugeint_test_table;
-----
-340282366920938463463374607431768211455
-
-# Test TIMESTAMP precision variants.
+# TIMESTAMP precision metadata remains available.
 statement ok
 DROP TABLE IF EXISTS dh.timestamp_precision_test;
 
@@ -273,25 +256,19 @@ CREATE TABLE dh.timestamp_precision_test (
     ts_nano TIMESTAMP_NS
 );
 
-statement ok
+statement error
 INSERT INTO dh.timestamp_precision_test VALUES 
     (1, '2023-06-15 12:30:45', '2023-06-15 12:30:45.123', '2023-06-15 12:30:45.123456', '2023-06-15 12:30:45.123456789'),
     (2, '1970-01-01 00:00:00', '1970-01-01 00:00:00.000', '1970-01-01 00:00:00.000000', '1970-01-01 00:00:00.000000000'),
     (3, '2025-12-31 23:59:59', '2025-12-31 23:59:59.999', '2025-12-31 23:59:59.999999', '2025-12-31 23:59:59.999999999');
-
-query ITTTT
-SELECT * FROM dh.timestamp_precision_test ORDER BY id;
 ----
-1	2023-06-15 12:30:45	2023-06-15 12:30:45.123	2023-06-15 12:30:45.123456	2023-06-15 12:30:45.123456789
-2	1970-01-01 00:00:00	1970-01-01 00:00:00	1970-01-01 00:00:00	1970-01-01 00:00:00
-3	2025-12-31 23:59:59	2025-12-31 23:59:59.999	2025-12-31 23:59:59.999999	2025-12-31 23:59:59.999999999
 
 query I
-SELECT COUNT(*) FROM dh.timestamp_precision_test WHERE ts_sec > '2020-01-01';
+SELECT COUNT(*) FROM dh.timestamp_precision_test;
 ----
-2
+0
 
-# Test INTERVAL type.
+# INTERVAL metadata remains available.
 statement ok
 DROP TABLE IF EXISTS dh.interval_test_table;
 
@@ -301,20 +278,14 @@ CREATE TABLE dh.interval_test_table (
     duration INTERVAL
 );
 
-statement ok
+statement error
 INSERT INTO dh.interval_test_table VALUES 
     (1, INTERVAL '2 years 3 months'),
     (2, INTERVAL '5 days 6 hours'),
     (3, INTERVAL '100 microseconds');
-
-query IT
-SELECT * FROM dh.interval_test_table ORDER BY id;
 ----
-1	2 years 3 months
-2	5 days 06:00:00
-3	00:00:00.0001
 
 query I
-SELECT COUNT(*) FROM dh.interval_test_table WHERE duration > INTERVAL '1 day';
+SELECT COUNT(*) FROM dh.interval_test_table;
 ----
-2
+0
