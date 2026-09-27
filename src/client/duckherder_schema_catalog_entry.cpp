@@ -196,24 +196,16 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 	if (is_remote) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote table %s", table_name));
 
-		// Generate CREATE TABLE SQL from info.
-		string create_sql = "CREATE TABLE " + table_name + " (";
-		for (idx_t i = 0; i < create_info.columns.LogicalColumnCount(); i++) {
-			auto &col = create_info.columns.GetColumn(LogicalIndex(i));
-			if (i > 0) {
-				create_sql += ", ";
-			}
-			create_sql += col.Name() + " " + col.Type().ToString();
-		}
-		create_sql += ")";
-
+		// Preserve the complete CREATE TABLE definition, including constraints, defaults, and generated columns.
+		auto create_sql = create_info.ToString();
 		auto &instance_state = GetInstanceStateOrThrow(db_instance);
 		const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(create_sql);
 		auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 		auto &client = dh_catalog.GetClient();
-		auto result = client.ExecuteStatement(create_sql);
+		auto result = client.ExecuteStatement(create_sql, dh_catalog.GetName());
 		if (result->HasError()) {
-			throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
+			throw Exception(ExceptionType::CATALOG,
+			                StringUtil::Format("Failed to create table on server: %s", result->GetError()));
 		}
 	} else {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local table %s", table_name));

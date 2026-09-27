@@ -1,0 +1,74 @@
+# name: test/sql/create_table_constraints.test
+# description: CREATE TABLE preserves constraints and defaults on the control node
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8848);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8848);
+
+statement ok
+PRAGMA duckherder_register_remote_table('constraint_target', 'constraint_target');
+
+statement ok
+PRAGMA duckherder_register_remote_table('constraint_audit', 'constraint_audit');
+
+statement ok
+CREATE TABLE dh.constraint_target (
+    id INTEGER PRIMARY KEY,
+    email VARCHAR UNIQUE,
+    score INTEGER CHECK (score >= 0),
+    status VARCHAR DEFAULT 'active',
+    required_value INTEGER NOT NULL
+);
+
+statement ok
+CREATE TABLE dh.constraint_audit (constraint_type VARCHAR);
+
+statement ok
+INSERT INTO dh.constraint_audit
+SELECT constraint_type
+FROM duckdb_constraints()
+WHERE table_name = 'constraint_target'
+  AND constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'CHECK');
+
+query T
+SELECT constraint_type FROM dh.constraint_audit ORDER BY constraint_type;
+----
+CHECK
+PRIMARY KEY
+UNIQUE
+
+statement ok
+INSERT INTO dh.constraint_target (id, email, score, required_value)
+VALUES (1, 'first@example.com', 10, 100);
+
+query ITITI
+SELECT id, email, score, status, required_value FROM dh.constraint_target;
+----
+1	first@example.com	10	active	100
+
+statement error
+INSERT INTO dh.constraint_target VALUES (1, 'second@example.com', 20, 'active', 200);
+----
+
+statement error
+INSERT INTO dh.constraint_target VALUES (2, 'first@example.com', 20, 'active', 200);
+----
+
+statement error
+INSERT INTO dh.constraint_target VALUES (3, 'third@example.com', -1, 'active', 300);
+----
+
+statement error
+INSERT INTO dh.constraint_target VALUES (4, 'fourth@example.com', 40, 'active', NULL);
+----
+
+query I
+SELECT COUNT(*) FROM dh.constraint_target;
+----
+1
