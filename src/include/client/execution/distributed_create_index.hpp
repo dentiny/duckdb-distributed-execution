@@ -1,5 +1,3 @@
-// Physical operation to create index on remote tables.
-
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -9,6 +7,13 @@
 
 namespace duckdb {
 
+// Executes CREATE INDEX on the control node while skipping DuckDB's client-side index-build pipeline:
+// table scan -> projection -> optional filter/sort -> PhysicalCreateIndex.
+//
+// DuckDB exposes physical planning hooks for INSERT, UPDATE, and DELETE, but not for CREATE INDEX. We therefore replace
+// CREATE INDEX during binding with this source operator, which has no local scan child. After forwarding the complete
+// statement, it creates only the local catalog metadata needed for name resolution, dependency tracking, and subsequent
+// DROP INDEX statements.
 class PhysicalRemoteCreateIndexOperator : public PhysicalOperator {
 public:
 	PhysicalRemoteCreateIndexOperator(PhysicalPlan &physical_plan, unique_ptr<CreateIndexInfo> info_p,
