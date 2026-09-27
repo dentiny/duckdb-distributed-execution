@@ -21,7 +21,6 @@ message DistributedRequest {
 
     // Database mutation operations.
     ExecuteSQLRequest execute_sql = 5;
-    DeleteDataRequest delete_data = 6;
 
     // Query operations.
     ScanTableRequest scan_table = 7;
@@ -63,7 +62,6 @@ message DistributedResponse {
 
     // Database mutation operations.
     ExecuteSQLResponse execute_sql = 6;
-    DeleteDataResponse delete_data = 7;
 
     // Query operations.
     ScanTableResponse scan_table = 8;

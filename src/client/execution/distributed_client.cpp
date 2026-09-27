@@ -243,10 +243,6 @@ unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension
 	                                          std::move(collection), ClientProperties());
 }
 
-unique_ptr<QueryResult> DistributedClient::InsertInto(const string &insert_sql) {
-	return ExecuteSQL(insert_sql);
-}
-
 unique_ptr<QueryResult> DistributedClient::GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out) {
 	distributed::DistributedResponse response;
 	auto status = client->GetQueryExecutionStats(response);

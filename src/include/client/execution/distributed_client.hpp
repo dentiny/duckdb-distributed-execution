@@ -66,11 +66,6 @@ public:
 	unique_ptr<QueryResult> LoadExtension(const string &extension_name, const string &repository = "",
 	                                      const string &version = "");
 
-	// INSERT INTO on server.
-	// TODO(hjiang): Currently for implementation easy, directly execute SQL statements, should be use transfer rows and
-	// table name.
-	unique_ptr<QueryResult> InsertInto(const string &insert_sql);
-
 	// Get table data.
 	// If [`expected_types`] is unassigned, type information is deduced from arrow schema.
 	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = NO_QUERY_LIMIT,

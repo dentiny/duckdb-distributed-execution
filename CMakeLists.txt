@@ -43,11 +43,10 @@ set(CLIENT_EXECUTION_SOURCES
     src/client/execution/distributed_alter_table.cpp
     src/client/execution/distributed_client.cpp
     src/client/execution/distributed_create_index.cpp
-    src/client/execution/distributed_delete.cpp
-    src/client/execution/distributed_insert.cpp
     src/client/execution/distributed_table_scan_function.cpp
     src/client/execution/logical_remote_alter_table.cpp
-    src/client/execution/logical_remote_create_index.cpp)
+    src/client/execution/logical_remote_create_index.cpp
+    src/client/execution/remote_dml.cpp)
 
 set(CLIENT_TRANSPORT_SOURCES src/client/transport/distributed_flight_client.cpp)
 

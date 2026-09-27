@@ -1,8 +1,7 @@
 #include "duckherder_catalog.hpp"
 
 #include "client/execution/distributed_client.hpp"
-#include "client/execution/distributed_delete.hpp"
-#include "client/execution/distributed_insert.hpp"
+#include "client/execution/remote_dml.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
@@ -10,17 +9,15 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
-#include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
+#include "duckdb/planner/operator/logical_update.hpp"
 #include "client/execution/logical_remote_create_index.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "duckherder_schema_catalog_entry.hpp"
@@ -100,12 +97,10 @@ PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, Physical
 	// Attempt insertion into remote table if registered.
 	bool is_remote = IsRemoteTable(op.table.name);
 	if (is_remote) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote insertion to table %s", op.table.name));
-
-		D_ASSERT(plan);
-		auto &distributed_insert = planner.Make<PhysicalDistributedInsert>(op.table, *plan, op.estimated_cardinality);
-		// Note: children are added in the PhysicalDistributedInsert, don't add here.
-		return distributed_insert;
+		auto sql = RewriteRemoteDMLStatement(context, *this);
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push INSERT to control node: %s", sql));
+		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::INSERT, op.types, op.table, std::move(sql),
+		                                       op.estimated_cardinality);
 	}
 
 	// Fallback to local insertion.
@@ -120,13 +115,10 @@ PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, Physical
 	// Attempt deletion from remote table if registered.
 	bool is_remote = IsRemoteTable(op.table.name);
 	if (is_remote) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute remote deletion from table %s", op.table.name));
-
-		auto &bound_ref = op.expressions[0]->Cast<BoundReferenceExpression>();
-		auto &distributed_delete = planner.Make<PhysicalDistributedDelete>(op.types, op.table, plan, bound_ref.index,
-		                                                                   op.estimated_cardinality, op.return_chunk);
-		// Note: children are added in the PhysicalDistributedDelete, don't add here.
-		return distributed_delete;
+		auto sql = RewriteRemoteDMLStatement(context, *this);
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push DELETE to control node: %s", sql));
+		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::DELETE_OPERATOR, op.types, op.table,
+		                                       std::move(sql), op.estimated_cardinality);
 	}
 
 	// Fallback to local deletion.
@@ -137,6 +129,12 @@ PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, Physical
 PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalUpdate &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanUpdate");
+	if (IsRemoteTable(op.table.name)) {
+		auto sql = RewriteRemoteDMLStatement(context, *this);
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPDATE to control node: %s", sql));
+		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::UPDATE, op.types, op.table, std::move(sql),
+		                                       op.estimated_cardinality);
+	}
 	return duckdb_catalog->PlanUpdate(context, planner, op, plan);
 }
 
