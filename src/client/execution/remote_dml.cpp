@@ -37,8 +37,8 @@ string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
 	vector<string> arguments;
 	arguments.reserve(execute.named_values.size());
 	for (auto &entry : execute.named_values) {
-		arguments.push_back(StringUtil::Format("%s := %s", KeywordHelper::WriteQuoted(entry.first, '"'),
-		                                       entry.second->ToString()));
+		arguments.push_back(
+		    StringUtil::Format("%s := %s", KeywordHelper::WriteQuoted(entry.first, '"'), entry.second->ToString()));
 	}
 	auto statement_sql = sql;
 	StringUtil::RTrim(statement_sql);
