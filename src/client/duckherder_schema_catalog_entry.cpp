@@ -6,6 +6,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
@@ -168,6 +169,18 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTran
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateFunction(CatalogTransaction transaction,
                                                                         CreateFunctionInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateFunction");
+
+	// Create macro and table macro.
+	if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {
+		auto &catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+		auto &macro_info = info.Cast<CreateMacroInfo>();
+		auto result = catalog.GetClient().ExecuteStatement(macro_info.ToString(), catalog.GetName());
+		if (result->HasError()) {
+			throw Exception(ExceptionType::CATALOG,
+			                StringUtil::Format("Failed to create macro on server: %s", result->GetError()));
+		}
+	}
+
 	return schema_catalog_entry->CreateFunction(std::move(transaction), info);
 }
 
@@ -258,7 +271,8 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateType(CatalogTrans
 	auto &catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 	auto result = catalog.GetClient().ExecuteStatement(info.ToString(), catalog.GetName());
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG, "Failed to create type on server: ", result->GetError());
+		throw Exception(ExceptionType::CATALOG,
+		                StringUtil::Format("Failed to create type on server: %s", result->GetError()));
 	}
 
 	return schema_catalog_entry->CreateType(std::move(transaction), info);
