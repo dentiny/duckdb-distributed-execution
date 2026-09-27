@@ -100,6 +100,18 @@ public:
 	void SetClientLeaseTimeoutForTesting(std::chrono::milliseconds timeout);
 
 private:
+	struct ClientRegistration {
+		ClientRegistration(DuckDB &db, WorkerManager &worker_manager, distributed::ClientRole role_p);
+
+		distributed::ClientRole role;
+		// Last authorized request time in steady-clock milliseconds, updated concurrently by RPC handlers.
+		atomic<int64_t> last_seen;
+		// DuckDB connections are session-scoped and must not execute concurrent requests.
+		mutex connection_mutex;
+		unique_ptr<Connection> connection;
+		unique_ptr<DistributedExecutor> distributed_executor;
+	};
+
 	// Implementation methods for Flight RPC handlers, without exception handling.
 	arrow::Status DoActionImpl(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
 	                           std::unique_ptr<arrow::flight::ResultStream> *result);
@@ -115,31 +127,37 @@ private:
 	arrow::Status HandleRegisterClient(const distributed::RegisterClientRequest &req,
 	                                   distributed::DistributedResponse &resp);
 	arrow::Status HandleUnregisterClient(const string &client_id, distributed::DistributedResponse &resp);
-	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, ClientRegistration &registration,
+	                               distributed::DistributedResponse &resp);
 
 	// Handle CREATE TABLE request.
 	// Return error status if the table already exists.
-	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, ClientRegistration &registration,
+	                                distributed::DistributedResponse &resp);
 
 	// Handle DROP TABLE request.
 	// Return OK status if the table doesn't exist.
-	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, ClientRegistration &registration,
+	                              distributed::DistributedResponse &resp);
 
 	// Handle CREATE INDEX request.
 	// Return error status if the index already exists.
-	arrow::Status HandleCreateIndex(const distributed::CreateIndexRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleCreateIndex(const distributed::CreateIndexRequest &req, ClientRegistration &registration,
+	                                distributed::DistributedResponse &resp);
 
 	// Handle DROP INDEX request.
 	// Return OK status if the index doesn't exist.
-	arrow::Status HandleDropIndex(const distributed::DropIndexRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleDropIndex(const distributed::DropIndexRequest &req, ClientRegistration &registration,
+	                              distributed::DistributedResponse &resp);
 
 	// Handle ALTER TABLE request.
 	// Return error status if the table doesn't exist or if the alteration fails.
-	arrow::Status HandleAlterTable(const distributed::AlterTableRequest &req, distributed::DistributedResponse &resp);
+	arrow::Status HandleAlterTable(const distributed::AlterTableRequest &req, ClientRegistration &registration,
+	                               distributed::DistributedResponse &resp);
 
 	// Handle LOAD EXTENSION request.
 	// Return error status if the extension fails to load.
-	arrow::Status HandleLoadExtension(const distributed::LoadExtensionRequest &req,
+	arrow::Status HandleLoadExtension(const distributed::LoadExtensionRequest &req, ClientRegistration &registration,
 	                                  distributed::DistributedResponse &resp);
 
 	// Handle GET QUERY EXECUTION STATS request.
@@ -147,26 +165,19 @@ private:
 	arrow::Status HandleGetQueryExecutionStats(const distributed::GetQueryExecutionStatsRequest &req,
 	                                           distributed::DistributedResponse &resp);
 
-	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, distributed::DistributedResponse &resp);
-	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req,
+	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, ClientRegistration &registration,
+	                                distributed::DistributedResponse &resp);
+	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req, ClientRegistration &registration,
 	                              std::unique_ptr<arrow::flight::FlightDataStream> &stream);
 	arrow::Status HandleInsertData(const std::string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
-	                               distributed::DistributedResponse &resp);
+	                               ClientRegistration &registration, distributed::DistributedResponse &resp);
 
 	// Convert DuckDB result to Arrow RecordBatch.
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader,
 	                                 idx_t *row_count = nullptr);
 
-private:
 	// Initialize DuckDB instance, connection, and components.
 	void Initialize();
-	struct ClientRegistration {
-		explicit ClientRegistration(distributed::ClientRole role_p);
-
-		distributed::ClientRole role;
-		// Last authorized request time in steady-clock milliseconds, updated concurrently by RPC handlers.
-		atomic<int64_t> last_seen;
-	};
 
 	// Look up a registration while the caller holds clients_mutex.
 	bool LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration);
@@ -174,14 +185,15 @@ private:
 	void TouchClient(const shared_ptr<ClientRegistration> &registration);
 	// Remove expired registrations while the caller holds clients_mutex exclusively.
 	void PruneExpiredClients();
-	// Validate registration and role while the caller holds clients_mutex, renewing the lease on success.
-	bool AuthorizeClient(const string &client_id, bool require_write, distributed::DistributedResponse &resp);
+	// Validate registration against the minimum role while holding clients_mutex, renewing the lease on success.
+	bool AuthorizeClient(const string &client_id, distributed::ClientRole required_role,
+	                     shared_ptr<ClientRegistration> &registration, distributed::DistributedResponse &resp);
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
-	unique_ptr<Connection> conn;
+	// Used only to initialize the shared DuckDB instance; client RPCs use their registration's connection.
+	unique_ptr<Connection> bootstrap_conn;
 	unique_ptr<WorkerManager> worker_manager;
-	unique_ptr<DistributedExecutor> distributed_executor;
 
 	// Client admission: at most one writable attachment, with any number of readers.
 	mutable std::shared_mutex clients_mutex;

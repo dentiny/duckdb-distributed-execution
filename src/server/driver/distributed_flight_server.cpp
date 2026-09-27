@@ -19,8 +19,15 @@
 
 namespace duckdb {
 
-DistributedFlightServer::ClientRegistration::ClientRegistration(distributed::ClientRole role_p)
-    : role(role_p), last_seen(GetSteadyNowMilliSecSinceEpoch()) {
+DistributedFlightServer::ClientRegistration::ClientRegistration(DuckDB &db, WorkerManager &worker_manager,
+                                                                distributed::ClientRole role_p)
+    : role(role_p), last_seen(GetSteadyNowMilliSecSinceEpoch()), connection(make_uniq<Connection>(db)) {
+	auto use_result = connection->Query("USE duckling;");
+	if (use_result->HasError()) {
+		throw InternalException(
+		    StringUtil::Format("Failed to USE duckling for client connection: %s", use_result->GetError()));
+	}
+	distributed_executor = make_uniq<DistributedExecutor>(worker_manager, *connection);
 }
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
@@ -68,15 +75,18 @@ void DistributedFlightServer::Shutdown() {
 }
 
 void DistributedFlightServer::Reset() {
-	{
-		const unique_lock<std::shared_mutex> lock(clients_mutex);
-		clients.clear();
-		writable_client_id.clear();
-	}
+	const unique_lock<std::shared_mutex> lock(clients_mutex);
+	clients.clear();
+	writable_client_id.clear();
 	Initialize();
 }
 
 void DistributedFlightServer::Initialize() {
+	// Release objects that reference the previous database in dependency order.
+	worker_manager.reset();
+	bootstrap_conn.reset();
+	db.reset();
+
 	// Clear query history.
 	{
 		const lock_guard<mutex> lock(query_history_mutex);
@@ -88,23 +98,22 @@ void DistributedFlightServer::Initialize() {
 	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
 
 	db = make_uniq<DuckDB>(nullptr, &config);
-	conn = make_uniq<Connection>(*db);
+	bootstrap_conn = make_uniq<Connection>(*db);
 
 	// Attach duckling storage extension.
-	auto result = conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
+	auto result = bootstrap_conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
 	if (result->HasError()) {
 		throw InternalException(StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
 	}
 
 	// Set duckling as the default database.
-	auto use_result = conn->Query("USE duckling;");
+	auto use_result = bootstrap_conn->Query("USE duckling;");
 	if (use_result->HasError()) {
 		throw InternalException(StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
 	}
 
-	// Initialize worker manager and distributed executor.
+	// Initialize the worker manager. Each client registration owns its connection-bound executor.
 	worker_manager = make_uniq<WorkerManager>(*db);
-	distributed_executor = make_uniq<DistributedExecutor>(*worker_manager, *conn);
 }
 
 string DistributedFlightServer::GetLocation() const {
@@ -171,15 +180,16 @@ void DistributedFlightServer::PruneExpiredClients() {
 	}
 }
 
-bool DistributedFlightServer::AuthorizeClient(const string &client_id, bool require_write,
+bool DistributedFlightServer::AuthorizeClient(const string &client_id, distributed::ClientRole required_role,
+                                              shared_ptr<ClientRegistration> &registration,
                                               distributed::DistributedResponse &resp) {
-	shared_ptr<ClientRegistration> registration;
 	if (!LookupClient(client_id, registration)) {
 		resp.set_success(false);
 		resp.set_error_message("Duckherder client is not registered with the control node");
 		return false;
 	}
-	if (require_write && registration->role != distributed::CLIENT_ROLE_READ_WRITE) {
+	if (required_role == distributed::CLIENT_ROLE_READ_WRITE &&
+	    registration->role != distributed::CLIENT_ROLE_READ_WRITE) {
 		resp.set_success(false);
 		resp.set_error_message("Duckherder client is read-only");
 		return false;
@@ -204,7 +214,7 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 	}
 
 	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
-	clients.emplace(client_id, make_shared_ptr<ClientRegistration>(req.role()));
+	clients.emplace(client_id, make_shared_ptr<ClientRegistration>(*db, *worker_manager, req.role()));
 	if (req.role() == distributed::CLIENT_ROLE_READ_WRITE) {
 		writable_client_id = client_id;
 	}
@@ -244,6 +254,7 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 	    request.request_case() != distributed::DistributedRequest::kUnregisterClient) {
 		client_lock = std::shared_lock<std::shared_mutex>(clients_mutex);
 	}
+	shared_ptr<ClientRegistration> registration;
 
 	switch (request.request_case()) {
 	case distributed::DistributedRequest::kRegisterClient:
@@ -254,58 +265,66 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		break;
 	// ========== Table perations ==========
 	case distributed::DistributedRequest::kCreateTable:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), *registration, response));
 		}
 		break;
 	case distributed::DistributedRequest::kDropTable:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), *registration, response));
 		}
 		break;
 	case distributed::DistributedRequest::kAlterTable:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), *registration, response));
 		}
 		break;
 
 	// ========== Index perations ==========
 	case distributed::DistributedRequest::kCreateIndex:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), *registration, response));
 		}
 		break;
 	case distributed::DistributedRequest::kDropIndex:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), *registration, response));
 		}
 		break;
 
 	// ========== Query & Utility Operations ==========
 	case distributed::DistributedRequest::kExecuteSql:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), *registration, response));
 		}
 		break;
 	case distributed::DistributedRequest::kTableExists:
-		if (AuthorizeClient(request.client_id(), false, response)) {
-			ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), *registration, response));
 		}
 		break;
 	case distributed::DistributedRequest::kLoadExtension:
-		if (AuthorizeClient(request.client_id(), true, response)) {
-			ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), *registration, response));
 		}
 		break;
 
 	// ========== Stats & Monitoring Operations ==========
 	case distributed::DistributedRequest::kGetQueryExecutionStats:
-		if (AuthorizeClient(request.client_id(), false, response)) {
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
 			ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
 		}
 		break;
 	case distributed::DistributedRequest::kClientHeartbeat:
-		if (AuthorizeClient(request.client_id(), false, response)) {
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
 			response.mutable_client_heartbeat();
 		}
 		break;
@@ -315,13 +334,6 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		return arrow::Status::Invalid("Request type not set");
 	default:
 		return arrow::Status::Invalid("Unknown request type");
-	}
-
-	if (client_lock.owns_lock()) {
-		shared_ptr<ClientRegistration> registration;
-		if (LookupClient(request.client_id(), registration)) {
-			TouchClient(registration);
-		}
 	}
 
 	std::string response_data = response.SerializeAsString();
@@ -363,8 +375,9 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	}
 	TouchClient(registration);
 
+	const lock_guard<mutex> connection_lock(registration->connection_mutex);
 	std::unique_ptr<arrow::flight::FlightDataStream> data_stream;
-	ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), data_stream));
+	ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), *registration, data_stream));
 
 	TouchClient(registration);
 	*stream = std::move(data_stream);
@@ -400,6 +413,7 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	}
 	TouchClient(registration);
 
+	const lock_guard<mutex> connection_lock(registration->connection_mutex);
 	std::string table_name;
 	table_name = descriptor.path[1];
 
@@ -417,7 +431,7 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 		}
 		batch = next.data;
 
-		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, resp));
+		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, *registration, resp));
 	}
 
 	// Write response metadata.
@@ -441,6 +455,7 @@ arrow::Status DistributedFlightServer::DoPut(const arrow::flight::ServerCallCont
 }
 
 arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::ExecuteSQLRequest &req,
+                                                        ClientRegistration &registration,
                                                         distributed::DistributedResponse &resp) {
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
@@ -451,7 +466,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
-		auto exec_result = distributed_executor->ExecuteDistributed(req.sql());
+		auto exec_result = registration.distributed_executor->ExecuteDistributed(req.sql());
 
 		if (exec_result.result != nullptr) {
 			// Query was executed in distributed mode
@@ -476,7 +491,7 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
-		result = conn->Query(req.sql());
+		result = registration.connection->Query(req.sql());
 		// Mark as local execution for non-distributed queries
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
 		query_info.num_workers_used = 0;
@@ -502,8 +517,9 @@ arrow::Status DistributedFlightServer::HandleExecuteSQL(const distributed::Execu
 }
 
 arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::CreateTableRequest &req,
+                                                         ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto result = registration.connection->Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -518,9 +534,10 @@ arrow::Status DistributedFlightServer::HandleCreateTable(const distributed::Crea
 }
 
 arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTableRequest &req,
+                                                       ClientRegistration &registration,
                                                        distributed::DistributedResponse &resp) {
 	auto sql = "DROP TABLE IF EXISTS " + req.table_name();
-	auto result = conn->Query(sql);
+	auto result = registration.connection->Query(sql);
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -534,8 +551,9 @@ arrow::Status DistributedFlightServer::HandleDropTable(const distributed::DropTa
 }
 
 arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::CreateIndexRequest &req,
+                                                         ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto result = registration.connection->Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -550,9 +568,10 @@ arrow::Status DistributedFlightServer::HandleCreateIndex(const distributed::Crea
 }
 
 arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIndexRequest &req,
+                                                       ClientRegistration &registration,
                                                        distributed::DistributedResponse &resp) {
 	auto sql = "DROP INDEX IF EXISTS " + req.index_name();
-	auto result = conn->Query(sql);
+	auto result = registration.connection->Query(sql);
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -566,8 +585,9 @@ arrow::Status DistributedFlightServer::HandleDropIndex(const distributed::DropIn
 }
 
 arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::AlterTableRequest &req,
+                                                        ClientRegistration &registration,
                                                         distributed::DistributedResponse &resp) {
-	auto result = conn->Query(req.sql());
+	auto result = registration.connection->Query(req.sql());
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -581,6 +601,7 @@ arrow::Status DistributedFlightServer::HandleAlterTable(const distributed::Alter
 }
 
 arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
+                                                           ClientRegistration &registration,
                                                            distributed::DistributedResponse &resp) {
 	auto &db_instance = *db->instance;
 
@@ -595,7 +616,7 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 		}
 	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
-	auto install_result = conn->Query(sql);
+	auto install_result = registration.connection->Query(sql);
 	if (install_result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(
@@ -606,7 +627,7 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 	// Then LOAD the extension.
 	sql = "LOAD " + req.extension_name();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Load extension with %s", sql));
-	auto load_result = conn->Query(sql);
+	auto load_result = registration.connection->Query(sql);
 	if (load_result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(
@@ -620,11 +641,12 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 }
 
 arrow::Status DistributedFlightServer::HandleTableExists(const distributed::TableExistsRequest &req,
+                                                         ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
 	string sql =
 	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
 
-	auto result = conn->Query(sql);
+	auto result = registration.connection->Query(sql);
 
 	if (result->HasError()) {
 		resp.set_success(false);
@@ -644,6 +666,7 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 }
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
+                                                       ClientRegistration &registration,
                                                        std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
@@ -678,7 +701,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
 	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
-		auto exec_result = distributed_executor->ExecuteDistributed(sql);
+		auto exec_result = registration.distributed_executor->ExecuteDistributed(sql);
 
 		if (exec_result.result != nullptr) {
 			// Query was executed in distributed mode
@@ -704,7 +727,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	// Fall back to local execution if not distributed.
 	if (result == nullptr) {
-		result = conn->Query(sql);
+		result = registration.connection->Query(sql);
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
 		query_info.num_workers_used = 0;
 		query_info.num_tasks_generated = 0;
@@ -722,7 +745,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	}
 
 	if (!result->client_properties.client_context) {
-		result->client_properties.client_context = conn->context.get();
+		result->client_properties.client_context = registration.connection->context.get();
 	}
 
 	std::shared_ptr<arrow::RecordBatchReader> reader;
@@ -734,6 +757,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table_name,
                                                         std::shared_ptr<arrow::RecordBatch> batch,
+                                                        ClientRegistration &registration,
                                                         distributed::DistributedResponse &resp) {
 	// TODO(hjiang): Current implementation is pretty insufficient, which directly executes insertion statement.
 	// Better to call native duckdb APIs for ingestion.
@@ -763,7 +787,7 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 		insert_sql += ")";
 	}
 
-	auto result = conn->Query(insert_sql);
+	auto result = registration.connection->Query(insert_sql);
 	if (result->HasError()) {
 		resp.set_success(false);
 		resp.set_error_message(result->GetError());

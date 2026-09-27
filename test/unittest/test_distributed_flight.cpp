@@ -53,6 +53,23 @@ FlightTestServer &GetTestServer() {
 	return test_server;
 }
 
+uint64_t CountRows(DistributedFlightClient &client, const string &table_name) {
+	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
+	REQUIRE(client.ScanTable(table_name, 100, 0, stream).ok());
+
+	uint64_t row_count = 0;
+	while (true) {
+		auto next = stream->Next();
+		REQUIRE(next.ok());
+		auto batch = next.ValueOrDie().data;
+		if (!batch) {
+			break;
+		}
+		row_count += batch->num_rows();
+	}
+	return row_count;
+}
+
 } // namespace
 
 TEST_CASE("Test Flight server startup and connection", "[distributed_flight]") {
@@ -95,6 +112,36 @@ TEST_CASE("Server reset clears writer admission", "[distributed_flight]") {
 
 	bool exists = false;
 	REQUIRE_FALSE(old_writer.TableExists("reset_invalidates_old_client", exists).ok());
+}
+
+TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight]") {
+	GetTestServer();
+	DistributedFlightClient writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	DistributedFlightClient reader(SERVER_URL, distributed::CLIENT_ROLE_READ_ONLY);
+	REQUIRE(writer.Connect().ok());
+	REQUIRE(reader.Connect().ok());
+
+	distributed::DistributedResponse response;
+	REQUIRE(writer.CreateTable("CREATE TABLE client_connection_isolation (id INTEGER)", response).ok());
+	REQUIRE(response.success());
+	REQUIRE(writer.ExecuteSQL("INSERT INTO client_connection_isolation VALUES (1)", response).ok());
+	REQUIRE(response.success());
+
+	REQUIRE(writer.ExecuteSQL("BEGIN TRANSACTION", response).ok());
+	REQUIRE(response.success());
+	REQUIRE(writer.ExecuteSQL("INSERT INTO client_connection_isolation VALUES (2)", response).ok());
+	REQUIRE(response.success());
+	REQUIRE(CountRows(reader, "client_connection_isolation") == 1);
+
+	// Closing the writer destroys its server-side connection and rolls back the open transaction.
+	writer.Close();
+	DistributedFlightClient replacement_writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	REQUIRE(replacement_writer.Connect().ok());
+	REQUIRE(CountRows(replacement_writer, "client_connection_isolation") == 1);
+
+	REQUIRE(replacement_writer.ExecuteSQL("INSERT INTO client_connection_isolation VALUES (3)", response).ok());
+	REQUIRE(response.success());
+	REQUIRE(CountRows(reader, "client_connection_isolation") == 2);
 }
 
 TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
