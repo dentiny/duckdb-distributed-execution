@@ -12,6 +12,10 @@ import "worker.proto";
 message DistributedRequest {
   // Opaque identifier returned by RegisterClientResponse.
   string client_id = 1;
+  // One identifier is assigned when BEGIN starts and is reused through COMMIT or ROLLBACK.
+  uint64 transaction_id = 20;
+  // Monotonically increasing operation identifier within transaction_id. Retries reuse the same value.
+  uint64 request_sequence = 21;
 
   oneof request {
     // Client registration and lease management.

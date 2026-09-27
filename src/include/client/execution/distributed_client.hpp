@@ -31,7 +31,7 @@ struct QueryExecutionStatsEntry {
 
 class DistributedClient {
 public:
-	DistributedClient(string server_url_p, distributed::ClientRole role_p);
+	DistributedClient(string server_url_p, distributed::ClientRole role_p, DatabaseInstance &db_instance);
 	~DistributedClient() = default;
 
 	void Close();

@@ -13,9 +13,9 @@
 
 namespace duckdb {
 
-DistributedClient::DistributedClient(string server_url_p, distributed::ClientRole role_p)
+DistributedClient::DistributedClient(string server_url_p, distributed::ClientRole role_p, DatabaseInstance &db_instance)
     : server_url(std::move(server_url_p)) {
-	client = make_uniq<DistributedFlightClient>(server_url, role_p);
+	client = make_uniq<DistributedFlightClient>(server_url, role_p, db_instance);
 	auto status = client->Connect();
 	if (!status.ok()) {
 		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
@@ -28,8 +28,8 @@ void DistributedClient::Close() {
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,
                                                      const vector<LogicalType> *expected_types) {
-	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
-	auto status = client->ScanTable(table_name, limit, offset, stream);
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	auto status = client->ScanTable(table_name, limit, offset, batches);
 	if (!status.ok()) {
 		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
 	}
@@ -41,18 +41,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	unique_ptr<ColumnDataCollection> collection;
 	bool first_batch = true;
 
-	while (true) {
-		auto result = stream->Next();
-		if (!result.ok()) {
-			return make_uniq<MaterializedQueryResult>(ErrorData(result.status().ToString()));
-		}
-
-		auto batch_with_metadata = result.ValueOrDie();
-		auto arrow_batch = std::move(batch_with_metadata.data);
-		if (arrow_batch == nullptr) {
-			break; // End of stream
-		}
-
+	for (auto &arrow_batch : batches) {
 		// On first batch, extract schema and create collection.
 		if (first_batch) {
 			auto schema = arrow_batch->schema();
@@ -139,10 +128,20 @@ unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::Transa
 	distributed::DistributedResponse response;
 	auto status = client->ManageTransaction(action, response);
 	if (!status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+		auto error = status.ToString();
+		if (action == distributed::TRANSACTION_ACTION_COMMIT) {
+			error = StringUtil::Format("Remote Duckherder COMMIT outcome is unknown after retry: %s", error);
+		}
+		return make_uniq<MaterializedQueryResult>(ErrorData(error));
 	}
 	if (!response.success()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+		auto error = response.error_message();
+		if (action == distributed::TRANSACTION_ACTION_COMMIT &&
+		    (!response.has_transaction() ||
+		     response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN)) {
+			error = StringUtil::Format("Remote Duckherder COMMIT outcome is unknown: %s", error);
+		}
+		return make_uniq<MaterializedQueryResult>(ErrorData(error));
 	}
 
 	vector<string> names;
@@ -154,13 +153,53 @@ unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::Transa
 
 unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension_name, const string &repository,
                                                          const string &version) {
+	distributed::DistributedResponse transaction_response;
+	auto transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, transaction_response);
+	if (!transaction_status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(transaction_status.ToString()));
+	}
+	if (!transaction_response.success()) {
+		if (transaction_response.has_transaction() &&
+		    transaction_response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
+			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
+			    "Remote extension transaction BEGIN outcome is unknown: %s", transaction_response.error_message())));
+		}
+		return make_uniq<MaterializedQueryResult>(ErrorData(transaction_response.error_message()));
+	}
+	auto rollback_after_error = [&](const string &operation_error) -> unique_ptr<QueryResult> {
+		distributed::DistributedResponse rollback_response;
+		auto rollback_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, rollback_response);
+		if (!rollback_status.ok()) {
+			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
+			    "%s; remote rollback outcome is unknown: %s", operation_error, rollback_status.ToString())));
+		}
+		if (!rollback_response.success()) {
+			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
+			    "%s; remote rollback failed: %s", operation_error, rollback_response.error_message())));
+		}
+		return make_uniq<MaterializedQueryResult>(ErrorData(operation_error));
+	};
+
 	distributed::DistributedResponse response;
 	auto status = client->LoadExtension(extension_name, repository, version, response);
 	if (!status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+		return rollback_after_error(status.ToString());
 	}
 	if (!response.success()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+		return rollback_after_error(response.error_message());
+	}
+	transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, transaction_response);
+	if (!transaction_status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
+		    "Remote extension transaction COMMIT outcome is unknown: %s", transaction_status.ToString())));
+	}
+	if (!transaction_response.success()) {
+		if (transaction_response.has_transaction() &&
+		    transaction_response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
+			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
+			    "Remote extension transaction COMMIT outcome is unknown: %s", transaction_response.error_message())));
+		}
+		return make_uniq<MaterializedQueryResult>(ErrorData(transaction_response.error_message()));
 	}
 
 	vector<string> names;

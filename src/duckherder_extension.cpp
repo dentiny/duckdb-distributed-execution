@@ -5,6 +5,7 @@
 #include "duckherder_functions.hpp"
 #include "duckherder_extension_instance_state.hpp"
 #include "duckherder_storage.hpp"
+#include "utils/retry_utils.hpp"
 
 namespace duckdb {
 
@@ -14,6 +15,18 @@ void LoadInternal(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
 	StorageExtension::Register(config, "duckherder", make_shared_ptr<DuckherderStorageExtension>());
+	config.AddExtensionOption(RETRY_MAX_ATTEMPTS_SETTING, "Maximum number of attempts for retryable Duckherder RPCs",
+	                          LogicalType::UBIGINT, Value::UBIGINT(DEFAULT_RETRY_MAX_ATTEMPTS), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption(RETRY_INITIAL_BACKOFF_MS_SETTING, "Initial Duckherder RPC retry backoff in milliseconds",
+	                          LogicalType::BIGINT, Value::BIGINT(DEFAULT_RETRY_INITIAL_BACKOFF_MS), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption(RETRY_MAX_BACKOFF_MS_SETTING, "Maximum Duckherder RPC retry backoff in milliseconds",
+	                          LogicalType::BIGINT, Value::BIGINT(DEFAULT_RETRY_MAX_BACKOFF_MS), nullptr,
+	                          SetScope::GLOBAL);
+	config.AddExtensionOption(RETRY_JITTER_RATIO_SETTING, "Jitter ratio applied to Duckherder RPC retry backoff",
+	                          LogicalType::DOUBLE, Value::DOUBLE(DEFAULT_RETRY_JITTER_RATIO), nullptr,
+	                          SetScope::GLOBAL);
 
 	// Set extension state.
 	SetInstanceState(db, make_shared_ptr<DuckherderInstanceState>());

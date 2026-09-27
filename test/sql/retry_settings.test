@@ -1,0 +1,45 @@
+# name: test/sql/retry_settings.test
+# description: Duckherder retry defaults are exposed as configurable extension settings
+# group: [sql]
+
+require duckherder
+
+query IIII
+SELECT current_setting('duckherder_retry_max_attempts')::UBIGINT,
+       current_setting('duckherder_retry_initial_backoff_ms')::BIGINT,
+       current_setting('duckherder_retry_max_backoff_ms')::BIGINT,
+       (current_setting('duckherder_retry_jitter_ratio')::DOUBLE * 100)::BIGINT;
+----
+3	25	250	20
+
+statement ok
+SET duckherder_retry_max_attempts = 5;
+
+statement ok
+SET duckherder_retry_initial_backoff_ms = 10;
+
+statement ok
+SET duckherder_retry_max_backoff_ms = 100;
+
+statement ok
+SET duckherder_retry_jitter_ratio = 0.1;
+
+query IIII
+SELECT current_setting('duckherder_retry_max_attempts')::UBIGINT,
+       current_setting('duckherder_retry_initial_backoff_ms')::BIGINT,
+       current_setting('duckherder_retry_max_backoff_ms')::BIGINT,
+       (current_setting('duckherder_retry_jitter_ratio')::DOUBLE * 100)::BIGINT;
+----
+5	10	100	10
+
+statement ok
+RESET duckherder_retry_max_attempts;
+
+statement ok
+RESET duckherder_retry_initial_backoff_ms;
+
+statement ok
+RESET duckherder_retry_max_backoff_ms;
+
+statement ok
+RESET duckherder_retry_jitter_ratio;

@@ -4,6 +4,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
@@ -64,17 +65,6 @@ string StripClientCatalog(const string &sql, const string &client_catalog) {
 }
 
 } // namespace
-
-DistributedFlightServer::ClientRegistration::ClientRegistration(DuckDB &db, WorkerManager &worker_manager,
-                                                                distributed::ClientRole role_p)
-    : role(role_p), last_seen(GetSteadyNowMilliSecSinceEpoch()), connection(make_uniq<Connection>(db)) {
-	auto use_result = connection->Query("USE duckling;");
-	if (use_result->HasError()) {
-		throw InternalException(
-		    StringUtil::Format("Failed to USE duckling for client connection: %s", use_result->GetError()));
-	}
-	distributed_executor = make_uniq<DistributedExecutor>(worker_manager, *connection);
-}
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
 	Initialize();
@@ -192,6 +182,95 @@ void DistributedFlightServer::SetClientLeaseTimeoutForTesting(std::chrono::milli
 	client_lease_timeout = timeout;
 }
 
+void DistributedFlightServer::FailNextCommitResponseForTesting() {
+	FailCommitResponsesForTesting(1);
+}
+
+void DistributedFlightServer::FailCommitResponsesForTesting(uint32_t count) {
+	fail_commit_responses = count;
+}
+
+bool DistributedFlightServer::ShouldFailCommitResponseForTesting() {
+	return ShouldFailResponseForTesting(fail_commit_responses);
+}
+
+void DistributedFlightServer::FailNextExecuteStatementResponseForTesting() {
+	FailExecuteStatementResponsesForTesting(1);
+}
+
+void DistributedFlightServer::FailExecuteStatementResponsesForTesting(uint32_t count) {
+	fail_execute_statement_responses = count;
+}
+
+void DistributedFlightServer::FailNextScanResponseForTesting() {
+	fail_scan_responses = 1;
+}
+
+void DistributedFlightServer::ReturnUnknownTransactionResponsesForTesting(uint32_t count) {
+	unknown_transaction_responses = count;
+}
+
+bool DistributedFlightServer::ShouldFailResponseForTesting(atomic<uint32_t> &response_count) {
+	auto remaining = response_count.load();
+	while (remaining > 0 && !response_count.compare_exchange_weak(remaining, remaining - 1)) {
+	}
+	return remaining > 0;
+}
+
+arrow::Status DistributedFlightServer::CheckRequestReplay(const distributed::DistributedRequest &request,
+                                                          const ClientRegistration &registration,
+                                                          ClientRequestTransport transport, const string &signature,
+                                                          bool &replay) {
+	replay = false;
+	if (request.transaction_id() == 0 || request.request_sequence() == 0) {
+		return arrow::Status::Invalid("Transaction identifier and request sequence must be specified");
+	}
+	if (registration.active_transaction_id != request.transaction_id()) {
+		return arrow::Status::Invalid("Request does not belong to the active client transaction");
+	}
+	if (request.request_sequence() > registration.last_request_sequence) {
+		if (request.request_sequence() != registration.last_request_sequence + 1) {
+			return arrow::Status::Invalid("Request sequence contains a gap");
+		}
+		return arrow::Status::OK();
+	}
+	if (request.request_sequence() < registration.last_request_sequence) {
+		return arrow::Status::Invalid("Request sequence is older than the replay window");
+	}
+	if (registration.last_request_transport != transport || registration.last_request_signature != signature) {
+		return arrow::Status::Invalid("Request sequence was reused for a different operation");
+	}
+	if (transport == ClientRequestTransport::DO_GET) {
+		if (!registration.last_query_schema) {
+			return arrow::Status::Invalid("Query result is unavailable for replay");
+		}
+	} else if (registration.last_action_response.empty()) {
+		return arrow::Status::Invalid("Operation result is unavailable for replay");
+	}
+	replay = true;
+	return arrow::Status::OK();
+}
+
+void DistributedFlightServer::ClearRequestReplay(ClientRegistration &registration) {
+	registration.last_request_sequence = 0;
+	registration.last_request_transport = ClientRequestTransport::NONE;
+	registration.last_request_signature.clear();
+	registration.last_action_response.clear();
+	registration.last_query_schema.reset();
+	registration.last_query_batches.clear();
+}
+
+void DistributedFlightServer::CacheActionResponse(const distributed::DistributedRequest &request,
+                                                  ClientRegistration &registration, ClientRequestTransport transport,
+                                                  const string &signature,
+                                                  const distributed::DistributedResponse &response) {
+	ClearRequestReplay(registration);
+	registration.last_request_sequence = request.request_sequence();
+	registration.last_request_transport = transport;
+	registration.last_request_signature = signature;
+	registration.last_action_response = response.SerializeAsString();
+}
+
 bool DistributedFlightServer::LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration) {
 	auto entry = clients.find(client_id);
 	if (entry == clients.end()) {
@@ -278,36 +357,144 @@ arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &clie
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::HandleTransaction(const distributed::TransactionRequest &req,
+arrow::Status DistributedFlightServer::HandleTransaction(const distributed::DistributedRequest &req,
                                                          ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
-	auto validation = ValidateRequest(req);
+	auto validation = ValidateRequest(req.transaction());
 	if (!validation.ok()) {
 		resp.set_success(false);
 		resp.set_error_message(validation.message());
 		return arrow::Status::OK();
 	}
+	if (req.transaction_id() == 0 || req.request_sequence() == 0) {
+		resp.set_success(false);
+		resp.set_error_message("Transaction identifier and request sequence must be specified");
+		return arrow::Status::OK();
+	}
+
+	auto *transaction_response = resp.mutable_transaction();
+	auto set_response_status = [&](ClientTransactionStatus status) {
+		switch (status) {
+		case ClientTransactionStatus::ACTIVE:
+			transaction_response->set_status(distributed::TRANSACTION_STATUS_ACTIVE);
+			break;
+		case ClientTransactionStatus::COMMITTED:
+			transaction_response->set_status(distributed::TRANSACTION_STATUS_COMMITTED);
+			break;
+		case ClientTransactionStatus::ROLLED_BACK:
+			transaction_response->set_status(distributed::TRANSACTION_STATUS_ROLLED_BACK);
+			break;
+		case ClientTransactionStatus::NONE:
+			transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+			break;
+		}
+	};
+	auto set_unknown = [&](const string &message) {
+		resp.set_success(false);
+		resp.set_error_message(message);
+		transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+	};
+	if (ShouldFailResponseForTesting(unknown_transaction_responses)) {
+		set_unknown("Injected unknown transaction outcome");
+		return arrow::Status::OK();
+	}
+
 	try {
-		switch (req.action()) {
+		switch (req.transaction().action()) {
 		case distributed::TRANSACTION_ACTION_BEGIN:
+			if (registration.active_transaction_id != 0) {
+				if (registration.active_transaction_id != req.transaction_id()) {
+					resp.set_success(false);
+					resp.set_error_message("Another transaction is already active on this client connection");
+					set_response_status(ClientTransactionStatus::ACTIVE);
+					return arrow::Status::OK();
+				}
+				set_response_status(ClientTransactionStatus::ACTIVE);
+				break;
+			}
+			if (req.transaction_id() <= registration.finished_transaction_id) {
+				resp.set_success(false);
+				resp.set_error_message("Transaction identifier has already been finalized");
+				if (req.transaction_id() == registration.finished_transaction_id) {
+					set_response_status(registration.finished_transaction_status);
+				} else {
+					transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+				}
+				return arrow::Status::OK();
+			}
+			if (req.transaction_id() != registration.finished_transaction_id + 1) {
+				set_unknown("Transaction identifier is not the next expected value");
+				return arrow::Status::OK();
+			}
 			registration.connection->BeginTransaction();
+			registration.active_transaction_id = req.transaction_id();
+			ClearRequestReplay(registration);
+			registration.last_request_sequence = req.request_sequence();
+			set_response_status(ClientTransactionStatus::ACTIVE);
 			break;
 		case distributed::TRANSACTION_ACTION_COMMIT:
-			registration.connection->Commit();
-			break;
+			if (registration.active_transaction_id == req.transaction_id()) {
+				if (req.request_sequence() <= registration.last_request_sequence) {
+					set_unknown("COMMIT request sequence is not newer than the previous operation");
+					return arrow::Status::OK();
+				}
+				registration.connection->Commit();
+				registration.active_transaction_id = 0;
+				registration.finished_transaction_id = req.transaction_id();
+				registration.finished_transaction_status = ClientTransactionStatus::COMMITTED;
+				ClearRequestReplay(registration);
+				set_response_status(ClientTransactionStatus::COMMITTED);
+				break;
+			}
+			if (registration.finished_transaction_id == req.transaction_id()) {
+				set_response_status(registration.finished_transaction_status);
+				if (registration.finished_transaction_status == ClientTransactionStatus::COMMITTED) {
+					break;
+				}
+				resp.set_success(false);
+				resp.set_error_message("Remote Duckherder transaction was already rolled back");
+				return arrow::Status::OK();
+			}
+			set_unknown("Remote Duckherder COMMIT outcome is unknown: transaction state is unavailable");
+			return arrow::Status::OK();
 		case distributed::TRANSACTION_ACTION_ROLLBACK:
-			registration.connection->Rollback();
-			break;
+			if (registration.active_transaction_id == req.transaction_id()) {
+				if (req.request_sequence() <= registration.last_request_sequence) {
+					set_unknown("ROLLBACK request sequence is not newer than the previous operation");
+					return arrow::Status::OK();
+				}
+				registration.connection->Rollback();
+				registration.active_transaction_id = 0;
+				registration.finished_transaction_id = req.transaction_id();
+				registration.finished_transaction_status = ClientTransactionStatus::ROLLED_BACK;
+				ClearRequestReplay(registration);
+				set_response_status(ClientTransactionStatus::ROLLED_BACK);
+				break;
+			}
+			if (registration.finished_transaction_id == req.transaction_id()) {
+				set_response_status(registration.finished_transaction_status);
+				if (registration.finished_transaction_status == ClientTransactionStatus::ROLLED_BACK) {
+					break;
+				}
+				resp.set_success(false);
+				resp.set_error_message("Remote Duckherder transaction was already committed");
+				return arrow::Status::OK();
+			}
+			set_unknown("Remote Duckherder ROLLBACK outcome is unknown: transaction state is unavailable");
+			return arrow::Status::OK();
 		default:
 			return arrow::Status::Invalid("Invalid transaction action after validation");
 		}
 	} catch (const std::exception &ex) {
 		resp.set_success(false);
 		resp.set_error_message(ex.what());
+		transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
 		return arrow::Status::OK();
 	}
 	resp.set_success(true);
-	resp.mutable_transaction();
+	if (req.transaction().action() == distributed::TRANSACTION_ACTION_COMMIT && ShouldFailCommitResponseForTesting()) {
+		return arrow::Status::IOError("Injected lost COMMIT response");
+	}
 	return arrow::Status::OK();
 }
 
@@ -322,6 +509,21 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 
 	distributed::DistributedResponse response;
 	response.set_success(true);
+	auto execute_idempotent_action = [&](ClientRegistration &registration, auto &&operation) -> arrow::Status {
+		auto signature = request.SerializeAsString();
+		bool replay = false;
+		ARROW_RETURN_NOT_OK(
+		    CheckRequestReplay(request, registration, ClientRequestTransport::ACTION, signature, replay));
+		if (replay) {
+			if (!response.ParseFromString(registration.last_action_response)) {
+				return arrow::Status::Invalid("Failed to parse cached operation response");
+			}
+			return arrow::Status::OK();
+		}
+		ARROW_RETURN_NOT_OK(operation());
+		CacheActionResponse(request, registration, ClientRequestTransport::ACTION, signature, response);
+		return arrow::Status::OK();
+	};
 
 	std::shared_lock<std::shared_mutex> client_lock;
 	if (request.request_case() != distributed::DistributedRequest::kRegisterClient &&
@@ -340,32 +542,39 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 	case distributed::DistributedRequest::kTransaction:
 		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
 			const lock_guard<mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(HandleTransaction(request.transaction(), *registration, response));
+			ARROW_RETURN_NOT_OK(HandleTransaction(request, *registration, response));
 		}
 		break;
 	case distributed::DistributedRequest::kExecuteStatement:
 		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
 			const lock_guard<mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(HandleExecuteStatement(request.execute_statement(), *registration, response));
+			ARROW_RETURN_NOT_OK(execute_idempotent_action(*registration, [&] {
+				return HandleExecuteStatement(request.execute_statement(), *registration, response);
+			}));
 		}
 		break;
 	case distributed::DistributedRequest::kTableExists:
 		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
 			const lock_guard<mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), *registration, response));
+			ARROW_RETURN_NOT_OK(execute_idempotent_action(
+			    *registration, [&] { return HandleTableExists(request.table_exists(), *registration, response); }));
 		}
 		break;
 	case distributed::DistributedRequest::kLoadExtension:
 		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
 			const lock_guard<mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), *registration, response));
+			ARROW_RETURN_NOT_OK(execute_idempotent_action(
+			    *registration, [&] { return HandleLoadExtension(request.load_extension(), *registration, response); }));
 		}
 		break;
 
 	// ========== Stats & Monitoring Operations ==========
 	case distributed::DistributedRequest::kGetQueryExecutionStats:
 		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
-			ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(execute_idempotent_action(*registration, [&] {
+				return HandleGetQueryExecutionStats(request.get_query_execution_stats(), response);
+			}));
 		}
 		break;
 	case distributed::DistributedRequest::kClientHeartbeat:
@@ -376,6 +585,10 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 
 	default:
 		return arrow::Status::Invalid("Unknown request type");
+	}
+	if (request.request_case() == distributed::DistributedRequest::kExecuteStatement &&
+	    ShouldFailResponseForTesting(fail_execute_statement_responses)) {
+		return arrow::Status::IOError("Injected lost execute-statement response");
 	}
 
 	std::string response_data = response.SerializeAsString();
@@ -418,8 +631,27 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	TouchClient(registration);
 
 	const lock_guard<mutex> connection_lock(registration->connection_mutex);
-	std::unique_ptr<arrow::flight::FlightDataStream> data_stream;
-	ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), *registration, data_stream));
+	auto signature = request.SerializeAsString();
+	bool replay = false;
+	ARROW_RETURN_NOT_OK(CheckRequestReplay(request, *registration, ClientRequestTransport::DO_GET, signature, replay));
+	if (!replay) {
+		std::shared_ptr<arrow::Schema> schema;
+		vector<std::shared_ptr<arrow::RecordBatch>> batches;
+		ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), *registration, schema, batches));
+		ClearRequestReplay(*registration);
+		registration->last_request_sequence = request.request_sequence();
+		registration->last_request_transport = ClientRequestTransport::DO_GET;
+		registration->last_request_signature = signature;
+		registration->last_query_schema = std::move(schema);
+		registration->last_query_batches = std::move(batches);
+	}
+
+	ARROW_ASSIGN_OR_RAISE(
+	    auto reader, arrow::RecordBatchReader::Make(registration->last_query_batches, registration->last_query_schema));
+	auto data_stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
+	if (ShouldFailResponseForTesting(fail_scan_responses)) {
+		return arrow::Status::IOError("Injected lost scan response");
+	}
 
 	TouchClient(registration);
 	*stream = std::move(data_stream);
@@ -441,10 +673,15 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
                                                  std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                                  std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 	auto descriptor = reader->descriptor();
-	if (descriptor.path.size() < 2) {
-		return arrow::Status::Invalid("DoPut requires a registered client and table name");
+	if (descriptor.path.size() < 4) {
+		return arrow::Status::Invalid(
+		    "DoPut requires a registered client, table name, transaction identifier, and request sequence");
 	}
 	const auto &client_id = descriptor.path[0];
+	const auto &table_name = descriptor.path[1];
+	distributed::DistributedRequest request_identity;
+	request_identity.set_transaction_id(std::stoull(descriptor.path[2]));
+	request_identity.set_request_sequence(std::stoull(descriptor.path[3]));
 	const std::shared_lock<std::shared_mutex> client_lock(clients_mutex);
 	shared_ptr<ClientRegistration> registration;
 	if (!LookupClient(client_id, registration)) {
@@ -456,24 +693,40 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	TouchClient(registration);
 
 	const lock_guard<mutex> connection_lock(registration->connection_mutex);
-	std::string table_name;
-	table_name = descriptor.path[1];
 
 	// Read all record batches.
 	ARROW_ASSIGN_OR_RAISE(auto schema, reader->GetSchema());
-	std::shared_ptr<arrow::RecordBatch> batch;
-
-	distributed::DistributedResponse resp;
-	resp.set_success(true);
-
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	auto schema_text = schema->ToString();
+	auto payload_hash = Hash(schema_text.c_str(), schema_text.size());
 	while (true) {
 		ARROW_ASSIGN_OR_RAISE(auto next, reader->Next());
 		if (!next.data) {
 			break;
 		}
-		batch = next.data;
+		auto batch_text = next.data->ToString();
+		payload_hash = CombineHash(payload_hash, Hash(batch_text.c_str(), batch_text.size()));
+		batches.emplace_back(std::move(next.data));
+	}
+	auto signature = StringUtil::Format("DoPut:%s:%llu:%llu:%llu", table_name, request_identity.transaction_id(),
+	                                    request_identity.request_sequence(), payload_hash);
+	bool replay = false;
+	ARROW_RETURN_NOT_OK(
+	    CheckRequestReplay(request_identity, *registration, ClientRequestTransport::DO_PUT, signature, replay));
 
-		ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, *registration, resp));
+	distributed::DistributedResponse resp;
+	resp.set_success(true);
+	if (replay && !resp.ParseFromString(registration->last_action_response)) {
+		return arrow::Status::Invalid("Failed to parse cached insertion response");
+	}
+	if (!replay) {
+		for (auto &batch : batches) {
+			ARROW_RETURN_NOT_OK(HandleInsertData(table_name, batch, *registration, resp));
+			if (!resp.success()) {
+				break;
+			}
+		}
+		CacheActionResponse(request_identity, *registration, ClientRequestTransport::DO_PUT, signature, resp);
 	}
 
 	// Write response metadata.
@@ -578,7 +831,8 @@ arrow::Status DistributedFlightServer::HandleTableExists(const distributed::Tabl
 
 arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTableRequest &req,
                                                        ClientRegistration &registration,
-                                                       std::unique_ptr<arrow::flight::FlightDataStream> &stream) {
+                                                       std::shared_ptr<arrow::Schema> &schema,
+                                                       vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
 
@@ -659,11 +913,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		result->client_properties.client_context = registration.connection->context.get();
 	}
 
-	std::shared_ptr<arrow::RecordBatchReader> reader;
-	ARROW_RETURN_NOT_OK(QueryResultToArrow(*result, reader));
-
-	stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
-	return arrow::Status::OK();
+	return QueryResultToArrow(*result, schema, batches);
 }
 
 arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table_name,
@@ -709,15 +959,14 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 	return arrow::Status::OK();
 }
 
-arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
-                                                          std::shared_ptr<arrow::RecordBatchReader> &reader,
+arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::Schema> &schema,
+                                                          vector<std::shared_ptr<arrow::RecordBatch>> &batches,
                                                           idx_t *row_count) {
 	ArrowSchema arrow_schema;
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
-	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
+	ARROW_ASSIGN_OR_RAISE(schema, arrow::ImportSchema(&arrow_schema));
 
 	// Collect all data chunks and convert to Arrow RecordBatches.
-	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	idx_t count = 0;
 
 	while (true) {
@@ -742,8 +991,6 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 		batches.emplace_back(batch);
 	}
 
-	// Create RecordBatchReader from collected batches.
-	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(std::move(batches), std::move(schema)));
 	if (row_count) {
 		*row_count = count;
 	}

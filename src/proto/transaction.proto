@@ -9,8 +9,18 @@ enum TransactionAction {
   TRANSACTION_ACTION_ROLLBACK = 3;
 }
 
+enum TransactionStatus {
+  TRANSACTION_STATUS_UNSPECIFIED = 0;
+  TRANSACTION_STATUS_ACTIVE = 1;
+  TRANSACTION_STATUS_COMMITTED = 2;
+  TRANSACTION_STATUS_ROLLED_BACK = 3;
+  TRANSACTION_STATUS_UNKNOWN = 4;
+}
+
 message TransactionRequest {
   TransactionAction action = 1;
 }
 
-message TransactionResponse {}
+message TransactionResponse {
+  TransactionStatus status = 1;
+}

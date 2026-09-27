@@ -36,8 +36,10 @@ if(${BUILD_UNITTESTS})
   add_subdirectory(test/unittest)
 endif()
 
-set(UTIL_SOURCES src/utils/catalog_utils.cpp src/utils/time_utils.cpp
-                 src/utils/thread_utils.cpp src/utils/network_utils.cpp)
+set(UTIL_SOURCES
+    src/utils/catalog_utils.cpp src/utils/network_utils.cpp
+    src/utils/retry_utils.cpp src/utils/thread_utils.cpp
+    src/utils/time_utils.cpp)
 
 set(CLIENT_EXECUTION_SOURCES
     src/client/execution/distributed_alter_table.cpp
@@ -66,6 +68,7 @@ set(CLIENT_SOURCES
 set(SERVER_UTIL_SOURCES src/server/validation.cpp)
 
 set(SERVER_DRIVER_SOURCES
+    src/server/driver/client_registration.cpp
     src/server/driver/distributed_executor.cpp
     src/server/driver/distributed_flight_server.cpp
     src/server/driver/distributed_server_function.cpp

@@ -2,13 +2,15 @@
 
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "utils/retry_utils.hpp"
 
 #include <arrow/buffer.h>
 
 namespace duckdb {
 
-DistributedFlightClient::DistributedFlightClient(string server_url_p, distributed::ClientRole role_p)
-    : server_url(std::move(server_url_p)), role(role_p) {
+DistributedFlightClient::DistributedFlightClient(string server_url_p, distributed::ClientRole role_p,
+                                                 optional_ptr<DatabaseInstance> db_instance_p)
+    : server_url(std::move(server_url_p)), role(role_p), db_instance(db_instance_p) {
 }
 
 DistributedFlightClient::~DistributedFlightClient() {
@@ -38,6 +40,13 @@ void DistributedFlightClient::Close() {
 		heartbeat_thread.join();
 	}
 	UnregisterClientNoThrow();
+
+	const lock_guard<mutex> lock(transaction_mutex);
+	transaction_id = 0;
+	next_transaction_id = 1;
+	next_request_sequence = 1;
+	transaction_requires_rollback = false;
+	pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
 }
 
 arrow::Status DistributedFlightClient::RegisterClient() {
@@ -93,14 +102,117 @@ arrow::Status DistributedFlightClient::ExecuteStatement(const string &sql, const
 	auto *exec_req = req.mutable_execute_statement();
 	exec_req->set_sql(sql);
 	exec_req->set_client_catalog(client_catalog);
-	return SendAction(req, response);
+	return SendIdempotentAction(req, response);
 }
 
 arrow::Status DistributedFlightClient::ManageTransaction(distributed::TransactionAction action,
                                                          distributed::DistributedResponse &response) {
+	lock_guard<mutex> lock(transaction_mutex);
+	if (action == distributed::TRANSACTION_ACTION_BEGIN && transaction_id != 0 &&
+	    pending_transaction_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
+		distributed::DistributedRequest recovery_request;
+		recovery_request.mutable_transaction()->set_action(pending_transaction_action);
+		recovery_request.set_transaction_id(transaction_id);
+		recovery_request.set_request_sequence(next_request_sequence);
+		distributed::DistributedResponse recovery_response;
+		auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+		auto recovery_status = RetryWithExponentialBackoff(
+		    [&]() {
+			    recovery_response.Clear();
+			    return SendAction(recovery_request, recovery_response);
+		    },
+		    retry_config);
+		if (!recovery_status.ok()) {
+			return arrow::Status::Invalid(StringUtil::Format(
+			    "Previous remote transaction outcome remains unresolved: %s", recovery_status.ToString()));
+		}
+		if (!recovery_response.has_transaction() ||
+		    recovery_response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
+			return arrow::Status::Invalid("Previous remote transaction outcome remains unresolved");
+		}
+		if (pending_transaction_action == distributed::TRANSACTION_ACTION_BEGIN) {
+			distributed::DistributedRequest rollback_request;
+			rollback_request.mutable_transaction()->set_action(distributed::TRANSACTION_ACTION_ROLLBACK);
+			rollback_request.set_transaction_id(transaction_id);
+			rollback_request.set_request_sequence(next_request_sequence + 1);
+			distributed::DistributedResponse rollback_response;
+			auto rollback_status = RetryWithExponentialBackoff(
+			    [&]() {
+				    rollback_response.Clear();
+				    return SendAction(rollback_request, rollback_response);
+			    },
+			    retry_config);
+			if (!rollback_status.ok() || !rollback_response.success()) {
+				return arrow::Status::Invalid("Previous remote BEGIN could not be rolled back");
+			}
+		}
+		next_transaction_id++;
+		transaction_id = 0;
+		next_request_sequence = 1;
+		transaction_requires_rollback = false;
+		pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	}
+	if (action == distributed::TRANSACTION_ACTION_BEGIN) {
+		if (transaction_id != 0) {
+			return arrow::Status::Invalid("A remote transaction is already active or has an unresolved outcome");
+		}
+		transaction_id = next_transaction_id;
+		next_request_sequence = 1;
+		transaction_requires_rollback = false;
+		pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	} else if (transaction_id == 0) {
+		return arrow::Status::Invalid("No remote transaction is active");
+	} else if (action == distributed::TRANSACTION_ACTION_COMMIT && transaction_requires_rollback) {
+		return arrow::Status::Invalid(
+		    "A remote operation has an unresolved outcome; the transaction must be rolled back");
+	}
+
 	distributed::DistributedRequest req;
 	req.mutable_transaction()->set_action(action);
-	return SendAction(req, response);
+	req.set_transaction_id(transaction_id);
+	req.set_request_sequence(next_request_sequence);
+
+	// Replaying the same client-generated transaction identifier is idempotent.
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto status = RetryWithExponentialBackoff(
+	    [&]() {
+		    response.Clear();
+		    return SendAction(req, response);
+	    },
+	    retry_config);
+	if (!status.ok()) {
+		pending_transaction_action = action;
+		return status;
+	}
+	next_request_sequence++;
+
+	if (!response.success()) {
+		if (response.has_transaction() && response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
+			next_request_sequence--;
+			pending_transaction_action = action;
+			return status;
+		}
+		if (action == distributed::TRANSACTION_ACTION_BEGIN ||
+		    (response.has_transaction() &&
+		     response.transaction().status() != distributed::TRANSACTION_STATUS_UNKNOWN)) {
+			if (action != distributed::TRANSACTION_ACTION_BEGIN) {
+				next_transaction_id++;
+			}
+			transaction_id = 0;
+			next_request_sequence = 1;
+			transaction_requires_rollback = false;
+			pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+		}
+		return status;
+	}
+	if (action == distributed::TRANSACTION_ACTION_COMMIT || action == distributed::TRANSACTION_ACTION_ROLLBACK) {
+		next_transaction_id++;
+		transaction_id = 0;
+		next_request_sequence = 1;
+		transaction_requires_rollback = false;
+		pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	}
+	return status;
 }
 
 arrow::Status DistributedFlightClient::LoadExtension(const string &extension_name, const string &repository,
@@ -115,7 +227,7 @@ arrow::Status DistributedFlightClient::LoadExtension(const string &extension_nam
 	if (!version.empty()) {
 		load_req->set_version(version);
 	}
-	return SendAction(req, response);
+	return SendIdempotentAction(req, response);
 }
 
 arrow::Status DistributedFlightClient::TableExists(const string &table_name, bool &exists) {
@@ -124,7 +236,7 @@ arrow::Status DistributedFlightClient::TableExists(const string &table_name, boo
 	exists_req->set_table_name(table_name);
 
 	distributed::DistributedResponse resp;
-	ARROW_RETURN_NOT_OK(SendAction(req, resp));
+	ARROW_RETURN_NOT_OK(SendIdempotentAction(req, resp));
 	if (!resp.success()) {
 		return arrow::Status::Invalid(resp.error_message());
 	}
@@ -135,56 +247,105 @@ arrow::Status DistributedFlightClient::TableExists(const string &table_name, boo
 
 arrow::Status DistributedFlightClient::InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
                                                   distributed::DistributedResponse &response) {
-	arrow::flight::FlightDescriptor descriptor = arrow::flight::FlightDescriptor::Path({client_id, table_name});
-
-	std::unique_ptr<arrow::flight::FlightStreamWriter> writer;
-	std::unique_ptr<arrow::flight::FlightMetadataReader> metadata_reader;
-
-	ARROW_ASSIGN_OR_RAISE(auto put_result, client->DoPut(descriptor, batch->schema()));
-	writer = std::move(put_result.writer);
-	metadata_reader = std::move(put_result.reader);
-
-	// Write batch.
-	ARROW_RETURN_NOT_OK(writer->WriteRecordBatch(*batch));
-	ARROW_RETURN_NOT_OK(writer->DoneWriting());
-
-	// Read response metadata.
-	std::shared_ptr<arrow::Buffer> metadata;
-	ARROW_RETURN_NOT_OK(metadata_reader->ReadMetadata(&metadata));
-
-	if (metadata != nullptr) {
-		if (!response.ParseFromArray(metadata->data(), metadata->size())) {
-			return arrow::Status::Invalid("Failed to parse response");
-		}
-	} else {
-		response.set_success(false);
-		response.set_error_message("No response from server");
+	const lock_guard<mutex> lock(transaction_mutex);
+	if (transaction_id == 0) {
+		return arrow::Status::Invalid("No remote transaction is active");
 	}
+	auto request_transaction_id = transaction_id;
+	auto request_sequence = next_request_sequence++;
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto status = RetryWithExponentialBackoff(
+	    [&]() {
+		    response.Clear();
+		    auto descriptor = arrow::flight::FlightDescriptor::Path({client_id, table_name,
+		                                                             StringUtil::Format("%llu", request_transaction_id),
+		                                                             StringUtil::Format("%llu", request_sequence)});
+		    ARROW_ASSIGN_OR_RAISE(auto put_result, client->DoPut(descriptor, batch->schema()));
+		    ARROW_RETURN_NOT_OK(put_result.writer->WriteRecordBatch(*batch));
+		    ARROW_RETURN_NOT_OK(put_result.writer->DoneWriting());
 
-	return arrow::Status::OK();
+		    std::shared_ptr<arrow::Buffer> metadata;
+		    ARROW_RETURN_NOT_OK(put_result.reader->ReadMetadata(&metadata));
+		    if (metadata == nullptr) {
+			    return arrow::Status::Invalid("No response from server");
+		    }
+		    if (!response.ParseFromArray(metadata->data(), metadata->size())) {
+			    return arrow::Status::Invalid("Failed to parse response");
+		    }
+		    return arrow::Status::OK();
+	    },
+	    retry_config);
+	if (!status.ok()) {
+		transaction_requires_rollback = true;
+	}
+	return status;
 }
 
 arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
-                                                 std::unique_ptr<arrow::flight::FlightStreamReader> &stream) {
+                                                 vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
+	const lock_guard<mutex> lock(transaction_mutex);
+	if (transaction_id == 0) {
+		return arrow::Status::Invalid("No remote transaction is active");
+	}
 	distributed::DistributedRequest req;
 	auto *scan_req = req.mutable_scan_table();
 	scan_req->set_table_name(table_name);
 	scan_req->set_limit(limit);
 	scan_req->set_offset(offset);
 	req.set_client_id(client_id);
+	req.set_transaction_id(transaction_id);
+	req.set_request_sequence(next_request_sequence++);
 
 	std::string req_data = req.SerializeAsString();
 	arrow::flight::Ticket ticket;
 	ticket.ticket = req_data;
-	ARROW_ASSIGN_OR_RAISE(stream, client->DoGet(ticket));
-
-	return arrow::Status::OK();
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto status = RetryWithExponentialBackoff(
+	    [&]() {
+		    vector<std::shared_ptr<arrow::RecordBatch>> attempt_batches;
+		    ARROW_ASSIGN_OR_RAISE(auto stream, client->DoGet(ticket));
+		    while (true) {
+			    ARROW_ASSIGN_OR_RAISE(auto next, stream->Next());
+			    if (!next.data) {
+				    break;
+			    }
+			    attempt_batches.emplace_back(std::move(next.data));
+		    }
+		    batches = std::move(attempt_batches);
+		    return arrow::Status::OK();
+	    },
+	    retry_config);
+	if (!status.ok()) {
+		transaction_requires_rollback = true;
+	}
+	return status;
 }
 
 arrow::Status DistributedFlightClient::GetQueryExecutionStats(distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
 	req.mutable_get_query_execution_stats();
-	return SendAction(req, response);
+	return SendIdempotentAction(req, response);
+}
+
+arrow::Status DistributedFlightClient::SendIdempotentAction(distributed::DistributedRequest &req,
+                                                            distributed::DistributedResponse &resp) {
+	const lock_guard<mutex> lock(transaction_mutex);
+	if (transaction_id == 0) {
+		return arrow::Status::Invalid("No remote transaction is active");
+	}
+	req.set_transaction_id(transaction_id);
+	req.set_request_sequence(next_request_sequence++);
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto status = RetryWithExponentialBackoff(
+	    [&]() {
+		    resp.Clear();
+		    return SendAction(req, resp);
+	    },
+	    retry_config);
+	if (!status.ok()) {
+		transaction_requires_rollback = true;
+	}
+	return status;
 }
 
 arrow::Status DistributedFlightClient::SendAction(const distributed::DistributedRequest &req,
