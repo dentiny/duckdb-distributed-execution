@@ -84,7 +84,6 @@ void DistributedFlightServer::Reset() {
 void DistributedFlightServer::Initialize() {
 	// Release objects that reference the previous database in dependency order.
 	worker_manager.reset();
-	bootstrap_conn.reset();
 	db.reset();
 
 	// Clear query history.
@@ -98,18 +97,12 @@ void DistributedFlightServer::Initialize() {
 	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
 
 	db = make_uniq<DuckDB>(nullptr, &config);
-	bootstrap_conn = make_uniq<Connection>(*db);
+	Connection bootstrap_conn(*db);
 
 	// Attach duckling storage extension.
-	auto result = bootstrap_conn->Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
+	auto result = bootstrap_conn.Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
 	if (result->HasError()) {
 		throw InternalException(StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
-	}
-
-	// Set duckling as the default database.
-	auto use_result = bootstrap_conn->Query("USE duckling;");
-	if (use_result->HasError()) {
-		throw InternalException(StringUtil::Format("Failed to USE duckling: %s", use_result->GetError()));
 	}
 
 	// Initialize the worker manager. Each client registration owns its connection-bound executor.

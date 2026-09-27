@@ -108,7 +108,9 @@ private:
 		atomic<int64_t> last_seen;
 		// DuckDB connections are session-scoped and must not execute concurrent requests.
 		mutex connection_mutex;
+		// Dedicated DuckDB session for this registered client.
 		unique_ptr<Connection> connection;
+		// Distributed execution components bound to this client's DuckDB session.
 		unique_ptr<DistributedExecutor> distributed_executor;
 	};
 
@@ -191,8 +193,6 @@ private:
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
-	// Used only to initialize the shared DuckDB instance; client RPCs use their registration's connection.
-	unique_ptr<Connection> bootstrap_conn;
 	unique_ptr<WorkerManager> worker_manager;
 
 	// Client admission: at most one writable attachment, with any number of readers.

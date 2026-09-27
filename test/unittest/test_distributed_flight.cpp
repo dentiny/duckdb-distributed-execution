@@ -53,6 +53,7 @@ FlightTestServer &GetTestServer() {
 	return test_server;
 }
 
+// Scan all batches returned by the server and count their rows.
 uint64_t CountRows(DistributedFlightClient &client, const string &table_name) {
 	std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 	REQUIRE(client.ScanTable(table_name, 100, 0, stream).ok());
