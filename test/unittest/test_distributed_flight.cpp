@@ -57,7 +57,7 @@ FlightTestServer &GetTestServer() {
 
 TEST_CASE("Test Flight server startup and connection", "[distributed_flight]") {
 	GetTestServer();
-	DistributedFlightClient client(SERVER_URL);
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	auto status = client.Connect();
 
 	REQUIRE(status.ok());
@@ -75,22 +75,22 @@ TEST_CASE("Expired writer lease can be reclaimed", "[distributed_flight]") {
 	} timeout_reset(server);
 
 	server.SetClientLeaseTimeoutForTesting(std::chrono::milliseconds(1));
-	DistributedFlightClient expired_writer(SERVER_URL);
+	DistributedFlightClient expired_writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(expired_writer.Connect().ok());
 	std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-	DistributedFlightClient replacement_writer(SERVER_URL);
+	DistributedFlightClient replacement_writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(replacement_writer.Connect().ok());
 }
 
 TEST_CASE("Server reset clears writer admission", "[distributed_flight]") {
 	auto &server = GetTestServer().GetServer();
-	DistributedFlightClient old_writer(SERVER_URL);
+	DistributedFlightClient old_writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(old_writer.Connect().ok());
 
 	server.Reset();
 
-	DistributedFlightClient replacement_writer(SERVER_URL);
+	DistributedFlightClient replacement_writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(replacement_writer.Connect().ok());
 
 	bool exists = false;
@@ -99,7 +99,7 @@ TEST_CASE("Server reset clears writer admission", "[distributed_flight]") {
 
 TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 	GetTestServer();
-	DistributedFlightClient client(SERVER_URL);
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse create_resp;
@@ -120,7 +120,7 @@ TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 
 TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 	GetTestServer();
-	DistributedFlightClient client(SERVER_URL);
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse response;

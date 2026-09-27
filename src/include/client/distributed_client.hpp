@@ -31,13 +31,10 @@ struct QueryExecutionStatsEntry {
 
 class DistributedClient {
 public:
-	explicit DistributedClient(string server_url_p = "grpc://localhost:8815");
 	DistributedClient(string server_url_p, distributed::ClientRole role_p);
 	~DistributedClient() = default;
 
 	void Close();
-
-	static DistributedClient &GetInstance();
 
 	// Execute arbitrary SQL on the server.
 	unique_ptr<QueryResult> ExecuteSQL(const string &sql);

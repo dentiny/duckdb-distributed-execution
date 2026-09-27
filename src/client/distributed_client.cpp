@@ -7,16 +7,11 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "utils/no_destructor.hpp"
 
 #include <arrow/array.h>
 #include <arrow/type.h>
 
 namespace duckdb {
-
-DistributedClient::DistributedClient(string server_url_p)
-    : DistributedClient(std::move(server_url_p), distributed::CLIENT_ROLE_READ_WRITE) {
-}
 
 DistributedClient::DistributedClient(string server_url_p, distributed::ClientRole role_p)
     : server_url(std::move(server_url_p)) {
@@ -29,11 +24,6 @@ DistributedClient::DistributedClient(string server_url_p, distributed::ClientRol
 
 void DistributedClient::Close() {
 	client->Close();
-}
-
-DistributedClient &DistributedClient::GetInstance() {
-	static NoDestructor<DistributedClient> client {"grpc://localhost:8815", distributed::CLIENT_ROLE_READ_ONLY};
-	return *client;
 }
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,

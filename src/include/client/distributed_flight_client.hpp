@@ -20,7 +20,6 @@ namespace duckdb {
 
 class DistributedFlightClient {
 public:
-	explicit DistributedFlightClient(string server_url);
 	DistributedFlightClient(string server_url, distributed::ClientRole role_p);
 	~DistributedFlightClient();
 

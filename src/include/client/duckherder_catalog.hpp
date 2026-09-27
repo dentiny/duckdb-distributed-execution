@@ -35,8 +35,6 @@ struct RemoteTableConfig {
 
 class DuckherderCatalog : public DuckCatalog {
 public:
-	DuckherderCatalog(AttachedDatabase &db, string server_host_p = "localhost", int server_port_p = 8815,
-	                  string server_db_path_p = "");
 	DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p, string server_db_path_p,
 	                  distributed::ClientRole role_p);
 

@@ -1,6 +1,7 @@
 #include "query_execution_stats_query_function.hpp"
 
 #include "client/distributed_client.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector.hpp"
@@ -74,9 +75,8 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
 		}
 	}
 
-	// Fallback to singleton if no DuckherderCatalog found.
 	if (client_to_use == nullptr) {
-		client_to_use = &DistributedClient::GetInstance();
+		throw InvalidInputException("duckherder_get_query_execution_stats() requires an attached Duckherder database");
 	}
 
 	auto query_result = client_to_use->GetQueryExecutionStats(result->query_stats);

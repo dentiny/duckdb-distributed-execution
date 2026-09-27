@@ -7,10 +7,6 @@
 
 namespace duckdb {
 
-DistributedFlightClient::DistributedFlightClient(string server_url_p)
-    : DistributedFlightClient(std::move(server_url_p), distributed::CLIENT_ROLE_READ_WRITE) {
-}
-
 DistributedFlightClient::DistributedFlightClient(string server_url_p, distributed::ClientRole role_p)
     : server_url(std::move(server_url_p)), role(role_p) {
 }
