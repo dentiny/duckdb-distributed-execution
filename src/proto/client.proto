@@ -8,13 +8,6 @@ enum ClientRole {
   CLIENT_ROLE_READ_WRITE = 2;
 }
 
-enum TransactionAction {
-  TRANSACTION_ACTION_UNSPECIFIED = 0;
-  TRANSACTION_ACTION_BEGIN = 1;
-  TRANSACTION_ACTION_COMMIT = 2;
-  TRANSACTION_ACTION_ROLLBACK = 3;
-}
-
 // Register a Duckherder attachment with the control node.
 message RegisterClientRequest {
   ClientRole role = 1;
@@ -32,9 +25,10 @@ message ClientHeartbeatRequest {}
 
 message ClientHeartbeatResponse {}
 
-// Apply a transaction lifecycle action to the registered client's connection.
-message TransactionRequest {
-  TransactionAction action = 1;
+message LoadExtensionRequest {
+  string extension_name = 1;
+  string repository = 2;
+  string version = 3;
 }
 
-message TransactionResponse {}
+message LoadExtensionResponse {}

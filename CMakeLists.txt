@@ -21,10 +21,10 @@ include_directories(${ARROW_INCLUDE_DIR})
 
 # Generate protobuf code.
 set(PROTO_FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/catalog.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/client.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/dml.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/query.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/transaction.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/worker.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})

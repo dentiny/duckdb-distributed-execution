@@ -2,10 +2,10 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-import "catalog.proto";
 import "client.proto";
 import "dml.proto";
 import "query.proto";
+import "transaction.proto";
 import "worker.proto";
 
 // Top-level envelope for client, control-node, and worker operations.
@@ -19,7 +19,7 @@ message DistributedRequest {
     UnregisterClientRequest unregister_client = 3;
     ClientHeartbeatRequest client_heartbeat = 4;
 
-    // DML and generic SQL execution.
+    // Database mutation operations.
     ExecuteSQLRequest execute_sql = 5;
     DeleteDataRequest delete_data = 6;
 
@@ -27,12 +27,14 @@ message DistributedRequest {
     ScanTableRequest scan_table = 7;
     TableExistsRequest table_exists = 8;
 
-    // DDL and catalog operations.
+    // Database mutation operations.
     CreateTableRequest create_table = 9;
     DropTableRequest drop_table = 10;
     AlterTableRequest alter_table = 11;
     CreateIndexRequest create_index = 12;
     DropIndexRequest drop_index = 13;
+
+    // General client-server administration.
     LoadExtensionRequest load_extension = 14;
 
     // Control-worker communication.
@@ -59,7 +61,7 @@ message DistributedResponse {
     UnregisterClientResponse unregister_client = 4;
     ClientHeartbeatResponse client_heartbeat = 5;
 
-    // DML and generic SQL execution.
+    // Database mutation operations.
     ExecuteSQLResponse execute_sql = 6;
     DeleteDataResponse delete_data = 7;
 
@@ -67,12 +69,14 @@ message DistributedResponse {
     ScanTableResponse scan_table = 8;
     TableExistsResponse table_exists = 9;
 
-    // DDL and catalog operations.
+    // Database mutation operations.
     CreateTableResponse create_table = 10;
     DropTableResponse drop_table = 11;
     AlterTableResponse alter_table = 12;
     CreateIndexResponse create_index = 13;
     DropIndexResponse drop_index = 14;
+
+    // General client-server administration.
     LoadExtensionResponse load_extension = 15;
 
     // Control-worker communication.

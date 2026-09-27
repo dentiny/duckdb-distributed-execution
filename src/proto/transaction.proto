@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package duckdb.distributed;
+
+enum TransactionAction {
+  TRANSACTION_ACTION_UNSPECIFIED = 0;
+  TRANSACTION_ACTION_BEGIN = 1;
+  TRANSACTION_ACTION_COMMIT = 2;
+  TRANSACTION_ACTION_ROLLBACK = 3;
+}
+
+message TransactionRequest {
+  TransactionAction action = 1;
+}
+
+message TransactionResponse {}
