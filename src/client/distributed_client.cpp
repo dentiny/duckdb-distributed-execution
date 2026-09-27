@@ -14,16 +14,25 @@
 
 namespace duckdb {
 
-DistributedClient::DistributedClient(string server_url_p) : server_url(std::move(server_url_p)) {
-	client = make_uniq<DistributedFlightClient>(server_url);
+DistributedClient::DistributedClient(string server_url_p)
+    : DistributedClient(std::move(server_url_p), distributed::CLIENT_ROLE_READ_WRITE) {
+}
+
+DistributedClient::DistributedClient(string server_url_p, distributed::ClientRole role_p)
+    : server_url(std::move(server_url_p)) {
+	client = make_uniq<DistributedFlightClient>(server_url, role_p);
 	auto status = client->Connect();
 	if (!status.ok()) {
 		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
 	}
 }
 
+void DistributedClient::Close() {
+	client->Close();
+}
+
 DistributedClient &DistributedClient::GetInstance() {
-	static NoDestructor<DistributedClient> client {};
+	static NoDestructor<DistributedClient> client {"grpc://localhost:8815", distributed::CLIENT_ROLE_READ_ONLY};
 	return *client;
 }
 
@@ -194,6 +203,24 @@ unique_ptr<QueryResult> DistributedClient::DropIndex(const string &index_name) {
 	vector<LogicalType> types;
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 	return make_uniq<MaterializedQueryResult>(StatementType::DROP_STATEMENT, StatementProperties(), names,
+	                                          std::move(collection), ClientProperties());
+}
+
+unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension_name, const string &repository,
+                                                         const string &version) {
+	distributed::DistributedResponse response;
+	auto status = client->LoadExtension(extension_name, repository, version, response);
+	if (!status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+	}
+	if (!response.success()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+	}
+
+	vector<string> names;
+	vector<LogicalType> types;
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	return make_uniq<MaterializedQueryResult>(StatementType::LOAD_STATEMENT, StatementProperties(), names,
 	                                          std::move(collection), ClientProperties());
 }
 

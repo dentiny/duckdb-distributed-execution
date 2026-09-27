@@ -1,5 +1,6 @@
 #include "duckherder_storage.hpp"
 
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckherder_catalog.hpp"
@@ -18,6 +19,8 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	string server_host = "localhost";
 	int server_port = 8815;
 	string server_db_path;
+	const bool attach_read_only = options.access_mode == AccessMode::READ_ONLY;
+	auto role = attach_read_only ? distributed::CLIENT_ROLE_READ_ONLY : distributed::CLIENT_ROLE_READ_WRITE;
 
 	auto it = options.options.find("server_host");
 	if (it != options.options.end()) {
@@ -34,12 +37,28 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 		server_db_path = it->second.ToString();
 	}
 
+	it = options.options.find("client_role");
+	if (it != options.options.end()) {
+		auto role_name = StringUtil::Upper(it->second.ToString());
+		if (role_name == "READ_ONLY") {
+			role = distributed::CLIENT_ROLE_READ_ONLY;
+		} else if (role_name == "READ_WRITE") {
+			if (attach_read_only) {
+				throw InvalidInputException("Duckherder client_role 'read_write' conflicts with ATTACH READ_ONLY");
+			}
+			role = distributed::CLIENT_ROLE_READ_WRITE;
+		} else {
+			throw InvalidInputException("Duckherder client_role must be 'read_only' or 'read_write'");
+		}
+	}
+
 	// Remove our custom options so StorageManager doesn't validate them.
 	options.options.erase("server_host");
 	options.options.erase("server_port");
 	options.options.erase("server_db_path");
+	options.options.erase("client_role");
 
-	return make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, std::move(server_db_path));
+	return make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, std::move(server_db_path), role);
 }
 
 } // namespace

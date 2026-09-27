@@ -1,0 +1,58 @@
+# name: test/sql/client_roles.test
+# description: one writable Duckherder attachment and multiple read-only attachments
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8837);
+
+statement error
+ATTACH ':memory:' AS invalid_role
+  (TYPE duckherder, client_role 'admin', server_host 'localhost', server_port 8837);
+----
+<REGEX>:.*client_role must be 'read_only' or 'read_write'.*
+
+statement ok
+ATTACH ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8837);
+
+# A second writable attachment is rejected while the first writer is alive.
+statement error con1
+ATTACH ':memory:' AS rejected_writer
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8837);
+----
+<REGEX>:.*already has a writable Duckherder client.*
+
+# Multiple read-only attachments can coexist with the writer.
+statement ok con1
+ATTACH ':memory:' AS reader_one
+  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8837);
+
+statement ok con2
+ATTACH ':memory:' AS reader_two
+  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8837);
+
+# DETACH releases the writer slot while readers remain attached.
+statement ok
+DETACH dh;
+
+statement ok con3
+ATTACH ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8837);
+
+statement ok con3
+PRAGMA duckherder_register_remote_table('forbidden_reader_write', 'forbidden_reader_write');
+
+# The control node enforces the role, even though the local catalog accepted the SQL.
+statement error con3
+CREATE TABLE dh.forbidden_reader_write (id INTEGER);
+----
+<REGEX>:.*read-only.*
+
+statement ok con3
+DETACH dh;
+
+statement ok
+ATTACH ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8837);

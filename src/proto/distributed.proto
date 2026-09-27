@@ -20,7 +20,25 @@ enum RequestType {
   WORKER_REGISTER = 13;
   WORKER_HEARTBEAT = 14;
   GET_QUERY_EXECUTION_STATS = 15;
+  REGISTER_CLIENT = 16;
+  UNREGISTER_CLIENT = 17;
+  CLIENT_HEARTBEAT = 18;
 }
+
+enum ClientRole {
+  CLIENT_ROLE_UNSPECIFIED = 0;
+  CLIENT_ROLE_READ_ONLY = 1;
+  CLIENT_ROLE_READ_WRITE = 2;
+}
+
+// Register a Duckherder attachment with the control node.
+message RegisterClientRequest {
+  ClientRole role = 1;
+}
+
+message UnregisterClientRequest {}
+
+message ClientHeartbeatRequest {}
 
 // Execute SQL request.
 message ExecuteSQLRequest {
@@ -147,7 +165,12 @@ message DistributedRequest {
     WorkerRegisterRequest worker_register = 12;
     WorkerHeartbeatRequest worker_heartbeat = 13;
     GetQueryExecutionStatsRequest get_query_execution_stats = 14;
+    RegisterClientRequest register_client = 16;
+    UnregisterClientRequest unregister_client = 17;
+    ClientHeartbeatRequest client_heartbeat = 18;
   }
+  // Opaque identifier returned by RegisterClientResponse.
+  string client_id = 15;
 }
 
 // Execute SQL response.
@@ -221,6 +244,14 @@ message GetQueryExecutionStatsResponse {
   repeated QueryExecutionInfo query_executions = 1;
 }
 
+message RegisterClientResponse {
+  string client_id = 1;
+}
+
+message UnregisterClientResponse {}
+
+message ClientHeartbeatResponse {}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -244,5 +275,8 @@ message DistributedResponse {
     WorkerRegisterResponse worker_register = 14;
     WorkerHeartbeatResponse worker_heartbeat = 15;
     GetQueryExecutionStatsResponse get_query_execution_stats = 16;
+    RegisterClientResponse register_client = 17;
+    UnregisterClientResponse unregister_client = 18;
+    ClientHeartbeatResponse client_heartbeat = 19;
   }
 }

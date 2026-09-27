@@ -10,9 +10,12 @@
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <unordered_map>
 
 namespace duckdb {
 
@@ -94,6 +97,7 @@ public:
 	                    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) override;
 
 	DatabaseInstance &GetDatabaseInstance();
+	void SetClientLeaseTimeoutForTesting(std::chrono::milliseconds timeout);
 
 private:
 	// Implementation methods for Flight RPC handlers, without exception handling.
@@ -108,6 +112,9 @@ private:
 	                        std::unique_ptr<arrow::flight::FlightMetadataWriter> writer);
 
 	// Process different request types using protobuf messages directly.
+	arrow::Status HandleRegisterClient(const distributed::RegisterClientRequest &req,
+	                                   distributed::DistributedResponse &resp);
+	arrow::Status HandleUnregisterClient(const string &client_id, distributed::DistributedResponse &resp);
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, distributed::DistributedResponse &resp);
 
 	// Handle CREATE TABLE request.
@@ -153,12 +160,29 @@ private:
 private:
 	// Initialize DuckDB instance, connection, and components.
 	void Initialize();
+	struct ClientRegistration {
+		explicit ClientRegistration(distributed::ClientRole role_p);
+
+		distributed::ClientRole role;
+		std::atomic<int64_t> last_seen;
+	};
+
+	bool LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration);
+	void TouchClient(const shared_ptr<ClientRegistration> &registration);
+	void PruneExpiredClients();
+	bool AuthorizeClient(const string &client_id, bool require_write, distributed::DistributedResponse &resp);
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
 	unique_ptr<Connection> conn;
 	unique_ptr<WorkerManager> worker_manager;
 	unique_ptr<DistributedExecutor> distributed_executor;
+
+	// Client admission: at most one writable attachment, with any number of readers.
+	mutable std::shared_mutex clients_mutex;
+	std::unordered_map<string, shared_ptr<ClientRegistration>> clients;
+	string writable_client_id;
+	std::chrono::milliseconds client_lease_timeout = std::chrono::seconds(30);
 
 	// Query execution tracking.
 	mutable std::mutex query_history_mutex;

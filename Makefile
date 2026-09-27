@@ -8,10 +8,10 @@ EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 format-all: format
-	find unit/ -iname *.hpp -o -iname *.cpp | xargs /usr/bin/clang-format --sort-includes=0 -style=file -i
+	clang-format --sort-includes=0 -style=file -i $(wildcard test/unittest/*.hpp test/unittest/*.cpp)
 	@cmake-format -i CMakeLists.txt
 	@cmake-format -i test/unittest/CMakeLists.txt
-	@buf format -w src/proto/
+	@buf format -w --path src/proto
 
 test-object-storage-s3:
 	bash test/object_storage/run_single_writer_reader_e2e.sh

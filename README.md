@@ -304,7 +304,16 @@ SELECT duckherder_stop_local_server();
 -- Attach to the duckherder server as database 'dh'
 -- TODO(hjiang): currently only support database 'dh'
 ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
+
+-- Additional clients must attach read-only while a writable client is attached.
+ATTACH DATABASE 'dh_reader'
+  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8815);
 ```
+
+The control node admits at most one writable Duckherder attachment and any number of read-only attachments. `DETACH`
+releases the writable slot; the server also rejects mutation RPCs carrying a read-only client ID. Attachments renew a
+short control-node lease, so a crashed writer is reclaimed after its lease expires. Client and control node must use
+the same protocol version because role registration is not compatible with older binaries.
 
 ### Register and Unregister Remote Tables
 

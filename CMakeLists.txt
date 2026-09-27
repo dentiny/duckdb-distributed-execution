@@ -19,24 +19,16 @@ include_directories(src/include/client)
 include_directories(src/include/server)
 include_directories(${ARROW_INCLUDE_DIR})
 
-if(${BUILD_UNITTESTS})
-  add_subdirectory(test/unittest)
-
-  # Integration test
-  include_directories(duckdb/third_party/catch)
-  add_executable(test_distributed_flight unit/test_distributed_flight.cpp)
-  target_link_libraries(
-    test_distributed_flight Arrow::arrow_static
-    ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
-  link_extension_libraries(test_distributed_flight "")
-endif()
-
 # Generate protobuf code.
 set(PROTO_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
 
 # Add directory for generated protobuf headers.
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+if(${BUILD_UNITTESTS})
+  add_subdirectory(test/unittest)
+endif()
 
 set(UTIL_SOURCES src/utils/catalog_utils.cpp src/utils/time_utils.cpp
                  src/utils/thread_utils.cpp src/utils/network_utils.cpp)

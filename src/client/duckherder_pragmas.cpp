@@ -1,6 +1,6 @@
 #include "duckherder_pragmas.hpp"
 
-#include "distributed_flight_client.hpp"
+#include "distributed_client.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -100,24 +100,10 @@ namespace duckdb {
 			throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
 		}
 
-		auto server_url = dh_catalog_ptr->GetServerUrl();
-		DistributedFlightClient client(server_url);
-
-		auto status = client.Connect();
-		if (!status.ok()) {
-			throw Exception(ExceptionType::CONNECTION, StringUtil::Format("Failed to connect to server %s because %s",
-			                                                              server_url, status.ToString()));
-		}
-
-		distributed::DistributedResponse response;
-		status = client.LoadExtension(extension_name_str, /*repository=*/"", /*version=*/"", response);
-		if (!status.ok()) {
-			throw Exception(ExceptionType::CONNECTION, StringUtil::Format("Failed to load extension on server %s: %s",
-			                                                              extension_name_str, status.ToString()));
-		}
-		if (!response.success()) {
+		auto load_result = dh_catalog_ptr->GetClient().LoadExtension(extension_name_str);
+		if (load_result->HasError()) {
 			throw Exception(ExceptionType::EXECUTOR, StringUtil::Format("Server failed to load extension %s: %s",
-			                                                            extension_name_str, response.error_message()));
+			                                                            extension_name_str, load_result->GetError()));
 		}
 
 		// Attempt to load extension on client side to keep client/server compatibility.

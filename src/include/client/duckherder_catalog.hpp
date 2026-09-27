@@ -3,6 +3,7 @@
 #include <mutex>
 
 #include "base_query_recorder.hpp"
+#include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/string.hpp"
@@ -36,10 +37,13 @@ class DuckherderCatalog : public DuckCatalog {
 public:
 	DuckherderCatalog(AttachedDatabase &db, string server_host_p = "localhost", int server_port_p = 8815,
 	                  string server_db_path_p = "");
+	DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p, string server_db_path_p,
+	                  distributed::ClientRole role_p);
 
 	~DuckherderCatalog() override;
 
 	void Initialize(bool load_builtin) override;
+	void OnDetach(ClientContext &context) override;
 
 	string GetCatalogType() override {
 		return "duckherder";

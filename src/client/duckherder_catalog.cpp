@@ -30,11 +30,25 @@ namespace duckdb {
 
 DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
                                      string server_db_path_p)
+    : DuckherderCatalog(db, std::move(server_host_p), server_port_p, std::move(server_db_path_p),
+                        distributed::CLIENT_ROLE_READ_WRITE) {
+}
+
+DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
+                                     string server_db_path_p, distributed::ClientRole role_p)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()),
       server_host(std::move(server_host_p)), server_port(server_port_p), server_db_path(std::move(server_db_path_p)) {
+	distributed_client = make_uniq<DistributedClient>(GetServerUrl(), role_p);
 }
 
 DuckherderCatalog::~DuckherderCatalog() = default;
+
+void DuckherderCatalog::OnDetach(ClientContext &context) {
+	std::lock_guard<std::mutex> lock(client_mu);
+	if (distributed_client) {
+		distributed_client->Close();
+	}
+}
 
 void DuckherderCatalog::Initialize(bool load_builtin) {
 	duckdb_catalog->Initialize(load_builtin);

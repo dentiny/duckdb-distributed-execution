@@ -4,9 +4,11 @@ include_directories(${CMAKE_SOURCE_DIR}/src/include)
 include_directories(${DuckDB_SOURCE_DIR}/third_party)
 include_directories(${DuckDB_SOURCE_DIR}/test/include)
 
-file(GLOB_RECURSE CATCHFS_UNITTEST_OBJECTS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+set(DUCKHERDER_UNITTEST_SOURCES
+    main.cpp test_arrow_enum_conversion.cpp test_distributed_flight.cpp
+    test_query_plan_analyzer.cpp)
 
-add_executable(unittest_duckherder main.cpp ${CATCHFS_UNITTEST_OBJECTS})
+add_executable(unittest_duckherder ${DUCKHERDER_UNITTEST_SOURCES})
 
 if(NOT WIN32
    AND NOT SUN

@@ -4,6 +4,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
 #include "query_common.hpp"
@@ -16,6 +17,19 @@
 #include <arrow/ipc/writer.h>
 
 namespace duckdb {
+
+namespace {
+
+int64_t ClientLeaseClock() {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+	    .count();
+}
+
+} // namespace
+
+DistributedFlightServer::ClientRegistration::ClientRegistration(distributed::ClientRole role_p)
+    : role(role_p), last_seen(ClientLeaseClock()) {
+}
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
 	Initialize();
@@ -62,6 +76,11 @@ void DistributedFlightServer::Shutdown() {
 }
 
 void DistributedFlightServer::Reset() {
+	{
+		const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+		clients.clear();
+		writable_client_id.clear();
+	}
 	Initialize();
 }
 
@@ -128,6 +147,95 @@ void DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
 	worker_manager->StartLocalWorkers(num_workers);
 }
 
+void DistributedFlightServer::SetClientLeaseTimeoutForTesting(std::chrono::milliseconds timeout) {
+	const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+	client_lease_timeout = timeout;
+}
+
+bool DistributedFlightServer::LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration) {
+	auto entry = clients.find(client_id);
+	if (entry == clients.end()) {
+		return false;
+	}
+	registration = entry->second;
+	return true;
+}
+
+void DistributedFlightServer::TouchClient(const shared_ptr<ClientRegistration> &registration) {
+	registration->last_seen = ClientLeaseClock();
+}
+
+void DistributedFlightServer::PruneExpiredClients() {
+	const auto expiration = ClientLeaseClock() - client_lease_timeout.count();
+	for (auto entry = clients.begin(); entry != clients.end();) {
+		if (entry->second->last_seen.load() >= expiration) {
+			++entry;
+			continue;
+		}
+		if (writable_client_id == entry->first) {
+			writable_client_id.clear();
+		}
+		entry = clients.erase(entry);
+	}
+}
+
+bool DistributedFlightServer::AuthorizeClient(const string &client_id, bool require_write,
+                                              distributed::DistributedResponse &resp) {
+	shared_ptr<ClientRegistration> registration;
+	if (!LookupClient(client_id, registration)) {
+		resp.set_success(false);
+		resp.set_error_message("Duckherder client is not registered with the control node");
+		return false;
+	}
+	if (require_write && registration->role != distributed::CLIENT_ROLE_READ_WRITE) {
+		resp.set_success(false);
+		resp.set_error_message("Duckherder client is read-only");
+		return false;
+	}
+	TouchClient(registration);
+	return true;
+}
+
+arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::RegisterClientRequest &req,
+                                                            distributed::DistributedResponse &resp) {
+	const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+	PruneExpiredClients();
+	if (req.role() != distributed::CLIENT_ROLE_READ_ONLY && req.role() != distributed::CLIENT_ROLE_READ_WRITE) {
+		resp.set_success(false);
+		resp.set_error_message("Duckherder client role must be specified");
+		return arrow::Status::OK();
+	}
+	if (req.role() == distributed::CLIENT_ROLE_READ_WRITE && !writable_client_id.empty()) {
+		resp.set_success(false);
+		resp.set_error_message("Control node already has a writable Duckherder client");
+		return arrow::Status::OK();
+	}
+
+	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
+	clients.emplace(client_id, make_shared_ptr<ClientRegistration>(req.role()));
+	if (req.role() == distributed::CLIENT_ROLE_READ_WRITE) {
+		writable_client_id = client_id;
+	}
+	resp.set_success(true);
+	resp.mutable_register_client()->set_client_id(client_id);
+	return arrow::Status::OK();
+}
+
+arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &client_id,
+                                                              distributed::DistributedResponse &resp) {
+	const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+	auto entry = clients.find(client_id);
+	if (entry != clients.end()) {
+		if (writable_client_id == client_id) {
+			writable_client_id.clear();
+		}
+		clients.erase(entry);
+	}
+	resp.set_success(true);
+	resp.mutable_unregister_client();
+	return arrow::Status::OK();
+}
+
 arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerCallContext &context,
                                                     const arrow::flight::Action &action,
                                                     std::unique_ptr<arrow::flight::ResultStream> *result) {
@@ -139,40 +247,75 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 	distributed::DistributedResponse response;
 	response.set_success(true);
 
+	std::shared_lock<std::shared_mutex> client_lock;
+	if (request.request_case() != distributed::DistributedRequest::kRegisterClient &&
+	    request.request_case() != distributed::DistributedRequest::kUnregisterClient) {
+		client_lock = std::shared_lock<std::shared_mutex>(clients_mutex);
+	}
+
 	switch (request.request_case()) {
+	case distributed::DistributedRequest::kRegisterClient:
+		ARROW_RETURN_NOT_OK(HandleRegisterClient(request.register_client(), response));
+		break;
+	case distributed::DistributedRequest::kUnregisterClient:
+		ARROW_RETURN_NOT_OK(HandleUnregisterClient(request.client_id(), response));
+		break;
 	// ========== Table perations ==========
 	case distributed::DistributedRequest::kCreateTable:
-		ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleCreateTable(request.create_table(), response));
+		}
 		break;
 	case distributed::DistributedRequest::kDropTable:
-		ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleDropTable(request.drop_table(), response));
+		}
 		break;
 	case distributed::DistributedRequest::kAlterTable:
-		ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleAlterTable(request.alter_table(), response));
+		}
 		break;
 
 	// ========== Index perations ==========
 	case distributed::DistributedRequest::kCreateIndex:
-		ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleCreateIndex(request.create_index(), response));
+		}
 		break;
 	case distributed::DistributedRequest::kDropIndex:
-		ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleDropIndex(request.drop_index(), response));
+		}
 		break;
 
 	// ========== Query & Utility Operations ==========
 	case distributed::DistributedRequest::kExecuteSql:
-		ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleExecuteSQL(request.execute_sql(), response));
+		}
 		break;
 	case distributed::DistributedRequest::kTableExists:
-		ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
+		if (AuthorizeClient(request.client_id(), false, response)) {
+			ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), response));
+		}
 		break;
 	case distributed::DistributedRequest::kLoadExtension:
-		ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
+		if (AuthorizeClient(request.client_id(), true, response)) {
+			ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), response));
+		}
 		break;
 
 	// ========== Stats & Monitoring Operations ==========
 	case distributed::DistributedRequest::kGetQueryExecutionStats:
-		ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
+		if (AuthorizeClient(request.client_id(), false, response)) {
+			ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
+		}
+		break;
+	case distributed::DistributedRequest::kClientHeartbeat:
+		if (AuthorizeClient(request.client_id(), false, response)) {
+			response.mutable_client_heartbeat();
+		}
 		break;
 
 	// ========== Error Cases ==========
@@ -180,6 +323,13 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		return arrow::Status::Invalid("Request type not set");
 	default:
 		return arrow::Status::Invalid("Unknown request type");
+	}
+
+	if (client_lock.owns_lock()) {
+		shared_ptr<ClientRegistration> registration;
+		if (LookupClient(request.client_id(), registration)) {
+			TouchClient(registration);
+		}
 	}
 
 	std::string response_data = response.SerializeAsString();
@@ -214,10 +364,17 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	if (request.request_case() != distributed::DistributedRequest::kScanTable) {
 		return arrow::Status::Invalid("DoGet only supports SCAN_TABLE requests");
 	}
+	const std::shared_lock<std::shared_mutex> client_lock(clients_mutex);
+	shared_ptr<ClientRegistration> registration;
+	if (!LookupClient(request.client_id(), registration)) {
+		return arrow::Status::Invalid("Duckherder client is not registered with the control node");
+	}
+	TouchClient(registration);
 
 	std::unique_ptr<arrow::flight::FlightDataStream> data_stream;
 	ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), data_stream));
 
+	TouchClient(registration);
 	*stream = std::move(data_stream);
 	return arrow::Status::OK();
 }
@@ -237,10 +394,22 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
                                                  std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                                  std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 	auto descriptor = reader->descriptor();
-	std::string table_name;
-	if (!descriptor.path.empty()) {
-		table_name = descriptor.path[0];
+	if (descriptor.path.size() < 2) {
+		return arrow::Status::Invalid("DoPut requires a registered client and table name");
 	}
+	const auto &client_id = descriptor.path[0];
+	const std::shared_lock<std::shared_mutex> client_lock(clients_mutex);
+	shared_ptr<ClientRegistration> registration;
+	if (!LookupClient(client_id, registration)) {
+		return arrow::Status::Invalid("Duckherder client is not registered with the control node");
+	}
+	if (registration->role != distributed::CLIENT_ROLE_READ_WRITE) {
+		return arrow::Status::Invalid("Duckherder client is read-only");
+	}
+	TouchClient(registration);
+
+	std::string table_name;
+	table_name = descriptor.path[1];
 
 	// Read all record batches.
 	ARROW_ASSIGN_OR_RAISE(auto schema, reader->GetSchema());
@@ -264,6 +433,7 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	auto buffer = arrow::Buffer::FromString(resp_data);
 	ARROW_RETURN_NOT_OK(writer->WriteMetadata(*buffer));
 
+	TouchClient(registration);
 	return arrow::Status::OK();
 }
 
