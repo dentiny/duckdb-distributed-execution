@@ -1,6 +1,6 @@
 #include "duckherder_pragmas.hpp"
 
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"

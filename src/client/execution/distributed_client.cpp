@@ -1,4 +1,4 @@
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 
 #include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"

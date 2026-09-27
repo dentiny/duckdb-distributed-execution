@@ -1,6 +1,6 @@
-#include "distributed_table_scan_function.hpp"
+#include "client/execution/distributed_table_scan_function.hpp"
 
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"

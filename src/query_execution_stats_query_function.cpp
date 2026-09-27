@@ -1,6 +1,6 @@
 #include "query_execution_stats_query_function.hpp"
 
-#include "client/distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"

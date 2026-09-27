@@ -1,6 +1,6 @@
-#include "distributed_create_index.hpp"
+#include "client/execution/distributed_create_index.hpp"
 
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/execution/execution_context.hpp"

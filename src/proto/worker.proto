@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package duckdb.distributed;
+
+// Execute a partition on a worker node.
+message ExecutePartitionRequest {
+  string sql = 1;
+  bytes partition_data = 2;
+  uint64 partition_id = 3;
+  uint64 total_partitions = 4;
+  bytes serialized_plan = 5;
+  repeated string column_names = 6;
+  repeated bytes column_types = 7;
+}
+
+// Partition data is returned over Arrow Flight.
+message ExecutePartitionResponse {
+  uint64 partition_id = 1;
+  uint64 row_count = 2;
+}
+
+message WorkerRegisterRequest {
+  string worker_id = 1;
+  string host = 2;
+  uint32 port = 3;
+  uint32 num_threads = 4;
+}
+
+message WorkerRegisterResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message WorkerHeartbeatRequest {
+  string worker_id = 1;
+  double load = 2;
+}
+
+message WorkerHeartbeatResponse {
+  bool healthy = 1;
+}

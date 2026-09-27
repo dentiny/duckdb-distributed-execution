@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "distributed_flight_client.hpp"
+#include "client/transport/distributed_flight_client.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"

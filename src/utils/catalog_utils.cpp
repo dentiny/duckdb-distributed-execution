@@ -1,6 +1,6 @@
 #include "utils/catalog_utils.hpp"
 
-#include "client/distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "client/duckherder_catalog.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"

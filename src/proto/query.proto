@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package duckdb.distributed;
+
+message ScanTableRequest {
+  string table_name = 1;
+  uint64 limit = 2;
+  uint64 offset = 3;
+}
+
+// Scan data is returned over Arrow Flight.
+message ScanTableResponse {
+  uint64 row_count = 1;
+}
+
+message TableExistsRequest {
+  string table_name = 1;
+}
+
+message TableExistsResponse {
+  bool exists = 1;
+}
+
+message GetQueryExecutionStatsRequest {}
+
+message QueryExecutionInfo {
+  string sql = 1;
+  string execution_mode = 2;
+  string merge_strategy = 3;
+  int64 query_duration_ms = 4;
+  uint64 num_workers_used = 5;
+  uint64 num_tasks_generated = 6;
+  int64 execution_start_time_ms = 7;
+}
+
+message GetQueryExecutionStatsResponse {
+  repeated QueryExecutionInfo query_executions = 1;
+}

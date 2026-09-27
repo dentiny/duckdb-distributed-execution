@@ -1,6 +1,6 @@
-#include "logical_remote_create_index.hpp"
+#include "client/execution/logical_remote_create_index.hpp"
 
-#include "distributed_create_index.hpp"
+#include "client/execution/distributed_create_index.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 
 namespace duckdb {

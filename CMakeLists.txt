@@ -20,7 +20,13 @@ include_directories(src/include/server)
 include_directories(${ARROW_INCLUDE_DIR})
 
 # Generate protobuf code.
-set(PROTO_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)
+set(PROTO_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/catalog.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/client.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/dml.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/query.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/worker.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
 
 # Add directory for generated protobuf headers.
@@ -33,14 +39,21 @@ endif()
 set(UTIL_SOURCES src/utils/catalog_utils.cpp src/utils/time_utils.cpp
                  src/utils/thread_utils.cpp src/utils/network_utils.cpp)
 
+set(CLIENT_EXECUTION_SOURCES
+    src/client/execution/distributed_alter_table.cpp
+    src/client/execution/distributed_client.cpp
+    src/client/execution/distributed_create_index.cpp
+    src/client/execution/distributed_delete.cpp
+    src/client/execution/distributed_insert.cpp
+    src/client/execution/distributed_table_scan_function.cpp
+    src/client/execution/logical_remote_alter_table.cpp
+    src/client/execution/logical_remote_create_index.cpp)
+
+set(CLIENT_TRANSPORT_SOURCES src/client/transport/distributed_flight_client.cpp)
+
 set(CLIENT_SOURCES
-    src/client/distributed_alter_table.cpp
-    src/client/distributed_client.cpp
-    src/client/distributed_create_index.cpp
-    src/client/distributed_delete.cpp
-    src/client/distributed_flight_client.cpp
-    src/client/distributed_insert.cpp
-    src/client/distributed_table_scan_function.cpp
+    ${CLIENT_EXECUTION_SOURCES}
+    ${CLIENT_TRANSPORT_SOURCES}
     src/client/duckherder_catalog.cpp
     src/client/duckherder_index_catalog_entry.cpp
     src/client/duckherder_pragmas.cpp
@@ -49,9 +62,7 @@ set(CLIENT_SOURCES
     src/client/duckherder_table_catalog_entry.cpp
     src/client/duckherder_transaction.cpp
     src/client/duckherder_transaction_manager.cpp
-    src/client/entry_lookup_info_hash_utils.cpp
-    src/client/logical_remote_alter_table.cpp
-    src/client/logical_remote_create_index.cpp)
+    src/client/entry_lookup_info_hash_utils.cpp)
 
 set(SERVER_DRIVER_SOURCES
     src/server/driver/distributed_executor.cpp

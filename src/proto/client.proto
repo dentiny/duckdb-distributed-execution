@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package duckdb.distributed;
+
+enum ClientRole {
+  CLIENT_ROLE_UNSPECIFIED = 0;
+  CLIENT_ROLE_READ_ONLY = 1;
+  CLIENT_ROLE_READ_WRITE = 2;
+}
+
+enum TransactionAction {
+  TRANSACTION_ACTION_UNSPECIFIED = 0;
+  TRANSACTION_ACTION_BEGIN = 1;
+  TRANSACTION_ACTION_COMMIT = 2;
+  TRANSACTION_ACTION_ROLLBACK = 3;
+}
+
+// Register a Duckherder attachment with the control node.
+message RegisterClientRequest {
+  ClientRole role = 1;
+}
+
+message RegisterClientResponse {
+  string client_id = 1;
+}
+
+message UnregisterClientRequest {}
+
+message UnregisterClientResponse {}
+
+message ClientHeartbeatRequest {}
+
+message ClientHeartbeatResponse {}
+
+// Apply a transaction lifecycle action to the registered client's connection.
+message TransactionRequest {
+  TransactionAction action = 1;
+}
+
+message TransactionResponse {}

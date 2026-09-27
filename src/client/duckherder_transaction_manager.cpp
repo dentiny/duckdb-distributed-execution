@@ -1,6 +1,6 @@
 #include "duckherder_transaction_manager.hpp"
 
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "duckherder_catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/attached_database.hpp"

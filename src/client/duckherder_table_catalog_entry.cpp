@@ -3,9 +3,9 @@
 
 #include "duckherder_table_catalog_entry.hpp"
 
-#include "distributed_alter_table.hpp"
-#include "distributed_client.hpp"
-#include "distributed_table_scan_function.hpp"
+#include "client/execution/distributed_alter_table.hpp"
+#include "client/execution/distributed_client.hpp"
+#include "client/execution/distributed_table_scan_function.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -15,7 +15,7 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/storage/data_table.hpp"
-#include "logical_remote_alter_table.hpp"
+#include "client/execution/logical_remote_alter_table.hpp"
 #include "duckherder_catalog.hpp"
 #include "duckherder_schema_catalog_entry.hpp"
 #include "utils/catalog_utils.hpp"

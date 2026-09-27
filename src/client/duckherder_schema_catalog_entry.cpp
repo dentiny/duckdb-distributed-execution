@@ -1,6 +1,6 @@
 #include "duckherder_schema_catalog_entry.hpp"
 
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"

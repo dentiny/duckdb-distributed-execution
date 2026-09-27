@@ -2,146 +2,17 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-enum ClientRole {
-  CLIENT_ROLE_UNSPECIFIED = 0;
-  CLIENT_ROLE_READ_ONLY = 1;
-  CLIENT_ROLE_READ_WRITE = 2;
-}
+import "catalog.proto";
+import "client.proto";
+import "dml.proto";
+import "query.proto";
+import "worker.proto";
 
-enum TransactionAction {
-  TRANSACTION_ACTION_UNSPECIFIED = 0;
-  TRANSACTION_ACTION_BEGIN = 1;
-  TRANSACTION_ACTION_COMMIT = 2;
-  TRANSACTION_ACTION_ROLLBACK = 3;
-}
-
-// Register a Duckherder attachment with the control node.
-message RegisterClientRequest {
-  ClientRole role = 1;
-}
-
-message UnregisterClientRequest {}
-
-message ClientHeartbeatRequest {}
-
-// Apply a transaction lifecycle action to the registered client's connection.
-message TransactionRequest {
-  TransactionAction action = 1;
-}
-
-// Execute SQL request.
-message ExecuteSQLRequest {
-  string sql = 1;
-}
-
-// Create table request.
-// If the table already exists, return error.
-message CreateTableRequest {
-  // Table creation SQL statement.
-  string sql = 1;
-}
-
-// Drop table request.
-// If the table doesn't exist, nothing happens.
-message DropTableRequest {
-  string table_name = 1;
-}
-
-// Scan table request.
-message ScanTableRequest {
-  string table_name = 1;
-  uint64 limit = 2;
-  uint64 offset = 3;
-}
-
-// Delete data request.
-message DeleteDataRequest {
-  string table_name = 1;
-  string where_clause = 2;
-}
-
-// Table exists request.
-message TableExistsRequest {
-  string table_name = 1;
-}
-
-// Create index request.
-// If the index already exists, return error.
-message CreateIndexRequest {
-  // Index creation SQL statement.
-  string sql = 1;
-}
-
-// Drop index request.
-// If the index doesn't exist, nothing happens.
-message DropIndexRequest {
-  string index_name = 1;
-}
-
-// Alter table request.
-message AlterTableRequest {
-  // ALTER TABLE SQL statement.
-  string sql = 1;
-}
-
-// Load extension request.
-message LoadExtensionRequest {
-  // Extension name or path.
-  string extension_name = 1;
-  // Optional repository.
-  string repository = 2;
-  // Optional version.
-  string version = 3;
-}
-
-// Execute partition request, used for worker nodes.
-message ExecutePartitionRequest {
-  // SQL query to execute on partition.
-  string sql = 1;
-  // Serialized partition data (Arrow IPC format).
-  bytes partition_data = 2;
-  // Partition ID for tracking.
-  uint64 partition_id = 3;
-  // Total number of partitions.
-  uint64 total_partitions = 4;
-  // Serialized logical plan fragment (BinarySerializer format).
-  bytes serialized_plan = 5;
-  // Column names for the result.
-  repeated string column_names = 6;
-  // Serialized LogicalType definitions for the result columns.
-  repeated bytes column_types = 7;
-}
-
-// Worker registration request.
-message WorkerRegisterRequest {
-  // Worker unique identifier
-  string worker_id = 1;
-  // Worker host address
-  string host = 2;
-  // Worker port
-  uint32 port = 3;
-  // Number of threads available
-  uint32 num_threads = 4;
-}
-
-// Worker heartbeat request.
-message WorkerHeartbeatRequest {
-  string worker_id = 1;
-  // Current load (0.0 to 1.0)
-  double load = 2;
-}
-
-// Get query execution stats request.
-message GetQueryExecutionStatsRequest {
-  // Empty - returns all stats
-}
-
-// Request message for distributed operations.
+// Top-level envelope for client, control-node, and worker operations.
 message DistributedRequest {
   // Opaque identifier returned by RegisterClientResponse.
   string client_id = 1;
 
-  // Request-specific parameters.
   oneof request {
     // Client registration and lease management.
     RegisterClientRequest register_client = 2;
@@ -177,95 +48,11 @@ message DistributedRequest {
   }
 }
 
-// Execute SQL response.
-message ExecuteSQLResponse {
-  uint64 rows_affected = 1;
-}
-
-// Create table response.
-message CreateTableResponse {}
-
-// Drop table response.
-message DropTableResponse {}
-
-// Scan table response, data returned via Arrow Flight.
-message ScanTableResponse {
-  uint64 row_count = 1;
-}
-
-// Delete data response.
-message DeleteDataResponse {
-  uint64 rows_deleted = 1;
-}
-
-// Table exists response.
-message TableExistsResponse {
-  bool exists = 1;
-}
-
-// Create index response.
-message CreateIndexResponse {}
-
-// Drop index response.
-message DropIndexResponse {}
-
-// Alter table response.
-message AlterTableResponse {}
-
-// Load extension response.
-message LoadExtensionResponse {}
-
-// Execute partition response (returns results via Arrow Flight).
-message ExecutePartitionResponse {
-  uint64 partition_id = 1;
-  uint64 row_count = 2;
-}
-
-// Worker registration response.
-message WorkerRegisterResponse {
-  bool accepted = 1;
-  string message = 2;
-}
-
-// Worker heartbeat response.
-message WorkerHeartbeatResponse {
-  bool healthy = 1;
-}
-
-// Individual query execution information.
-message QueryExecutionInfo {
-  string sql = 1;
-  string execution_mode = 2;
-  string merge_strategy = 3;
-  int64 query_duration_ms = 4;
-  uint64 num_workers_used = 5;
-  uint64 num_tasks_generated = 6;
-  int64 execution_start_time_ms = 7;
-}
-
-// Get query execution stats response.
-message GetQueryExecutionStatsResponse {
-  repeated QueryExecutionInfo query_executions = 1;
-}
-
-message RegisterClientResponse {
-  string client_id = 1;
-}
-
-message UnregisterClientResponse {}
-
-message ClientHeartbeatResponse {}
-
-message TransactionResponse {}
-
-// Response message for distributed operations.
 message DistributedResponse {
-  // Whether option succeeds.
-  // TODO(hjiang): We don't need to craft error message inside of the response, instead we could use grpc response directly.
   bool success = 1;
+  // TODO(hjiang): Return transport errors through gRPC instead of duplicating them here.
   string error_message = 2;
 
-  // Response-specific data.
   oneof response {
     // Client registration and lease management.
     RegisterClientResponse register_client = 3;

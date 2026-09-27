@@ -1,6 +1,6 @@
-#include "distributed_alter_table.hpp"
+#include "client/execution/distributed_alter_table.hpp"
 
-#include "distributed_client.hpp"
+#include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"

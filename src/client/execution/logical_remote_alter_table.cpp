@@ -1,6 +1,6 @@
-#include "logical_remote_alter_table.hpp"
+#include "client/execution/logical_remote_alter_table.hpp"
 
-#include "distributed_alter_table.hpp"
+#include "client/execution/distributed_alter_table.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 
 namespace duckdb {

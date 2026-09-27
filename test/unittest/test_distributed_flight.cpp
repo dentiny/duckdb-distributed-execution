@@ -1,6 +1,6 @@
 #include "catch/catch.hpp"
 
-#include "client/distributed_flight_client.hpp"
+#include "client/transport/distributed_flight_client.hpp"
 #include "distributed.pb.h"
 #include "server/driver/distributed_flight_server.hpp"
 

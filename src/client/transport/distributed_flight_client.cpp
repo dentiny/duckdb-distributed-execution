@@ -1,4 +1,4 @@
-#include "distributed_flight_client.hpp"
+#include "client/transport/distributed_flight_client.hpp"
 
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
