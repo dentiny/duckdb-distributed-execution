@@ -5,9 +5,24 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/statement/prepare_statement.hpp"
 
 namespace duckdb {
+
+string GetRemoteStatementSQL(ClientContext &context) {
+	const auto &current_query = context.GetCurrentQuery();
+
+	Parser parser;
+	parser.ParseQuery(current_query);
+	if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::PREPARE_STATEMENT) {
+		auto &prepare = parser.statements[0]->Cast<PrepareStatement>();
+		return prepare.statement->ToString();
+	}
+	return current_query;
+}
 
 string SanitizeQuery(const string &sql, const string &catalog_name) {
 	string result = sql;

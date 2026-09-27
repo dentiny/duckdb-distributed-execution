@@ -1,0 +1,80 @@
+# name: test/sql/prepared_dml.test
+# description: Prepared DML stores and executes the complete inner statement on the control node
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8847);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8847);
+
+statement ok
+PRAGMA duckherder_register_remote_table('prepared_dml', 'prepared_dml');
+
+statement ok
+CREATE TABLE dh.prepared_dml (id INTEGER, value VARCHAR);
+
+statement ok
+INSERT INTO dh.prepared_dml VALUES (1, 'one'), (2, 'two');
+
+statement ok
+PREPARE prepared_insert AS
+    INSERT INTO dh.prepared_dml VALUES (3, 'three');
+
+query I
+SELECT COUNT(*) FROM dh.prepared_dml;
+----
+2
+
+statement ok
+EXECUTE prepared_insert;
+
+statement ok
+PREPARE prepared_update AS
+    UPDATE dh.prepared_dml SET value = upper(value) WHERE id = 2;
+
+statement ok
+EXECUTE prepared_update;
+
+statement ok
+PREPARE prepared_delete AS
+    DELETE FROM dh.prepared_dml WHERE id = 1;
+
+statement ok
+EXECUTE prepared_delete;
+
+query II
+SELECT id, value FROM dh.prepared_dml ORDER BY id;
+----
+2	TWO
+3	three
+
+statement ok
+PREPARE parameterized_insert AS
+    INSERT INTO dh.prepared_dml VALUES ($1, $2);
+
+statement ok
+EXECUTE parameterized_insert(4, 'four');
+
+statement ok
+PREPARE parameterized_update AS
+    UPDATE dh.prepared_dml SET value = $1 WHERE id = $2;
+
+statement ok
+EXECUTE parameterized_update('FOUR', 4);
+
+statement ok
+PREPARE parameterized_delete AS
+    DELETE FROM dh.prepared_dml WHERE id = $1;
+
+statement ok
+EXECUTE parameterized_delete(3);
+
+query II
+SELECT id, value FROM dh.prepared_dml ORDER BY id;
+----
+2	TWO
+4	FOUR
