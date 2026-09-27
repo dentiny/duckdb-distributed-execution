@@ -18,7 +18,7 @@ struct RemoteDMLSourceState : public GlobalSourceState {
 	bool executed = false;
 };
 
-string BindPreparedStatementParameters(ClientContext &context, const string &sql) {
+string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
 	Parser parser;
 	parser.ParseQuery(context.GetCurrentQuery());
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::EXECUTE_STATEMENT) {
@@ -32,21 +32,22 @@ string BindPreparedStatementParameters(ClientContext &context, const string &sql
 
 	// The prepared statement exists only in the client DuckDB connection. Recreate it under a unique name on the
 	// client's Control Node connection so DuckDB can bind the EXECUTE arguments without unsafe textual substitution.
-	auto statement_name =
-	    KeywordHelper::WriteQuoted("__duckherder_remote_" + UUID::ToString(UUID::GenerateRandomUUID()), '"');
+	auto statement_name = KeywordHelper::WriteQuoted(
+	    StringUtil::Format("__duckherder_remote_%s", UUID::ToString(UUID::GenerateRandomUUID())), '"');
 	vector<string> arguments;
 	arguments.reserve(execute.named_values.size());
 	for (auto &entry : execute.named_values) {
-		arguments.push_back(KeywordHelper::WriteQuoted(entry.first, '"') + " := " + entry.second->ToString());
+		arguments.push_back(StringUtil::Format("%s := %s", KeywordHelper::WriteQuoted(entry.first, '"'),
+		                                       entry.second->ToString()));
 	}
 	auto statement_sql = sql;
 	StringUtil::RTrim(statement_sql);
-	auto prepare_sql = "PREPARE " + statement_name + " AS " + statement_sql;
+	auto prepare_sql = StringUtil::Format("PREPARE %s AS %s", statement_name, statement_sql);
 	if (prepare_sql.back() != ';') {
-		prepare_sql += ";";
+		prepare_sql = StringUtil::Format("%s;", prepare_sql);
 	}
-	return prepare_sql + "\nEXECUTE " + statement_name + "(" + StringUtil::Join(arguments, ", ") + ");\nDEALLOCATE " +
-	       statement_name + ";";
+	return StringUtil::Format("%s\nEXECUTE %s(%s);\nDEALLOCATE %s;", prepare_sql, statement_name,
+	                          StringUtil::Join(arguments, ", "), statement_name);
 }
 
 } // namespace
@@ -70,7 +71,7 @@ SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, D
 	}
 	state.executed = true;
 
-	auto executable_sql = BindPreparedStatementParameters(context.client, sql);
+	auto executable_sql = BuildRemotePreparedDMLSQL(context.client, sql);
 	auto result = GetDistributedClient(table).ExecuteStatement(executable_sql, table.catalog.GetName());
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to execute DML on control node: " + result->GetError());
