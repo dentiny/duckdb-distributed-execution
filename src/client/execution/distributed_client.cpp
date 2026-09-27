@@ -56,9 +56,13 @@ string GetTransactionError(const arrow::Status &status, const distributed::Distr
 	if (response.success()) {
 		return {};
 	}
-	auto unknown_outcome =
-	    (response.has_transaction() && response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) ||
-	    (action == distributed::TRANSACTION_ACTION_COMMIT && !response.has_transaction());
+	bool unknown_outcome = false;
+	if (response.has_transaction() && response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
+		unknown_outcome = true;
+	}
+	if (action == distributed::TRANSACTION_ACTION_COMMIT && !response.has_transaction()) {
+		unknown_outcome = true;
+	}
 	return unknown_outcome
 	           ? StringUtil::Format("%s %s outcome is unknown: %s", scope, action_name, response.error_message())
 	           : response.error_message();
