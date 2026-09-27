@@ -30,6 +30,9 @@ public:
 	// Execute arbitrary SQL.
 	arrow::Status ExecuteSQL(const string &sql, distributed::DistributedResponse &response);
 
+	// Apply a transaction lifecycle action to this client's server-side connection.
+	arrow::Status ManageTransaction(distributed::TransactionAction action, distributed::DistributedResponse &response);
+
 	// Create table.
 	arrow::Status CreateTable(const string &create_sql, distributed::DistributedResponse &response);
 

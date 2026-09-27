@@ -94,6 +94,13 @@ arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, distributed
 	return SendAction(req, response);
 }
 
+arrow::Status DistributedFlightClient::ManageTransaction(distributed::TransactionAction action,
+                                                         distributed::DistributedResponse &response) {
+	distributed::DistributedRequest req;
+	req.mutable_transaction()->set_action(action);
+	return SendAction(req, response);
+}
+
 arrow::Status DistributedFlightClient::CreateTable(const string &create_sql,
                                                    distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;

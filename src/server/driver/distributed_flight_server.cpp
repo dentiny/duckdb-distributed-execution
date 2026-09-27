@@ -231,6 +231,35 @@ arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &clie
 	return arrow::Status::OK();
 }
 
+arrow::Status DistributedFlightServer::HandleTransaction(const distributed::TransactionRequest &req,
+                                                         ClientRegistration &registration,
+                                                         distributed::DistributedResponse &resp) {
+	try {
+		switch (req.action()) {
+		case distributed::TRANSACTION_ACTION_BEGIN:
+			registration.connection->BeginTransaction();
+			break;
+		case distributed::TRANSACTION_ACTION_COMMIT:
+			registration.connection->Commit();
+			break;
+		case distributed::TRANSACTION_ACTION_ROLLBACK:
+			registration.connection->Rollback();
+			break;
+		default:
+			resp.set_success(false);
+			resp.set_error_message("Transaction action must be BEGIN, COMMIT, or ROLLBACK");
+			return arrow::Status::OK();
+		}
+	} catch (const std::exception &ex) {
+		resp.set_success(false);
+		resp.set_error_message(ex.what());
+		return arrow::Status::OK();
+	}
+	resp.set_success(true);
+	resp.mutable_transaction();
+	return arrow::Status::OK();
+}
+
 arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerCallContext &context,
                                                     const arrow::flight::Action &action,
                                                     std::unique_ptr<arrow::flight::ResultStream> *result) {
@@ -255,6 +284,12 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		break;
 	case distributed::DistributedRequest::kUnregisterClient:
 		ARROW_RETURN_NOT_OK(HandleUnregisterClient(request.client_id(), response));
+		break;
+	case distributed::DistributedRequest::kTransaction:
+		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
+			const lock_guard<mutex> lock(registration->connection_mutex);
+			ARROW_RETURN_NOT_OK(HandleTransaction(request.transaction(), *registration, response));
+		}
 		break;
 	// ========== Table perations ==========
 	case distributed::DistributedRequest::kCreateTable:

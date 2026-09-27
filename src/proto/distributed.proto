@@ -8,6 +8,13 @@ enum ClientRole {
   CLIENT_ROLE_READ_WRITE = 2;
 }
 
+enum TransactionAction {
+  TRANSACTION_ACTION_UNSPECIFIED = 0;
+  TRANSACTION_ACTION_BEGIN = 1;
+  TRANSACTION_ACTION_COMMIT = 2;
+  TRANSACTION_ACTION_ROLLBACK = 3;
+}
+
 // Register a Duckherder attachment with the control node.
 message RegisterClientRequest {
   ClientRole role = 1;
@@ -16,6 +23,11 @@ message RegisterClientRequest {
 message UnregisterClientRequest {}
 
 message ClientHeartbeatRequest {}
+
+// Apply a transaction lifecycle action to the registered client's connection.
+message TransactionRequest {
+  TransactionAction action = 1;
+}
 
 // Execute SQL request.
 message ExecuteSQLRequest {
@@ -159,6 +171,9 @@ message DistributedRequest {
 
     // Monitoring.
     GetQueryExecutionStatsRequest get_query_execution_stats = 18;
+
+    // Transaction lifecycle.
+    TransactionRequest transaction = 19;
   }
 }
 
@@ -241,6 +256,8 @@ message UnregisterClientResponse {}
 
 message ClientHeartbeatResponse {}
 
+message TransactionResponse {}
+
 // Response message for distributed operations.
 message DistributedResponse {
   // Whether option succeeds.
@@ -278,5 +295,8 @@ message DistributedResponse {
 
     // Monitoring.
     GetQueryExecutionStatsResponse get_query_execution_stats = 19;
+
+    // Transaction lifecycle.
+    TransactionResponse transaction = 20;
   }
 }

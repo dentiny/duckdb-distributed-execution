@@ -39,6 +39,10 @@ public:
 	// Execute arbitrary SQL on the server.
 	unique_ptr<QueryResult> ExecuteSQL(const string &sql);
 
+	unique_ptr<QueryResult> BeginTransaction();
+	unique_ptr<QueryResult> CommitTransaction();
+	unique_ptr<QueryResult> RollbackTransaction();
+
 	// Check if table exists.
 	bool TableExists(const string &table_name);
 
@@ -78,6 +82,8 @@ public:
 	unique_ptr<QueryResult> GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out);
 
 private:
+	unique_ptr<QueryResult> ManageTransaction(distributed::TransactionAction action);
+
 	string server_url;
 	unique_ptr<DistributedFlightClient> client;
 };

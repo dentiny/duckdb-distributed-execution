@@ -7,6 +7,8 @@
 
 namespace duckdb {
 
+class DistributedClient;
+
 class DuckherderTransactionManager : public DuckTransactionManager {
 public:
 	explicit DuckherderTransactionManager(AttachedDatabase &db);
@@ -26,6 +28,10 @@ public:
 	}
 
 private:
+	// Returns the distributed client owned by this attached database's catalog.
+	DistributedClient &GetClient();
+
+	AttachedDatabase &attached_database;
 	unique_ptr<DuckTransactionManager> duckdb_transaction_manager;
 };
 

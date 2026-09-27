@@ -124,6 +124,35 @@ unique_ptr<QueryResult> DistributedClient::ExecuteSQL(const string &sql) {
 	                                          std::move(collection), ClientProperties());
 }
 
+unique_ptr<QueryResult> DistributedClient::BeginTransaction() {
+	return ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN);
+}
+
+unique_ptr<QueryResult> DistributedClient::CommitTransaction() {
+	return ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT);
+}
+
+unique_ptr<QueryResult> DistributedClient::RollbackTransaction() {
+	return ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK);
+}
+
+unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::TransactionAction action) {
+	distributed::DistributedResponse response;
+	auto status = client->ManageTransaction(action, response);
+	if (!status.ok()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+	}
+	if (!response.success()) {
+		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+	}
+
+	vector<string> names;
+	vector<LogicalType> types;
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	return make_uniq<MaterializedQueryResult>(StatementType::TRANSACTION_STATEMENT, StatementProperties(), names,
+	                                          std::move(collection), ClientProperties());
+}
+
 unique_ptr<QueryResult> DistributedClient::CreateTable(const string &create_sql) {
 	distributed::DistributedResponse response;
 	auto status = client->CreateTable(create_sql, response);

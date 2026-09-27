@@ -129,6 +129,8 @@ private:
 	arrow::Status HandleRegisterClient(const distributed::RegisterClientRequest &req,
 	                                   distributed::DistributedResponse &resp);
 	arrow::Status HandleUnregisterClient(const string &client_id, distributed::DistributedResponse &resp);
+	arrow::Status HandleTransaction(const distributed::TransactionRequest &req, ClientRegistration &registration,
+	                                distributed::DistributedResponse &resp);
 	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, ClientRegistration &registration,
 	                               distributed::DistributedResponse &resp);
 

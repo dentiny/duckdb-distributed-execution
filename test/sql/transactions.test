@@ -1,0 +1,57 @@
+# name: test/sql/transactions.test
+# description: Transaction control is forwarded to the client's control-node connection
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8839);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8839);
+
+statement ok
+PRAGMA duckherder_register_remote_table('transaction_test', 'transaction_test');
+
+statement ok
+CREATE TABLE dh.transaction_test (id INTEGER);
+
+statement ok
+INSERT INTO dh.transaction_test VALUES (1);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO dh.transaction_test VALUES (2);
+
+# The client's control-node connection sees its own uncommitted write.
+query I
+SELECT id FROM dh.transaction_test ORDER BY id;
+----
+1
+2
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT id FROM dh.transaction_test ORDER BY id;
+----
+1
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO dh.transaction_test VALUES (3);
+
+statement ok
+COMMIT;
+
+query I
+SELECT id FROM dh.transaction_test ORDER BY id;
+----
+1
+3
