@@ -2,29 +2,6 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-// Request types for distributed operations.
-enum RequestType {
-  REQUEST_TYPE_UNSPECIFIED = 0;
-  EXECUTE_SQL = 1;
-  CREATE_TABLE = 2;
-  DROP_TABLE = 3;
-  INSERT_DATA = 4;
-  SCAN_TABLE = 5;
-  DELETE_DATA = 6;
-  TABLE_EXISTS = 7;
-  CREATE_INDEX = 8;
-  DROP_INDEX = 9;
-  ALTER_TABLE = 10;
-  LOAD_EXTENSION = 11;
-  EXECUTE_PARTITION = 12;
-  WORKER_REGISTER = 13;
-  WORKER_HEARTBEAT = 14;
-  GET_QUERY_EXECUTION_STATS = 15;
-  REGISTER_CLIENT = 16;
-  UNREGISTER_CLIENT = 17;
-  CLIENT_HEARTBEAT = 18;
-}
-
 enum ClientRole {
   CLIENT_ROLE_UNSPECIFIED = 0;
   CLIENT_ROLE_READ_ONLY = 1;
@@ -149,28 +126,40 @@ message GetQueryExecutionStatsRequest {
 
 // Request message for distributed operations.
 message DistributedRequest {
+  // Opaque identifier returned by RegisterClientResponse.
+  string client_id = 1;
+
   // Request-specific parameters.
   oneof request {
-    ExecuteSQLRequest execute_sql = 1;
-    CreateTableRequest create_table = 2;
-    DropTableRequest drop_table = 3;
-    ScanTableRequest scan_table = 4;
-    DeleteDataRequest delete_data = 5;
-    TableExistsRequest table_exists = 6;
-    CreateIndexRequest create_index = 7;
-    DropIndexRequest drop_index = 8;
-    AlterTableRequest alter_table = 9;
-    LoadExtensionRequest load_extension = 10;
-    ExecutePartitionRequest execute_partition = 11;
-    WorkerRegisterRequest worker_register = 12;
-    WorkerHeartbeatRequest worker_heartbeat = 13;
-    GetQueryExecutionStatsRequest get_query_execution_stats = 14;
-    RegisterClientRequest register_client = 16;
-    UnregisterClientRequest unregister_client = 17;
-    ClientHeartbeatRequest client_heartbeat = 18;
+    // Client registration and lease management.
+    RegisterClientRequest register_client = 2;
+    UnregisterClientRequest unregister_client = 3;
+    ClientHeartbeatRequest client_heartbeat = 4;
+
+    // DML and generic SQL execution.
+    ExecuteSQLRequest execute_sql = 5;
+    DeleteDataRequest delete_data = 6;
+
+    // Query operations.
+    ScanTableRequest scan_table = 7;
+    TableExistsRequest table_exists = 8;
+
+    // DDL and catalog operations.
+    CreateTableRequest create_table = 9;
+    DropTableRequest drop_table = 10;
+    AlterTableRequest alter_table = 11;
+    CreateIndexRequest create_index = 12;
+    DropIndexRequest drop_index = 13;
+    LoadExtensionRequest load_extension = 14;
+
+    // Control-worker communication.
+    ExecutePartitionRequest execute_partition = 15;
+    WorkerRegisterRequest worker_register = 16;
+    WorkerHeartbeatRequest worker_heartbeat = 17;
+
+    // Monitoring.
+    GetQueryExecutionStatsRequest get_query_execution_stats = 18;
   }
-  // Opaque identifier returned by RegisterClientResponse.
-  string client_id = 15;
 }
 
 // Execute SQL response.
@@ -261,22 +250,33 @@ message DistributedResponse {
 
   // Response-specific data.
   oneof response {
-    ExecuteSQLResponse execute_sql = 3;
-    CreateTableResponse create_table = 4;
-    DropTableResponse drop_table = 5;
-    ScanTableResponse scan_table = 6;
+    // Client registration and lease management.
+    RegisterClientResponse register_client = 3;
+    UnregisterClientResponse unregister_client = 4;
+    ClientHeartbeatResponse client_heartbeat = 5;
+
+    // DML and generic SQL execution.
+    ExecuteSQLResponse execute_sql = 6;
     DeleteDataResponse delete_data = 7;
-    TableExistsResponse table_exists = 8;
-    CreateIndexResponse create_index = 9;
-    DropIndexResponse drop_index = 10;
-    AlterTableResponse alter_table = 11;
-    LoadExtensionResponse load_extension = 12;
-    ExecutePartitionResponse execute_partition = 13;
-    WorkerRegisterResponse worker_register = 14;
-    WorkerHeartbeatResponse worker_heartbeat = 15;
-    GetQueryExecutionStatsResponse get_query_execution_stats = 16;
-    RegisterClientResponse register_client = 17;
-    UnregisterClientResponse unregister_client = 18;
-    ClientHeartbeatResponse client_heartbeat = 19;
+
+    // Query operations.
+    ScanTableResponse scan_table = 8;
+    TableExistsResponse table_exists = 9;
+
+    // DDL and catalog operations.
+    CreateTableResponse create_table = 10;
+    DropTableResponse drop_table = 11;
+    AlterTableResponse alter_table = 12;
+    CreateIndexResponse create_index = 13;
+    DropIndexResponse drop_index = 14;
+    LoadExtensionResponse load_extension = 15;
+
+    // Control-worker communication.
+    ExecutePartitionResponse execute_partition = 16;
+    WorkerRegisterResponse worker_register = 17;
+    WorkerHeartbeatResponse worker_heartbeat = 18;
+
+    // Monitoring.
+    GetQueryExecutionStatsResponse get_query_execution_stats = 19;
   }
 }

@@ -165,12 +165,17 @@ private:
 		explicit ClientRegistration(distributed::ClientRole role_p);
 
 		distributed::ClientRole role;
+		// Last authorized request time in steady-clock milliseconds, updated concurrently by RPC handlers.
 		std::atomic<int64_t> last_seen;
 	};
 
+	// Look up a registration while the caller holds clients_mutex.
 	bool LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration);
+	// Renew a client's lease after an authorized request.
 	void TouchClient(const shared_ptr<ClientRegistration> &registration);
+	// Remove expired registrations while the caller holds clients_mutex exclusively.
 	void PruneExpiredClients();
+	// Validate registration and role while the caller holds clients_mutex, renewing the lease on success.
 	bool AuthorizeClient(const string &client_id, bool require_write, distributed::DistributedResponse &resp);
 	string host;
 	int port;

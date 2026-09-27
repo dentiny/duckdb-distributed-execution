@@ -9,6 +9,7 @@
 #include "duckdb/main/config.hpp"
 #include "query_common.hpp"
 #include "server/driver/duckling_storage.hpp"
+#include "utils/time_utils.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -18,17 +19,8 @@
 
 namespace duckdb {
 
-namespace {
-
-int64_t ClientLeaseClock() {
-	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-	    .count();
-}
-
-} // namespace
-
 DistributedFlightServer::ClientRegistration::ClientRegistration(distributed::ClientRole role_p)
-    : role(role_p), last_seen(ClientLeaseClock()) {
+    : role(role_p), last_seen(GetSteadyNowMilliSecSinceEpoch()) {
 }
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
@@ -162,11 +154,11 @@ bool DistributedFlightServer::LookupClient(const string &client_id, shared_ptr<C
 }
 
 void DistributedFlightServer::TouchClient(const shared_ptr<ClientRegistration> &registration) {
-	registration->last_seen = ClientLeaseClock();
+	registration->last_seen = GetSteadyNowMilliSecSinceEpoch();
 }
 
 void DistributedFlightServer::PruneExpiredClients() {
-	const auto expiration = ClientLeaseClock() - client_lease_timeout.count();
+	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - client_lease_timeout.count();
 	for (auto entry = clients.begin(); entry != clients.end();) {
 		if (entry->second->last_seen.load() >= expiration) {
 			++entry;
