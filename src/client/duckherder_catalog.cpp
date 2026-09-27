@@ -97,7 +97,7 @@ PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, Physical
 	// Attempt insertion into remote table if registered.
 	bool is_remote = IsRemoteTable(op.table.name);
 	if (is_remote) {
-		auto sql = RewriteRemoteDMLStatement(context, *this);
+		auto sql = context.GetCurrentQuery();
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push INSERT to control node: %s", sql));
 		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::INSERT, op.types, op.table, std::move(sql),
 		                                       op.estimated_cardinality);
@@ -115,7 +115,7 @@ PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, Physical
 	// Attempt deletion from remote table if registered.
 	bool is_remote = IsRemoteTable(op.table.name);
 	if (is_remote) {
-		auto sql = RewriteRemoteDMLStatement(context, *this);
+		auto sql = context.GetCurrentQuery();
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push DELETE to control node: %s", sql));
 		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::DELETE_OPERATOR, op.types, op.table,
 		                                       std::move(sql), op.estimated_cardinality);
@@ -130,7 +130,7 @@ PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, Physical
                                                 LogicalUpdate &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanUpdate");
 	if (IsRemoteTable(op.table.name)) {
-		auto sql = RewriteRemoteDMLStatement(context, *this);
+		auto sql = context.GetCurrentQuery();
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPDATE to control node: %s", sql));
 		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::UPDATE, op.types, op.table, std::move(sql),
 		                                       op.estimated_cardinality);

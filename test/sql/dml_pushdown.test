@@ -26,6 +26,9 @@ CREATE TABLE dh.dml_target (id INTEGER, value VARCHAR);
 statement ok
 INSERT INTO dh.dml_source VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
+statement ok
+INSERT INTO dh.dml_target VALUES (99, 'dh.literal_is_not_a_catalog');
+
 # The SELECT child is executed by the Control Node, not materialized by the client.
 statement ok
 INSERT INTO dh.dml_target
@@ -36,6 +39,7 @@ SELECT id, value FROM dh.dml_target ORDER BY id;
 ----
 12	TWO
 13	THREE
+99	dh.literal_is_not_a_catalog
 
 statement ok
 UPDATE dh.dml_target SET value = value || '_UPDATED' WHERE id = 12;
@@ -48,6 +52,7 @@ query II
 SELECT id, value FROM dh.dml_target ORDER BY id;
 ----
 12	TWO_UPDATED
+99	dh.literal_is_not_a_catalog
 
 statement ok
 BEGIN;
@@ -62,6 +67,7 @@ query II
 SELECT id, value FROM dh.dml_target ORDER BY id;
 ----
 12	ROLLED_BACK
+99	dh.literal_is_not_a_catalog
 
 statement ok
 ROLLBACK;
@@ -70,6 +76,7 @@ query II
 SELECT id, value FROM dh.dml_target ORDER BY id;
 ----
 12	TWO_UPDATED
+99	dh.literal_is_not_a_catalog
 
 query II
 SELECT id, value FROM dh.dml_source ORDER BY id;

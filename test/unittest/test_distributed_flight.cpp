@@ -123,14 +123,14 @@ TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight
 	REQUIRE(reader.Connect().ok());
 
 	distributed::DistributedResponse response;
-	REQUIRE(writer.CreateTable("CREATE TABLE client_connection_isolation (id INTEGER)", response).ok());
+	REQUIRE(writer.ExecuteStatement("CREATE TABLE client_connection_isolation (id INTEGER)", "", response).ok());
 	REQUIRE(response.success());
-	REQUIRE(writer.ExecuteSQL("INSERT INTO client_connection_isolation VALUES (1)", response).ok());
+	REQUIRE(writer.ExecuteStatement("INSERT INTO client_connection_isolation VALUES (1)", "", response).ok());
 	REQUIRE(response.success());
 
-	REQUIRE(writer.ExecuteSQL("BEGIN TRANSACTION", response).ok());
+	REQUIRE(writer.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE(response.success());
-	REQUIRE(writer.ExecuteSQL("INSERT INTO client_connection_isolation VALUES (2)", response).ok());
+	REQUIRE(writer.ExecuteStatement("INSERT INTO client_connection_isolation VALUES (2)", "", response).ok());
 	REQUIRE(response.success());
 	REQUIRE(CountRows(reader, "client_connection_isolation") == 1);
 
@@ -140,7 +140,8 @@ TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight
 	REQUIRE(replacement_writer.Connect().ok());
 	REQUIRE(CountRows(replacement_writer, "client_connection_isolation") == 1);
 
-	REQUIRE(replacement_writer.ExecuteSQL("INSERT INTO client_connection_isolation VALUES (3)", response).ok());
+	REQUIRE(
+	    replacement_writer.ExecuteStatement("INSERT INTO client_connection_isolation VALUES (3)", "", response).ok());
 	REQUIRE(response.success());
 	REQUIRE(CountRows(reader, "client_connection_isolation") == 2);
 }
@@ -151,7 +152,7 @@ TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse create_resp;
-	auto status = client.CreateTable("CREATE TABLE test_exists (id INTEGER)", create_resp);
+	auto status = client.ExecuteStatement("CREATE TABLE test_exists (id INTEGER)", "", create_resp);
 	REQUIRE(status.ok());
 	REQUIRE(create_resp.success());
 
@@ -172,7 +173,7 @@ TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse response;
-	auto status = client.ExecuteSQL("INVALID SQL SYNTAX", response);
+	auto status = client.ExecuteStatement("INVALID SQL SYNTAX", "", response);
 
 	REQUIRE(status.ok());
 	REQUIRE_FALSE(response.success());

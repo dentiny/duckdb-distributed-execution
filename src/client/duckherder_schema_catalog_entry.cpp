@@ -197,7 +197,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 		const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(create_sql);
 		auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 		auto &client = dh_catalog.GetClient();
-		auto result = client.CreateTable(create_sql);
+		auto result = client.ExecuteStatement(create_sql);
 		if (result->HasError()) {
 			throw Exception(ExceptionType::CATALOG, "Failed to create table on server: " + result->GetError());
 		}
@@ -348,7 +348,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
 	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 	auto &client = dh_catalog.GetClient();
-	auto result = client.ExecuteSQL(drop_sql);
+	auto result = client.ExecuteStatement(drop_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
 	}
@@ -373,7 +373,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
 	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 	auto &client = dh_catalog.GetClient();
-	auto result = client.ExecuteSQL(drop_sql);
+	auto result = client.ExecuteStatement(drop_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
 	}
@@ -426,7 +426,7 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 
 			auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
 			auto &client = dh_catalog.GetClient();
-			auto result = client.ExecuteSQL(alter_sql);
+			auto result = client.ExecuteStatement(alter_sql);
 			if (result->HasError()) {
 				throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());
 			}

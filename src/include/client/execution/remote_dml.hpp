@@ -5,11 +5,7 @@
 namespace duckdb {
 
 class ClientContext;
-class DuckherderCatalog;
 class TableCatalogEntry;
-
-// Rewrites client catalog references to the corresponding control-node tables.
-string RewriteRemoteDMLStatement(ClientContext &context, DuckherderCatalog &catalog);
 
 // Executes one complete DML statement on the client's control-node connection.
 class PhysicalRemoteDML : public PhysicalOperator {

@@ -27,23 +27,12 @@ public:
 	arrow::Status Connect();
 	void Close();
 
-	// Execute arbitrary SQL.
-	arrow::Status ExecuteSQL(const string &sql, distributed::DistributedResponse &response);
+	// Execute one complete non-query statement on the control node.
+	arrow::Status ExecuteStatement(const string &sql, const string &client_catalog,
+	                               distributed::DistributedResponse &response);
 
 	// Apply a transaction lifecycle action to this client's server-side connection.
 	arrow::Status ManageTransaction(distributed::TransactionAction action, distributed::DistributedResponse &response);
-
-	// Create table.
-	arrow::Status CreateTable(const string &create_sql, distributed::DistributedResponse &response);
-
-	// Drop table.
-	arrow::Status DropTable(const string &drop_sql, distributed::DistributedResponse &response);
-
-	// Create index.
-	arrow::Status CreateIndex(const string &create_sql, distributed::DistributedResponse &response);
-
-	// Drop index.
-	arrow::Status DropIndex(const string &index_name, distributed::DistributedResponse &response);
 
 	// Load extension.
 	arrow::Status LoadExtension(const string &extension_name, const string &repository, const string &version,

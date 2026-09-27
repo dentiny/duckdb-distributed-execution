@@ -2,41 +2,12 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-// Execute an SQL statement that mutates data.
-message ExecuteSQLRequest {
+// Execute one complete non-query SQL statement on the control node.
+message ExecuteStatementRequest {
   string sql = 1;
+  string client_catalog = 2;
 }
 
-message ExecuteSQLResponse {
+message ExecuteStatementResponse {
   uint64 rows_affected = 1;
 }
-
-message CreateTableRequest {
-  string sql = 1;
-}
-
-message CreateTableResponse {}
-
-message DropTableRequest {
-  string table_name = 1;
-}
-
-message DropTableResponse {}
-
-message AlterTableRequest {
-  string sql = 1;
-}
-
-message AlterTableResponse {}
-
-message CreateIndexRequest {
-  string sql = 1;
-}
-
-message CreateIndexResponse {}
-
-message DropIndexRequest {
-  string index_name = 1;
-}
-
-message DropIndexResponse {}

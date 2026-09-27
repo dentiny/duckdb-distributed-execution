@@ -131,33 +131,8 @@ private:
 	arrow::Status HandleUnregisterClient(const string &client_id, distributed::DistributedResponse &resp);
 	arrow::Status HandleTransaction(const distributed::TransactionRequest &req, ClientRegistration &registration,
 	                                distributed::DistributedResponse &resp);
-	arrow::Status HandleExecuteSQL(const distributed::ExecuteSQLRequest &req, ClientRegistration &registration,
-	                               distributed::DistributedResponse &resp);
-
-	// Handle CREATE TABLE request.
-	// Return error status if the table already exists.
-	arrow::Status HandleCreateTable(const distributed::CreateTableRequest &req, ClientRegistration &registration,
-	                                distributed::DistributedResponse &resp);
-
-	// Handle DROP TABLE request.
-	// Return OK status if the table doesn't exist.
-	arrow::Status HandleDropTable(const distributed::DropTableRequest &req, ClientRegistration &registration,
-	                              distributed::DistributedResponse &resp);
-
-	// Handle CREATE INDEX request.
-	// Return error status if the index already exists.
-	arrow::Status HandleCreateIndex(const distributed::CreateIndexRequest &req, ClientRegistration &registration,
-	                                distributed::DistributedResponse &resp);
-
-	// Handle DROP INDEX request.
-	// Return OK status if the index doesn't exist.
-	arrow::Status HandleDropIndex(const distributed::DropIndexRequest &req, ClientRegistration &registration,
-	                              distributed::DistributedResponse &resp);
-
-	// Handle ALTER TABLE request.
-	// Return error status if the table doesn't exist or if the alteration fails.
-	arrow::Status HandleAlterTable(const distributed::AlterTableRequest &req, ClientRegistration &registration,
-	                               distributed::DistributedResponse &resp);
+	arrow::Status HandleExecuteStatement(const distributed::ExecuteStatementRequest &req,
+	                                     ClientRegistration &registration, distributed::DistributedResponse &resp);
 
 	// Handle LOAD EXTENSION request.
 	// Return error status if the extension fails to load.

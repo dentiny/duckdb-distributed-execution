@@ -87,10 +87,12 @@ void DistributedFlightClient::HeartbeatLoop() {
 	}
 }
 
-arrow::Status DistributedFlightClient::ExecuteSQL(const string &sql, distributed::DistributedResponse &response) {
+arrow::Status DistributedFlightClient::ExecuteStatement(const string &sql, const string &client_catalog,
+                                                        distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
-	auto *exec_req = req.mutable_execute_sql();
+	auto *exec_req = req.mutable_execute_statement();
 	exec_req->set_sql(sql);
+	exec_req->set_client_catalog(client_catalog);
 	return SendAction(req, response);
 }
 
@@ -98,36 +100,6 @@ arrow::Status DistributedFlightClient::ManageTransaction(distributed::Transactio
                                                          distributed::DistributedResponse &response) {
 	distributed::DistributedRequest req;
 	req.mutable_transaction()->set_action(action);
-	return SendAction(req, response);
-}
-
-arrow::Status DistributedFlightClient::CreateTable(const string &create_sql,
-                                                   distributed::DistributedResponse &response) {
-	distributed::DistributedRequest req;
-	auto *create_req = req.mutable_create_table();
-	create_req->set_sql(create_sql);
-	return SendAction(req, response);
-}
-
-arrow::Status DistributedFlightClient::DropTable(const string &drop_sql, distributed::DistributedResponse &response) {
-	distributed::DistributedRequest req;
-	auto *drop_req = req.mutable_drop_table();
-	drop_req->set_table_name(drop_sql);
-	return SendAction(req, response);
-}
-
-arrow::Status DistributedFlightClient::CreateIndex(const string &create_sql,
-                                                   distributed::DistributedResponse &response) {
-	distributed::DistributedRequest req;
-	auto *create_req = req.mutable_create_index();
-	create_req->set_sql(create_sql);
-	return SendAction(req, response);
-}
-
-arrow::Status DistributedFlightClient::DropIndex(const string &index_name, distributed::DistributedResponse &response) {
-	distributed::DistributedRequest req;
-	auto *drop_req = req.mutable_drop_index();
-	drop_req->set_index_name(index_name);
 	return SendAction(req, response);
 }
 
