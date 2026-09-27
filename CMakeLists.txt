@@ -64,6 +64,8 @@ set(CLIENT_SOURCES
     src/client/duckherder_transaction_manager.cpp
     src/client/entry_lookup_info_hash_utils.cpp)
 
+set(SERVER_UTIL_SOURCES src/server/validation.cpp)
+
 set(SERVER_DRIVER_SOURCES
     src/server/driver/distributed_executor.cpp
     src/server/driver/distributed_flight_server.cpp
@@ -90,6 +92,7 @@ set(SERVER_WORKER_SOURCES src/server/worker/worker_node.cpp)
 set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources
     ${CLIENT_SOURCES}
+    ${SERVER_UTIL_SOURCES}
     ${SERVER_DRIVER_SOURCES}
     ${SERVER_WORKER_SOURCES}
     ${UTIL_SOURCES}

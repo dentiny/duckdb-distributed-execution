@@ -9,6 +9,7 @@
 #include "duckdb/main/config.hpp"
 #include "query_common.hpp"
 #include "server/driver/duckling_storage.hpp"
+#include "server/validation.hpp"
 #include "utils/time_utils.hpp"
 
 #include <arrow/array.h>
@@ -193,13 +194,14 @@ bool DistributedFlightServer::AuthorizeClient(const string &client_id, distribut
 
 arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::RegisterClientRequest &req,
                                                             distributed::DistributedResponse &resp) {
-	const unique_lock<std::shared_mutex> lock(clients_mutex);
-	PruneExpiredClients();
-	if (req.role() != distributed::CLIENT_ROLE_READ_ONLY && req.role() != distributed::CLIENT_ROLE_READ_WRITE) {
+	auto validation = ValidateRequest(req);
+	if (!validation.ok()) {
 		resp.set_success(false);
-		resp.set_error_message("Duckherder client role must be specified");
+		resp.set_error_message(validation.message());
 		return arrow::Status::OK();
 	}
+	const unique_lock<std::shared_mutex> lock(clients_mutex);
+	PruneExpiredClients();
 	if (req.role() == distributed::CLIENT_ROLE_READ_WRITE && !writable_client_id.empty()) {
 		resp.set_success(false);
 		resp.set_error_message("Control node already has a writable Duckherder client");
@@ -234,6 +236,12 @@ arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &clie
 arrow::Status DistributedFlightServer::HandleTransaction(const distributed::TransactionRequest &req,
                                                          ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
+	auto validation = ValidateRequest(req);
+	if (!validation.ok()) {
+		resp.set_success(false);
+		resp.set_error_message(validation.message());
+		return arrow::Status::OK();
+	}
 	try {
 		switch (req.action()) {
 		case distributed::TRANSACTION_ACTION_BEGIN:
@@ -246,9 +254,7 @@ arrow::Status DistributedFlightServer::HandleTransaction(const distributed::Tran
 			registration.connection->Rollback();
 			break;
 		default:
-			resp.set_success(false);
-			resp.set_error_message("Transaction action must be BEGIN, COMMIT, or ROLLBACK");
-			return arrow::Status::OK();
+			return arrow::Status::Invalid("Invalid transaction action after validation");
 		}
 	} catch (const std::exception &ex) {
 		resp.set_success(false);
@@ -267,6 +273,7 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 	if (!request.ParseFromArray(action.body->data(), action.body->size())) {
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
 	}
+	ARROW_RETURN_NOT_OK(ValidateRequest(request));
 
 	distributed::DistributedResponse response;
 	response.set_success(true);
@@ -357,9 +364,6 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		}
 		break;
 
-	// ========== Error Cases ==========
-	case distributed::DistributedRequest::REQUEST_NOT_SET:
-		return arrow::Status::Invalid("Request type not set");
 	default:
 		return arrow::Status::Invalid("Unknown request type");
 	}
