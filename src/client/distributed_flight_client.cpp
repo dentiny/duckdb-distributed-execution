@@ -73,7 +73,7 @@ void DistributedFlightClient::UnregisterClientNoThrow() {
 }
 
 void DistributedFlightClient::HeartbeatLoop() {
-	std::unique_lock<std::mutex> lock(heartbeat_mutex);
+	unique_lock<mutex> lock(heartbeat_mutex);
 	while (!stop_heartbeat) {
 		if (heartbeat_cv.wait_for(lock, std::chrono::seconds(10), [this] { return stop_heartbeat.load(); })) {
 			break;

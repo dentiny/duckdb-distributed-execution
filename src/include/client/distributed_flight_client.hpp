@@ -4,6 +4,7 @@
 
 #include "distributed.pb.h"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/main/query_result.hpp"
 
@@ -75,7 +76,7 @@ private:
 	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;
 	std::atomic<bool> stop_heartbeat {false};
-	std::mutex heartbeat_mutex;
+	mutex heartbeat_mutex;
 	std::condition_variable heartbeat_cv;
 	std::thread heartbeat_thread;
 };

@@ -2,6 +2,7 @@
 
 #include "distributed.pb.h"
 #include "duckdb.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/distributed_executor.hpp"
@@ -185,7 +186,7 @@ private:
 	std::chrono::milliseconds client_lease_timeout = std::chrono::seconds(30);
 
 	// Query execution tracking.
-	mutable std::mutex query_history_mutex;
+	mutable mutex query_history_mutex;
 	vector<QueryExecutionInfo> query_history;
 };
 

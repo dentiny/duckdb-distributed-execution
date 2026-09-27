@@ -77,7 +77,7 @@ void DistributedFlightServer::Shutdown() {
 
 void DistributedFlightServer::Reset() {
 	{
-		const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+		const unique_lock<std::shared_mutex> lock(clients_mutex);
 		clients.clear();
 		writable_client_id.clear();
 	}
@@ -87,7 +87,7 @@ void DistributedFlightServer::Reset() {
 void DistributedFlightServer::Initialize() {
 	// Clear query history.
 	{
-		const std::lock_guard<std::mutex> lock(query_history_mutex);
+		const lock_guard<mutex> lock(query_history_mutex);
 		query_history.clear();
 	}
 
@@ -148,7 +148,7 @@ void DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
 }
 
 void DistributedFlightServer::SetClientLeaseTimeoutForTesting(std::chrono::milliseconds timeout) {
-	const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+	const unique_lock<std::shared_mutex> lock(clients_mutex);
 	client_lease_timeout = timeout;
 }
 
@@ -198,7 +198,7 @@ bool DistributedFlightServer::AuthorizeClient(const string &client_id, bool requ
 
 arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::RegisterClientRequest &req,
                                                             distributed::DistributedResponse &resp) {
-	const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+	const unique_lock<std::shared_mutex> lock(clients_mutex);
 	PruneExpiredClients();
 	if (req.role() != distributed::CLIENT_ROLE_READ_ONLY && req.role() != distributed::CLIENT_ROLE_READ_WRITE) {
 		resp.set_success(false);
@@ -223,7 +223,7 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 
 arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &client_id,
                                                               distributed::DistributedResponse &resp) {
-	const std::unique_lock<std::shared_mutex> lock(clients_mutex);
+	const unique_lock<std::shared_mutex> lock(clients_mutex);
 	auto entry = clients.find(client_id);
 	if (entry != clients.end()) {
 		if (writable_client_id == client_id) {
@@ -825,12 +825,12 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result,
 }
 
 void DistributedFlightServer::RecordQueryExecution(QueryExecutionInfo info) {
-	const std::lock_guard<std::mutex> lock(query_history_mutex);
+	const lock_guard<mutex> lock(query_history_mutex);
 	query_history.emplace_back(info);
 }
 
 vector<QueryExecutionInfo> DistributedFlightServer::GetQueryExecutions() const {
-	const std::lock_guard<std::mutex> lock(query_history_mutex);
+	const lock_guard<mutex> lock(query_history_mutex);
 	return query_history;
 }
 
