@@ -8,6 +8,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckherder_catalog.hpp"
@@ -251,6 +252,15 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateCollation(Catalog
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateType(CatalogTransaction transaction,
                                                                     CreateTypeInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateType");
+
+	// The named type must exist on the Control Node because complete remote statements are parsed and executed there.
+	// Keep the local catalog entry as metadata for binding subsequent client statements.
+	auto &catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+	auto result = catalog.GetClient().ExecuteStatement(info.ToString(), catalog.GetName());
+	if (result->HasError()) {
+		throw Exception(ExceptionType::CATALOG, "Failed to create type on server: ", result->GetError());
+	}
+
 	return schema_catalog_entry->CreateType(std::move(transaction), info);
 }
 

@@ -2,10 +2,6 @@
 # description: CREATE TYPE executes on the control node for use by subsequent remote DML
 # group: [sql]
 
-# FIXME: CREATE TYPE currently updates only the client catalog and is not forwarded to the Control Node.
-# Enable this regression when remote user-defined type creation is implemented.
-mode skip
-
 require duckherder
 
 statement ok
