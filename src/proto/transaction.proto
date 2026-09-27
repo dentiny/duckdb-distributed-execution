@@ -17,6 +17,12 @@ enum TransactionStatus {
   TRANSACTION_STATUS_UNKNOWN = 4;
 }
 
+enum TransactionMode {
+  TRANSACTION_MODE_UNSPECIFIED = 0;
+  TRANSACTION_MODE_AUTOCOMMIT = 1;
+  TRANSACTION_MODE_EXPLICIT = 2;
+}
+
 message TransactionRequest {
   TransactionAction action = 1;
 }

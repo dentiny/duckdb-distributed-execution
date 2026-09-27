@@ -53,34 +53,24 @@ private:
 };
 
 FlightTestServer &GetTestServer() {
-	// Arrow/gRPC teardown can race its worker cleanup on macOS; let process exit release this test fixture.
 	static NoDestructor<FlightTestServer> test_server;
 	return *test_server;
 }
 
 // Scan all batches returned by the server and count their rows.
 uint64_t CountRows(DistributedFlightClient &client, const string &table_name) {
-	distributed::DistributedResponse response;
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
-	REQUIRE(response.success());
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	REQUIRE(client.ScanTable(table_name, 100, 0, batches).ok());
 	uint64_t row_count = 0;
 	for (const auto &batch : batches) {
 		row_count += batch->num_rows();
 	}
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
-	REQUIRE(response.success());
 	return row_count;
 }
 
-void ExecuteAndCommit(DistributedFlightClient &client, const string &sql) {
+void ExecuteAutocommit(DistributedFlightClient &client, const string &sql) {
 	distributed::DistributedResponse response;
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
-	REQUIRE(response.success());
 	REQUIRE(client.ExecuteStatement(sql, "", response).ok());
-	REQUIRE(response.success());
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
 	REQUIRE(response.success());
 }
 
@@ -129,6 +119,18 @@ TEST_CASE("Server reset clears writer admission", "[distributed_flight]") {
 	REQUIRE_FALSE(response.success());
 }
 
+TEST_CASE("Autocommit operations avoid transaction lifecycle RPCs", "[distributed_flight]") {
+	auto &server = GetTestServer().GetServer();
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	REQUIRE(client.Connect().ok());
+
+	auto transaction_request_count = server.GetTransactionRequestCountForTesting();
+	ExecuteAutocommit(client, "CREATE TABLE autocommit_single_rpc (id INTEGER)");
+	ExecuteAutocommit(client, "INSERT INTO autocommit_single_rpc VALUES (1)");
+	REQUIRE(CountRows(client, "autocommit_single_rpc") == 1);
+	REQUIRE(server.GetTransactionRequestCountForTesting() == transaction_request_count);
+}
+
 TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight]") {
 	GetTestServer();
 	DistributedFlightClient writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
@@ -137,8 +139,8 @@ TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight
 	REQUIRE(reader.Connect().ok());
 
 	distributed::DistributedResponse response;
-	ExecuteAndCommit(writer, "CREATE TABLE client_connection_isolation (id INTEGER)");
-	ExecuteAndCommit(writer, "INSERT INTO client_connection_isolation VALUES (1)");
+	ExecuteAutocommit(writer, "CREATE TABLE client_connection_isolation (id INTEGER)");
+	ExecuteAutocommit(writer, "INSERT INTO client_connection_isolation VALUES (1)");
 
 	REQUIRE(writer.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE(response.success());
@@ -152,7 +154,7 @@ TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight
 	REQUIRE(replacement_writer.Connect().ok());
 	REQUIRE(CountRows(replacement_writer, "client_connection_isolation") == 1);
 
-	ExecuteAndCommit(replacement_writer, "INSERT INTO client_connection_isolation VALUES (3)");
+	ExecuteAutocommit(replacement_writer, "INSERT INTO client_connection_isolation VALUES (3)");
 	REQUIRE(CountRows(reader, "client_connection_isolation") == 2);
 }
 
@@ -162,7 +164,7 @@ TEST_CASE("Lost COMMIT response is recovered idempotently", "[distributed_flight
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse response;
-	ExecuteAndCommit(client, "CREATE TABLE lost_commit_response (id INTEGER)");
+	ExecuteAutocommit(client, "CREATE TABLE lost_commit_response (id INTEGER)");
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE(response.success());
 	REQUIRE(client.ExecuteStatement("INSERT INTO lost_commit_response VALUES (1)", "", response).ok());
@@ -181,7 +183,7 @@ TEST_CASE("Persistent COMMIT response loss has a recoverable unknown outcome", "
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse response;
-	ExecuteAndCommit(client, "CREATE TABLE persistent_commit_response_loss (id INTEGER)");
+	ExecuteAutocommit(client, "CREATE TABLE persistent_commit_response_loss (id INTEGER)");
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE(response.success());
 	REQUIRE(client.ExecuteStatement("INSERT INTO persistent_commit_response_loss VALUES (1)", "", response).ok());
@@ -207,7 +209,7 @@ TEST_CASE("Delivered UNKNOWN transaction responses are reconciled", "[distribute
 	auto &server = GetTestServer().GetServer();
 	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
-	ExecuteAndCommit(client, "CREATE TABLE delivered_unknown_response (id INTEGER)");
+	ExecuteAutocommit(client, "CREATE TABLE delivered_unknown_response (id INTEGER)");
 
 	distributed::DistributedResponse response;
 	server.ReturnUnknownTransactionResponsesForTesting(1);
@@ -236,7 +238,7 @@ TEST_CASE("Lost DML response replays one operation within its transaction", "[di
 	auto &server = GetTestServer().GetServer();
 	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
-	ExecuteAndCommit(client, "CREATE TABLE lost_dml_response (id INTEGER)");
+	ExecuteAutocommit(client, "CREATE TABLE lost_dml_response (id INTEGER)");
 
 	distributed::DistributedResponse response;
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
@@ -252,11 +254,22 @@ TEST_CASE("Lost DML response replays one operation within its transaction", "[di
 	REQUIRE(CountRows(client, "lost_dml_response") == 2);
 }
 
+TEST_CASE("Lost autocommit DML response replays without lifecycle RPCs", "[distributed_flight]") {
+	auto &server = GetTestServer().GetServer();
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	REQUIRE(client.Connect().ok());
+	ExecuteAutocommit(client, "CREATE TABLE lost_autocommit_response (id INTEGER)");
+
+	server.FailNextExecuteStatementResponseForTesting();
+	ExecuteAutocommit(client, "INSERT INTO lost_autocommit_response VALUES (1)");
+	REQUIRE(CountRows(client, "lost_autocommit_response") == 1);
+}
+
 TEST_CASE("Exhausted DML response loss requires transaction rollback", "[distributed_flight]") {
 	auto &server = GetTestServer().GetServer();
 	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
-	ExecuteAndCommit(client, "CREATE TABLE exhausted_dml_response (id INTEGER)");
+	ExecuteAutocommit(client, "CREATE TABLE exhausted_dml_response (id INTEGER)");
 
 	distributed::DistributedResponse response;
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
@@ -274,8 +287,8 @@ TEST_CASE("Lost query response replays the materialized result", "[distributed_f
 	auto &server = GetTestServer().GetServer();
 	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
-	ExecuteAndCommit(client, "CREATE TABLE lost_query_response (id INTEGER)");
-	ExecuteAndCommit(client, "INSERT INTO lost_query_response VALUES (1)");
+	ExecuteAutocommit(client, "CREATE TABLE lost_query_response (id INTEGER)");
+	ExecuteAutocommit(client, "INSERT INTO lost_query_response VALUES (1)");
 
 	auto query_count = server.GetQueryExecutions().size();
 	server.FailNextScanResponseForTesting();
@@ -289,8 +302,6 @@ TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse create_resp;
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, create_resp).ok());
-	REQUIRE(create_resp.success());
 	auto status = client.ExecuteStatement("CREATE TABLE test_exists (id INTEGER)", "", create_resp);
 	REQUIRE(status.ok());
 	REQUIRE(create_resp.success());
@@ -304,8 +315,6 @@ TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 	status = client.TableExists("nonexistent_table", not_exists);
 	REQUIRE(status.ok());
 	REQUIRE_FALSE(not_exists);
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, create_resp).ok());
-	REQUIRE(create_resp.success());
 }
 
 TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
@@ -314,13 +323,9 @@ TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse response;
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
-	REQUIRE(response.success());
 	auto status = client.ExecuteStatement("INVALID SQL SYNTAX", "", response);
 
 	REQUIRE(status.ok());
 	REQUIRE_FALSE(response.success());
 	REQUIRE_FALSE(response.error_message().empty());
-	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, response).ok());
-	REQUIRE(response.success());
 }

@@ -16,6 +16,8 @@ message DistributedRequest {
   uint64 transaction_id = 20;
   // Monotonically increasing operation identifier within transaction_id. Retries reuse the same value.
   uint64 request_sequence = 21;
+  // AUTOCOMMIT executes this request as one server-side transaction; EXPLICIT joins BEGIN...COMMIT.
+  TransactionMode transaction_mode = 22;
 
   oneof request {
     // Client registration and lease management.

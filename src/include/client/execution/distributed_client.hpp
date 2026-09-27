@@ -35,6 +35,8 @@ public:
 	~DistributedClient() = default;
 
 	void Close();
+	void SetTransactionContext(optional_ptr<ClientContext> context);
+	bool HasActiveRemoteTransaction();
 
 	// Execute one complete non-query statement on the control node.
 	unique_ptr<QueryResult> ExecuteStatement(const string &sql, const string &client_catalog = "");

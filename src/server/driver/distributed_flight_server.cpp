@@ -210,6 +210,10 @@ void DistributedFlightServer::ReturnUnknownTransactionResponsesForTesting(uint32
 	unknown_transaction_responses = count;
 }
 
+uint64_t DistributedFlightServer::GetTransactionRequestCountForTesting() const {
+	return transaction_request_count.load();
+}
+
 bool DistributedFlightServer::ShouldFailResponseForTesting(atomic<uint32_t> &response_count) {
 	auto remaining = response_count.load();
 	while (remaining > 0 && !response_count.compare_exchange_weak(remaining, remaining - 1)) {
@@ -225,10 +229,24 @@ arrow::Status DistributedFlightServer::CheckRequestReplay(const distributed::Dis
 	if (request.transaction_id() == 0 || request.request_sequence() == 0) {
 		return arrow::Status::Invalid("Transaction identifier and request sequence must be specified");
 	}
-	if (registration.active_transaction_id != request.transaction_id()) {
+	if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
+		if (registration.active_transaction_id != 0) {
+			return arrow::Status::Invalid("Autocommit request cannot run inside an explicit transaction");
+		}
+		if (request.request_sequence() != 1) {
+			return arrow::Status::Invalid("Autocommit request sequence must be one");
+		}
+		if (request.transaction_id() == registration.finished_transaction_id + 1) {
+			return arrow::Status::OK();
+		}
+		if (request.transaction_id() != registration.finished_transaction_id) {
+			return arrow::Status::Invalid("Autocommit transaction identifier is outside the replay window");
+		}
+	} else if (request.transaction_mode() != distributed::TRANSACTION_MODE_EXPLICIT) {
+		return arrow::Status::Invalid("Transaction mode must be AUTOCOMMIT or EXPLICIT");
+	} else if (registration.active_transaction_id != request.transaction_id()) {
 		return arrow::Status::Invalid("Request does not belong to the active client transaction");
-	}
-	if (request.request_sequence() > registration.last_request_sequence) {
+	} else if (request.request_sequence() > registration.last_request_sequence) {
 		if (request.request_sequence() != registration.last_request_sequence + 1) {
 			return arrow::Status::Invalid("Request sequence contains a gap");
 		}
@@ -269,6 +287,10 @@ void DistributedFlightServer::CacheActionResponse(const distributed::Distributed
 	registration.last_request_transport = transport;
 	registration.last_request_signature = signature;
 	registration.last_action_response = response.SerializeAsString();
+	if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
+		registration.finished_transaction_id = request.transaction_id();
+		registration.finished_transaction_status = ClientTransactionStatus::COMMITTED;
+	}
 }
 
 bool DistributedFlightServer::LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration) {
@@ -360,6 +382,7 @@ arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &clie
 arrow::Status DistributedFlightServer::HandleTransaction(const distributed::DistributedRequest &req,
                                                          ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
+	transaction_request_count++;
 	auto validation = ValidateRequest(req.transaction());
 	if (!validation.ok()) {
 		resp.set_success(false);
@@ -369,6 +392,11 @@ arrow::Status DistributedFlightServer::HandleTransaction(const distributed::Dist
 	if (req.transaction_id() == 0 || req.request_sequence() == 0) {
 		resp.set_success(false);
 		resp.set_error_message("Transaction identifier and request sequence must be specified");
+		return arrow::Status::OK();
+	}
+	if (req.transaction_mode() != distributed::TRANSACTION_MODE_EXPLICIT) {
+		resp.set_success(false);
+		resp.set_error_message("Transaction lifecycle requests require EXPLICIT mode");
 		return arrow::Status::OK();
 	}
 
@@ -644,6 +672,10 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 		registration->last_request_signature = signature;
 		registration->last_query_schema = std::move(schema);
 		registration->last_query_batches = std::move(batches);
+		if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
+			registration->finished_transaction_id = request.transaction_id();
+			registration->finished_transaction_status = ClientTransactionStatus::COMMITTED;
+		}
 	}
 
 	ARROW_ASSIGN_OR_RAISE(
@@ -673,15 +705,16 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
                                                  std::unique_ptr<arrow::flight::FlightMessageReader> reader,
                                                  std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) {
 	auto descriptor = reader->descriptor();
-	if (descriptor.path.size() < 4) {
-		return arrow::Status::Invalid(
-		    "DoPut requires a registered client, table name, transaction identifier, and request sequence");
+	if (descriptor.path.size() < 5) {
+		return arrow::Status::Invalid("DoPut requires a registered client, table name, transaction identifier, "
+		                              "request sequence, and transaction mode");
 	}
 	const auto &client_id = descriptor.path[0];
 	const auto &table_name = descriptor.path[1];
 	distributed::DistributedRequest request_identity;
 	request_identity.set_transaction_id(std::stoull(descriptor.path[2]));
 	request_identity.set_request_sequence(std::stoull(descriptor.path[3]));
+	request_identity.set_transaction_mode(static_cast<distributed::TransactionMode>(std::stoi(descriptor.path[4])));
 	const std::shared_lock<std::shared_mutex> client_lock(clients_mutex);
 	shared_ptr<ClientRegistration> registration;
 	if (!LookupClient(client_id, registration)) {

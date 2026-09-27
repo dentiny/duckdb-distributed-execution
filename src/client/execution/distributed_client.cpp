@@ -83,6 +83,14 @@ void DistributedClient::Close() {
 	client->Close();
 }
 
+void DistributedClient::SetTransactionContext(optional_ptr<ClientContext> context) {
+	client->SetTransactionContext(context);
+}
+
+bool DistributedClient::HasActiveRemoteTransaction() {
+	return client->HasActiveTransaction();
+}
+
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,
                                                      const vector<LogicalType> *expected_types) {
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
@@ -186,36 +194,9 @@ unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::Transa
 
 unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension_name, const string &repository,
                                                          const string &version) {
-	distributed::DistributedResponse transaction_response;
-	auto transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, transaction_response);
-	auto error = GetTransactionError(transaction_status, transaction_response, distributed::TRANSACTION_ACTION_BEGIN,
-	                                 "Remote extension transaction");
-	if (!error.empty()) {
-		return MakeErrorResult(error);
-	}
-
-	auto rollback_after_error = [&](string operation_error) {
-		distributed::DistributedResponse rollback_response;
-		auto rollback_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, rollback_response);
-		auto rollback_error =
-		    GetTransactionError(rollback_status, rollback_response, distributed::TRANSACTION_ACTION_ROLLBACK,
-		                        "Remote extension transaction");
-		if (!rollback_error.empty()) {
-			operation_error = StringUtil::Format("%s; %s", operation_error, rollback_error);
-		}
-		return MakeErrorResult(operation_error);
-	};
-
 	distributed::DistributedResponse response;
 	auto status = client->LoadExtension(extension_name, repository, version, response);
-	error = GetResponseError(status, response);
-	if (!error.empty()) {
-		return rollback_after_error(std::move(error));
-	}
-
-	transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, transaction_response);
-	error = GetTransactionError(transaction_status, transaction_response, distributed::TRANSACTION_ACTION_COMMIT,
-	                            "Remote extension transaction");
+	auto error = GetResponseError(status, response);
 	if (!error.empty()) {
 		return MakeErrorResult(error);
 	}

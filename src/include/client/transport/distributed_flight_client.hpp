@@ -21,6 +21,7 @@
 namespace duckdb {
 
 class DatabaseInstance;
+class ClientContext;
 
 class DistributedFlightClient {
 public:
@@ -31,6 +32,8 @@ public:
 	// Connect to server.
 	arrow::Status Connect();
 	void Close();
+	void SetTransactionContext(optional_ptr<ClientContext> context);
+	bool HasActiveTransaction();
 
 	// Execute one complete non-query statement on the control node.
 	arrow::Status ExecuteStatement(const string &sql, const string &client_catalog,
@@ -58,10 +61,19 @@ public:
 	arrow::Status GetQueryExecutionStats(distributed::DistributedResponse &response);
 
 private:
+	struct RequestIdentity {
+		uint64_t transaction_id;
+		uint64_t request_sequence;
+		distributed::TransactionMode mode;
+	};
+
 	arrow::Status RegisterClient();
 	void UnregisterClientNoThrow();
 	void HeartbeatLoop();
 
+	RequestIdentity AssignRequestIdentity(distributed::DistributedRequest &req);
+	void FinishRequest(const RequestIdentity &identity, const arrow::Status &status);
+	arrow::Status EnsureExplicitTransaction();
 	// RPC implementation to send request and block wait response.
 	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);
 	// Assign the active transaction and one operation sequence, then replay that operation on transport failures.
@@ -71,6 +83,7 @@ private:
 	string server_url;
 	distributed::ClientRole role;
 	optional_ptr<DatabaseInstance> db_instance;
+	optional_ptr<ClientContext> transaction_context;
 	string client_id;
 	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;
@@ -85,6 +98,8 @@ private:
 	uint64_t next_request_sequence = 1;
 	// A statement with an exhausted transport retry has an ambiguous outcome; only ROLLBACK may follow.
 	bool transaction_requires_rollback = false;
+	// Retains an ambiguous one-RPC autocommit identifier so the same operation can be retried safely.
+	bool pending_autocommit_operation = false;
 	// A lifecycle action with a lost response is retried before a later BEGIN can allocate another transaction ID.
 	distributed::TransactionAction pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
 };

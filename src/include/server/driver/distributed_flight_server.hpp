@@ -105,6 +105,7 @@ public:
 	void FailExecuteStatementResponsesForTesting(uint32_t count);
 	void FailNextScanResponseForTesting();
 	void ReturnUnknownTransactionResponsesForTesting(uint32_t count);
+	uint64_t GetTransactionRequestCountForTesting() const;
 
 private:
 	// Implementation methods for Flight RPC handlers, without exception handling.
@@ -186,6 +187,7 @@ private:
 	atomic<uint32_t> fail_execute_statement_responses {0};
 	atomic<uint32_t> fail_scan_responses {0};
 	atomic<uint32_t> unknown_transaction_responses {0};
+	atomic<uint64_t> transaction_request_count {0};
 
 	// Query execution tracking.
 	mutable mutex query_history_mutex;
