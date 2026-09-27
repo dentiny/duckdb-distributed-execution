@@ -1,10 +1,9 @@
 #pragma once
 
-#include <mutex>
-
 #include "base_query_recorder.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -70,7 +69,7 @@ public:
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
 private:
-	std::mutex mu;
+	mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
 
 	unique_ptr<DuckCatalog> duckdb_catalog;

@@ -37,7 +37,7 @@ optional_ptr<SchemaCatalogEntry> DucklingCatalog::LookupSchema(CatalogTransactio
                                                                OnEntryNotFound if_not_found) {
 	auto entry_lookup_str = schema_lookup.GetEntryName();
 
-	std::lock_guard<std::mutex> lck(mu);
+	lock_guard<mutex> lck(mu);
 	auto iter = schema_catalog_entries.find(entry_lookup_str);
 	if (iter == schema_catalog_entries.end()) {
 		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);

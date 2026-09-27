@@ -1,8 +1,8 @@
 #include "base_query_recorder.hpp"
 
 #include <cstdint>
-#include <mutex>
 
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
@@ -23,7 +23,7 @@ public:
 private:
 	void RecordFinish(string query, uint64_t duration_millisec) override;
 
-	mutable std::mutex mu;
+	mutable mutex mu;
 	// Maps from query to their duration in milliseconds.
 	// TODO(hjiang): Add other metrics.
 	unordered_map<string, vector<int64_t>> query_timing;

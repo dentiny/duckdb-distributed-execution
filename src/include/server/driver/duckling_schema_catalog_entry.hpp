@@ -1,10 +1,9 @@
 #pragma once
 
-#include <mutex>
-
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -75,7 +74,7 @@ private:
 	SchemaCatalogEntry *schema_catalog_entry;
 	Catalog &duckling_catalog_ref;
 
-	std::mutex mu;
+	mutex mu;
 	unordered_map<string, unique_ptr<CatalogEntry>> catalog_entries;
 };
 

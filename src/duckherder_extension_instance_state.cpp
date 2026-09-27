@@ -8,7 +8,7 @@ DuckherderInstanceState::DuckherderInstanceState() : query_recorder(make_shared_
 }
 
 shared_ptr<BaseQueryRecorder> DuckherderInstanceState::GetQueryRecorder() const {
-	const std::lock_guard<std::mutex> lck(mu);
+	const lock_guard<mutex> lck(mu);
 	D_ASSERT(query_recorder != nullptr);
 	return query_recorder;
 }

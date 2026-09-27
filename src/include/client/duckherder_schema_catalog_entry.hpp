@@ -1,11 +1,10 @@
 #pragma once
 
-#include <mutex>
-
 #include "base_query_recorder.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -89,7 +88,7 @@ private:
 	// Direct reference to DuckherderCatalog.
 	Catalog &duckherder_catalog_ref;
 
-	std::mutex mu;
+	mutex mu;
 	// Cache for catalog entries, including table entries.
 	unordered_map<EntryLookupInfoKey, unique_ptr<CatalogEntry>, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries;

@@ -3,18 +3,17 @@
 #pragma once
 
 #include "distributed.pb.h"
-#include "duckdb/common/string.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/main/query_result.hpp"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
-#include <mutex>
 #include <thread>
 
 namespace duckdb {
@@ -75,7 +74,7 @@ private:
 	string client_id;
 	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;
-	std::atomic<bool> stop_heartbeat {false};
+	atomic<bool> stop_heartbeat {false};
 	mutex heartbeat_mutex;
 	std::condition_variable heartbeat_cv;
 	std::thread heartbeat_thread;

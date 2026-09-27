@@ -2,8 +2,10 @@
 
 #include "distributed.pb.h"
 #include "duckdb.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
@@ -11,12 +13,9 @@
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
-#include <atomic>
 #include <chrono>
 #include <memory>
-#include <mutex>
 #include <shared_mutex>
-#include <unordered_map>
 
 namespace duckdb {
 
@@ -166,7 +165,7 @@ private:
 
 		distributed::ClientRole role;
 		// Last authorized request time in steady-clock milliseconds, updated concurrently by RPC handlers.
-		std::atomic<int64_t> last_seen;
+		atomic<int64_t> last_seen;
 	};
 
 	// Look up a registration while the caller holds clients_mutex.
@@ -186,7 +185,7 @@ private:
 
 	// Client admission: at most one writable attachment, with any number of readers.
 	mutable std::shared_mutex clients_mutex;
-	std::unordered_map<string, shared_ptr<ClientRegistration>> clients;
+	unordered_map<string, shared_ptr<ClientRegistration>> clients;
 	string writable_client_id;
 	std::chrono::milliseconds client_lease_timeout = std::chrono::seconds(30);
 

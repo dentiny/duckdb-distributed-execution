@@ -3,8 +3,7 @@
 
 #pragma once
 
-#include <mutex>
-
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/storage/object_cache.hpp"
@@ -43,7 +42,7 @@ struct DuckherderInstanceState : public ObjectCacheEntry {
 	}
 
 private:
-	mutable std::mutex mu;
+	mutable mutex mu;
 	shared_ptr<BaseQueryRecorder> query_recorder;
 };
 
