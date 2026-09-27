@@ -1,0 +1,53 @@
+# name: test/sql/index_server_execution.test
+# description: CREATE INDEX builds and registers the index entirely on the control node
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8845);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8845);
+
+statement ok
+PRAGMA duckherder_register_remote_table('index_server_target', 'index_server_target');
+
+statement ok
+PRAGMA duckherder_register_remote_table('index_server_audit', 'index_server_audit');
+
+statement ok
+CREATE TABLE dh.index_server_target (id INTEGER, value VARCHAR);
+
+statement ok
+CREATE TABLE dh.index_server_audit (index_name VARCHAR);
+
+statement ok
+INSERT INTO dh.index_server_target VALUES (1, 'one'), (2, 'two');
+
+statement ok
+CREATE UNIQUE INDEX index_created_on_server ON dh.index_server_target(id);
+
+# INSERT ... SELECT is executed as one statement by the Control Node. Reading its
+# duckdb_indexes() confirms that the index exists in the server catalog.
+statement ok
+INSERT INTO dh.index_server_audit
+SELECT index_name
+FROM duckdb_indexes()
+WHERE index_name = 'index_created_on_server';
+
+query T
+SELECT index_name FROM dh.index_server_audit;
+----
+index_created_on_server
+
+# Remote INSERT must be rejected by the unique index maintained by the Control Node.
+statement error
+INSERT INTO dh.index_server_target VALUES (1, 'duplicate');
+----
+
+query I
+SELECT COUNT(*) FROM dh.index_server_target;
+----
+2

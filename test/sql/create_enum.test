@@ -1,0 +1,38 @@
+# name: test/sql/create_enum.test
+# description: CREATE TYPE executes on the control node for use by subsequent remote DML
+# group: [sql]
+
+# FIXME: CREATE TYPE currently updates only the client catalog and is not forwarded to the Control Node.
+# Enable this regression when remote user-defined type creation is implemented.
+mode skip
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8844);
+
+statement ok
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8844);
+
+statement ok
+CREATE TYPE dh.order_status AS ENUM ('pending', 'complete');
+
+statement ok
+PRAGMA duckherder_register_remote_table('enum_statement_test', 'enum_statement_test');
+
+statement ok
+CREATE TABLE dh.enum_statement_test (id INTEGER, status VARCHAR);
+
+# The cast is evaluated by the Control Node as part of the complete INSERT statement.
+# It succeeds only if CREATE TYPE created the named enum in the server catalog.
+statement ok
+INSERT INTO dh.enum_statement_test VALUES
+    (1, 'pending'::dh.order_status),
+    (2, 'complete'::dh.order_status);
+
+query IT
+SELECT id, status FROM dh.enum_statement_test ORDER BY id;
+----
+1	pending
+2	complete
