@@ -13,6 +13,59 @@
 
 namespace duckdb {
 
+namespace {
+
+unique_ptr<QueryResult> MakeErrorResult(const string &error) {
+	return make_uniq<MaterializedQueryResult>(ErrorData(error));
+}
+
+unique_ptr<QueryResult> MakeEmptyResult(StatementType statement_type) {
+	vector<string> names;
+	vector<LogicalType> types;
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
+	                                          ClientProperties());
+}
+
+string GetResponseError(const arrow::Status &status, const distributed::DistributedResponse &response) {
+	if (!status.ok()) {
+		return status.ToString();
+	}
+	return response.success() ? string() : response.error_message();
+}
+
+const char *TransactionActionName(distributed::TransactionAction action) {
+	switch (action) {
+	case distributed::TRANSACTION_ACTION_BEGIN:
+		return "BEGIN";
+	case distributed::TRANSACTION_ACTION_COMMIT:
+		return "COMMIT";
+	case distributed::TRANSACTION_ACTION_ROLLBACK:
+		return "ROLLBACK";
+	default:
+		return "transaction";
+	}
+}
+
+string GetTransactionError(const arrow::Status &status, const distributed::DistributedResponse &response,
+                           distributed::TransactionAction action, const string &scope) {
+	auto action_name = TransactionActionName(action);
+	if (!status.ok()) {
+		return StringUtil::Format("%s %s outcome is unknown after retry: %s", scope, action_name, status.ToString());
+	}
+	if (response.success()) {
+		return {};
+	}
+	auto unknown_outcome =
+	    (response.has_transaction() && response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) ||
+	    (action == distributed::TRANSACTION_ACTION_COMMIT && !response.has_transaction());
+	return unknown_outcome
+	           ? StringUtil::Format("%s %s outcome is unknown: %s", scope, action_name, response.error_message())
+	           : response.error_message();
+}
+
+} // namespace
+
 DistributedClient::DistributedClient(string server_url_p, distributed::ClientRole role_p, DatabaseInstance &db_instance)
     : server_url(std::move(server_url_p)) {
 	client = make_uniq<DistributedFlightClient>(server_url, role_p, db_instance);
@@ -31,7 +84,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	auto status = client->ScanTable(table_name, limit, offset, batches);
 	if (!status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+		return MakeErrorResult(status.ToString());
 	}
 
 	// Read all Arrow RecordBatches and convert to DuckDB
@@ -98,18 +151,11 @@ bool DistributedClient::TableExists(const string &table_name) {
 unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, const string &client_catalog) {
 	distributed::DistributedResponse response;
 	auto status = client->ExecuteStatement(sql, client_catalog, response);
-	if (!status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
+	auto error = GetResponseError(status, response);
+	if (!error.empty()) {
+		return MakeErrorResult(error);
 	}
-	if (!response.success()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
-	}
-
-	vector<string> names;
-	vector<LogicalType> types;
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	return make_uniq<MaterializedQueryResult>(StatementType::INSERT_STATEMENT, StatementProperties(), names,
-	                                          std::move(collection), ClientProperties());
+	return MakeEmptyResult(StatementType::INSERT_STATEMENT);
 }
 
 unique_ptr<QueryResult> DistributedClient::BeginTransaction() {
@@ -127,97 +173,57 @@ unique_ptr<QueryResult> DistributedClient::RollbackTransaction() {
 unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::TransactionAction action) {
 	distributed::DistributedResponse response;
 	auto status = client->ManageTransaction(action, response);
-	if (!status.ok()) {
-		auto error = status.ToString();
-		if (action == distributed::TRANSACTION_ACTION_COMMIT) {
-			error = StringUtil::Format("Remote Duckherder COMMIT outcome is unknown after retry: %s", error);
-		}
-		return make_uniq<MaterializedQueryResult>(ErrorData(error));
+	auto error = GetTransactionError(status, response, action, "Remote Duckherder");
+	if (!error.empty()) {
+		return MakeErrorResult(error);
 	}
-	if (!response.success()) {
-		auto error = response.error_message();
-		if (action == distributed::TRANSACTION_ACTION_COMMIT &&
-		    (!response.has_transaction() ||
-		     response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN)) {
-			error = StringUtil::Format("Remote Duckherder COMMIT outcome is unknown: %s", error);
-		}
-		return make_uniq<MaterializedQueryResult>(ErrorData(error));
-	}
-
-	vector<string> names;
-	vector<LogicalType> types;
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	return make_uniq<MaterializedQueryResult>(StatementType::TRANSACTION_STATEMENT, StatementProperties(), names,
-	                                          std::move(collection), ClientProperties());
+	return MakeEmptyResult(StatementType::TRANSACTION_STATEMENT);
 }
 
 unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension_name, const string &repository,
                                                          const string &version) {
 	distributed::DistributedResponse transaction_response;
 	auto transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, transaction_response);
-	if (!transaction_status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(transaction_status.ToString()));
+	auto error = GetTransactionError(transaction_status, transaction_response, distributed::TRANSACTION_ACTION_BEGIN,
+	                                 "Remote extension transaction");
+	if (!error.empty()) {
+		return MakeErrorResult(error);
 	}
-	if (!transaction_response.success()) {
-		if (transaction_response.has_transaction() &&
-		    transaction_response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
-			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
-			    "Remote extension transaction BEGIN outcome is unknown: %s", transaction_response.error_message())));
-		}
-		return make_uniq<MaterializedQueryResult>(ErrorData(transaction_response.error_message()));
-	}
-	auto rollback_after_error = [&](const string &operation_error) -> unique_ptr<QueryResult> {
+
+	auto rollback_after_error = [&](string operation_error) {
 		distributed::DistributedResponse rollback_response;
 		auto rollback_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, rollback_response);
-		if (!rollback_status.ok()) {
-			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
-			    "%s; remote rollback outcome is unknown: %s", operation_error, rollback_status.ToString())));
+		auto rollback_error =
+		    GetTransactionError(rollback_status, rollback_response, distributed::TRANSACTION_ACTION_ROLLBACK,
+		                        "Remote extension transaction");
+		if (!rollback_error.empty()) {
+			operation_error = StringUtil::Format("%s; %s", operation_error, rollback_error);
 		}
-		if (!rollback_response.success()) {
-			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
-			    "%s; remote rollback failed: %s", operation_error, rollback_response.error_message())));
-		}
-		return make_uniq<MaterializedQueryResult>(ErrorData(operation_error));
+		return MakeErrorResult(operation_error);
 	};
 
 	distributed::DistributedResponse response;
 	auto status = client->LoadExtension(extension_name, repository, version, response);
-	if (!status.ok()) {
-		return rollback_after_error(status.ToString());
-	}
-	if (!response.success()) {
-		return rollback_after_error(response.error_message());
-	}
-	transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, transaction_response);
-	if (!transaction_status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
-		    "Remote extension transaction COMMIT outcome is unknown: %s", transaction_status.ToString())));
-	}
-	if (!transaction_response.success()) {
-		if (transaction_response.has_transaction() &&
-		    transaction_response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
-			return make_uniq<MaterializedQueryResult>(ErrorData(StringUtil::Format(
-			    "Remote extension transaction COMMIT outcome is unknown: %s", transaction_response.error_message())));
-		}
-		return make_uniq<MaterializedQueryResult>(ErrorData(transaction_response.error_message()));
+	error = GetResponseError(status, response);
+	if (!error.empty()) {
+		return rollback_after_error(std::move(error));
 	}
 
-	vector<string> names;
-	vector<LogicalType> types;
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	return make_uniq<MaterializedQueryResult>(StatementType::LOAD_STATEMENT, StatementProperties(), names,
-	                                          std::move(collection), ClientProperties());
+	transaction_status = client->ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, transaction_response);
+	error = GetTransactionError(transaction_status, transaction_response, distributed::TRANSACTION_ACTION_COMMIT,
+	                            "Remote extension transaction");
+	if (!error.empty()) {
+		return MakeErrorResult(error);
+	}
+	return MakeEmptyResult(StatementType::LOAD_STATEMENT);
 }
 
 unique_ptr<QueryResult> DistributedClient::GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out) {
 	distributed::DistributedResponse response;
 	auto status = client->GetQueryExecutionStats(response);
-
-	if (!status.ok()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(status.ToString()));
-	}
-	if (!response.success()) {
-		return make_uniq<MaterializedQueryResult>(ErrorData(response.error_message()));
+	auto error = GetResponseError(status, response);
+	if (!error.empty()) {
+		return MakeErrorResult(error);
 	}
 
 	// Extract stats from the response
@@ -229,11 +235,7 @@ unique_ptr<QueryResult> DistributedClient::GetQueryExecutionStats(vector<QueryEx
 		stats_out.emplace_back(stats_response.query_executions(idx));
 	}
 
-	vector<string> names;
-	vector<LogicalType> types;
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), names,
-	                                          std::move(collection), ClientProperties());
+	return MakeEmptyResult(StatementType::SELECT_STATEMENT);
 }
 
 } // namespace duckdb
