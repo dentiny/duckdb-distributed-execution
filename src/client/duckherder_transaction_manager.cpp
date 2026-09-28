@@ -23,9 +23,11 @@ DistributedClient &DuckherderTransactionManager::GetClient(ClientContext &contex
 Transaction &DuckherderTransactionManager::StartTransaction(ClientContext &context) {
 	auto &client = GetClient(context);
 	auto &transaction = duckdb_transaction_manager->StartTransaction(context);
-	if (!client.SetTransactionContext(context)) {
+	try {
+		client.SetTransactionContext(context);
+	} catch (...) {
 		duckdb_transaction_manager->RollbackTransaction(transaction);
-		throw IOException("Duckherder client was closed while starting a transaction");
+		throw;
 	}
 	return transaction;
 }
