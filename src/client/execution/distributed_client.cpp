@@ -48,10 +48,11 @@ const char *TransactionActionName(distributed::TransactionAction action) {
 }
 
 string GetTransactionError(const arrow::Status &status, const distributed::DistributedResponse &response,
-                           distributed::TransactionAction action, const string &scope) {
+                           distributed::TransactionAction action) {
 	auto action_name = TransactionActionName(action);
 	if (!status.ok()) {
-		return StringUtil::Format("%s %s outcome is unknown after retry: %s", scope, action_name, status.ToString());
+		return StringUtil::Format("Remote Duckherder %s outcome is unknown after retry: %s", action_name,
+		                          status.ToString());
 	}
 	if (response.success()) {
 		return {};
@@ -63,9 +64,9 @@ string GetTransactionError(const arrow::Status &status, const distributed::Distr
 	if (action == distributed::TRANSACTION_ACTION_COMMIT && !response.has_transaction()) {
 		unknown_outcome = true;
 	}
-	return unknown_outcome
-	           ? StringUtil::Format("%s %s outcome is unknown: %s", scope, action_name, response.error_message())
-	           : response.error_message();
+	return unknown_outcome ? StringUtil::Format("Remote Duckherder %s outcome is unknown: %s", action_name,
+	                                            response.error_message())
+	                       : response.error_message();
 }
 
 } // namespace
@@ -170,10 +171,6 @@ unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, c
 	return MakeEmptyResult(StatementType::INSERT_STATEMENT);
 }
 
-unique_ptr<QueryResult> DistributedClient::BeginTransaction() {
-	return ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN);
-}
-
 unique_ptr<QueryResult> DistributedClient::CommitTransaction() {
 	return ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT);
 }
@@ -185,7 +182,7 @@ unique_ptr<QueryResult> DistributedClient::RollbackTransaction() {
 unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::TransactionAction action) {
 	distributed::DistributedResponse response;
 	auto status = client->ManageTransaction(action, response);
-	auto error = GetTransactionError(status, response, action, "Remote Duckherder");
+	auto error = GetTransactionError(status, response, action);
 	if (!error.empty()) {
 		return MakeErrorResult(error);
 	}

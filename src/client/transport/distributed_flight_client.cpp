@@ -57,6 +57,13 @@ bool DistributedFlightClient::HasActiveTransaction() {
 }
 
 arrow::Status DistributedFlightClient::EnsureExplicitTransaction() {
+	{
+		const lock_guard<mutex> lock(transaction_mutex);
+		if (pending_transaction_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
+			distributed::DistributedResponse response;
+			ARROW_RETURN_NOT_OK(ResolvePendingTransaction(response));
+		}
+	}
 	if (!transaction_context || transaction_context->transaction.IsAutoCommit() || HasActiveTransaction()) {
 		return arrow::Status::OK();
 	}
@@ -103,25 +110,22 @@ void DistributedFlightClient::InitTransactionState() {
 	transaction_context = nullptr;
 }
 
-arrow::Status DistributedFlightClient::ResolvePendingTransaction() {
+arrow::Status DistributedFlightClient::ResolvePendingTransaction(distributed::DistributedResponse &response) {
 	auto pending_request = CreateTransactionRequest(pending_transaction_action, next_request_sequence);
-	distributed::DistributedResponse pending_response;
-	auto status = SendActionWithRetry(pending_request, pending_response);
+	auto status = SendActionWithRetry(pending_request, response);
 	if (!status.ok()) {
 		return arrow::Status::Invalid(
 		    StringUtil::Format("Previous remote transaction outcome remains unresolved: %s", status.ToString()));
 	}
-	if (!pending_response.has_transaction() ||
-	    pending_response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
+	if (!response.has_transaction() || response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
 		return arrow::Status::Invalid("Previous remote transaction outcome remains unresolved");
 	}
 
 	if (pending_transaction_action == distributed::TRANSACTION_ACTION_BEGIN) {
 		auto rollback_request =
 		    CreateTransactionRequest(distributed::TRANSACTION_ACTION_ROLLBACK, next_request_sequence + 1);
-		distributed::DistributedResponse rollback_response;
-		status = SendActionWithRetry(rollback_request, rollback_response);
-		if (!status.ok() || !rollback_response.success()) {
+		status = SendActionWithRetry(rollback_request, response);
+		if (!status.ok() || !response.success()) {
 			return arrow::Status::Invalid("Previous remote BEGIN could not be rolled back");
 		}
 	}
@@ -192,7 +196,11 @@ arrow::Status DistributedFlightClient::ManageTransaction(distributed::Transactio
 	lock_guard<mutex> lock(transaction_mutex);
 	if (action == distributed::TRANSACTION_ACTION_BEGIN && transaction_id != 0 &&
 	    pending_transaction_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
-		ARROW_RETURN_NOT_OK(ResolvePendingTransaction());
+		ARROW_RETURN_NOT_OK(ResolvePendingTransaction(response));
+	}
+	if (action == distributed::TRANSACTION_ACTION_ROLLBACK &&
+	    pending_transaction_action == distributed::TRANSACTION_ACTION_BEGIN) {
+		return ResolvePendingTransaction(response);
 	}
 	if (action == distributed::TRANSACTION_ACTION_BEGIN) {
 		if (pending_autocommit_operation) {

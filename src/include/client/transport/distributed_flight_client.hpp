@@ -78,7 +78,7 @@ private:
 	                                                         uint64_t request_sequence) const;
 	arrow::Status SendActionWithRetry(const distributed::DistributedRequest &req,
 	                                  distributed::DistributedResponse &resp);
-	arrow::Status ResolvePendingTransaction();
+	arrow::Status ResolvePendingTransaction(distributed::DistributedResponse &response);
 	void InitTransactionState();
 	void ResetExplicitTransaction();
 	// RPC implementation to send request and block wait response.

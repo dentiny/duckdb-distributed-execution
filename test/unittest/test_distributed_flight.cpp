@@ -38,9 +38,6 @@ public:
 		if (server_thread.joinable()) {
 			server_thread.join();
 		}
-		// Arrow Flight can finish Serve() before its gRPC worker cleanup is visible to the server destructor.
-		std::this_thread::sleep_for(std::chrono::milliseconds(200));
-		server.reset();
 	}
 
 	DistributedFlightServer &GetServer() {
@@ -232,6 +229,52 @@ TEST_CASE("Delivered UNKNOWN transaction responses are reconciled", "[distribute
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, response).ok());
 	REQUIRE(response.success());
 	REQUIRE(CountRows(client, "delivered_unknown_response") == 1);
+}
+
+TEST_CASE("ROLLBACK resolves an UNKNOWN BEGIN outcome", "[distributed_flight]") {
+	auto &server = GetTestServer().GetServer();
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	REQUIRE(client.Connect().ok());
+
+	distributed::DistributedResponse response;
+	server.ReturnUnknownTransactionResponsesForTesting(1);
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
+	REQUIRE_FALSE(response.success());
+	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN);
+
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, response).ok());
+	REQUIRE(response.success());
+	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_ROLLED_BACK);
+
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
+	REQUIRE(response.success());
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, response).ok());
+	REQUIRE(response.success());
+}
+
+TEST_CASE("An operation resolves an UNKNOWN COMMIT outcome", "[distributed_flight]") {
+	auto &server = GetTestServer().GetServer();
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	REQUIRE(client.Connect().ok());
+	ExecuteAutocommit(client, "CREATE TABLE operation_after_unknown_commit (id INTEGER)");
+
+	distributed::DistributedResponse response;
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
+	REQUIRE(response.success());
+	REQUIRE(client.ExecuteStatement("INSERT INTO operation_after_unknown_commit VALUES (1)", "", response).ok());
+	REQUIRE(response.success());
+
+	server.ReturnUnknownTransactionResponsesForTesting(1);
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
+	REQUIRE_FALSE(response.success());
+	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN);
+
+	ExecuteAutocommit(client, "INSERT INTO operation_after_unknown_commit VALUES (2)");
+	REQUIRE_FALSE(client.HasActiveTransaction());
+
+	DistributedFlightClient reader(SERVER_URL, distributed::CLIENT_ROLE_READ_ONLY);
+	REQUIRE(reader.Connect().ok());
+	REQUIRE(CountRows(reader, "operation_after_unknown_commit") == 2);
 }
 
 TEST_CASE("Lost DML response replays one operation within its transaction", "[distributed_flight]") {

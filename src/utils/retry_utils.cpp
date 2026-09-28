@@ -22,7 +22,7 @@ Value GetRetrySetting(DatabaseInstance &db, const string &name) {
 }
 
 bool IsRetryableTransportError(const arrow::Status &status) {
-	return status.IsIOError() || status.IsUnknownError() || status.IsCancelled();
+	return status.IsIOError() || status.IsUnknownError();
 }
 
 } // namespace
