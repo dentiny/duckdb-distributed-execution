@@ -8,7 +8,8 @@ statement ok
 SELECT duckherder_start_local_server(8817);
 
 statement ok
-ATTACH DATABASE '' AS dh (TYPE duckherder, server_host 'localhost', server_port 8817);
+ATTACH DATABASE 'localhost:8817' AS dh
+  (TYPE duckherder);
 
 query II
 SELECT extension_name, loaded  FROM duckdb_extensions() WHERE extension_name = 'azure';

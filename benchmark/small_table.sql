@@ -32,9 +32,9 @@ SELECT COUNT(*), SUM(value), AVG(amount) FROM small_table_baseline;
 
 LOAD 'build/reldebug/extension/duckherder/duckherder.duckdb_extension';
 SELECT duckherder_start_local_server(8830, 4);
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8830);
+ATTACH DATABASE 'localhost:8830' AS dh
+  (TYPE duckherder);
 USE dh;
-PRAGMA duckherder_register_remote_table('small_table', 'small_table');
 
 CREATE TABLE small_table (id INTEGER, value INTEGER, category VARCHAR, amount DECIMAL(10,2));
 

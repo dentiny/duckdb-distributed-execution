@@ -34,9 +34,9 @@ GROUP BY category;
 
 LOAD 'build/reldebug/extension/duckherder/duckherder.duckdb_extension';
 SELECT duckherder_start_local_server(8831, 4);
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8831);
+ATTACH DATABASE 'localhost:8831' AS dh
+  (TYPE duckherder);
 USE dh;
-PRAGMA duckherder_register_remote_table('medium_table', 'medium_table');
 
 CREATE TABLE medium_table (id INTEGER, value INTEGER, category VARCHAR, amount DECIMAL(10,2));
 
