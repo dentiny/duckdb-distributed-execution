@@ -52,6 +52,8 @@ struct ClientRegistration {
 	string last_action_response;
 	std::shared_ptr<arrow::Schema> last_query_schema;
 	vector<std::shared_ptr<arrow::RecordBatch>> last_query_batches;
+	// TODO(hjiang): Bound the in-memory query replay cache and explicitly reject replay when a result exceeds the
+	// limit; consider spilling oversized replay results to object storage.
 	// TODO: Persist the finished transaction watermark and outcome with authoritative data across server restarts.
 };
 
