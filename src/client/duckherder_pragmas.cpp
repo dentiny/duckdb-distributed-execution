@@ -36,17 +36,17 @@ namespace duckdb {
 	auto &db_manager = DatabaseManager::Get(context);
 	auto dh_db = db_manager.GetDatabase(context, "dh");
 	if (!dh_db) {
-		throw Exception(ExceptionType::CATALOG, "Duckherder database 'dh' not attached");
+		throw CatalogException("Duckherder database 'dh' not attached");
 	}
 
 	auto &catalog = dh_db->GetCatalog();
 	if (catalog.GetCatalogType() != "duckherder") {
-		throw Exception(ExceptionType::CATALOG, "Database 'dh' is not a duckherder database");
+		throw CatalogException("Database 'dh' is not a duckherder database");
 	}
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
 	if (!dh_catalog_ptr) {
-		throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
+		throw CatalogException("Failed to cast catalog to DuckherderCatalog");
 	}
 
 	auto server_url = dh_catalog_ptr->GetServerUrl();
@@ -60,17 +60,17 @@ namespace duckdb {
 	auto &db_manager = DatabaseManager::Get(context);
 	auto dh_db = db_manager.GetDatabase(context, "dh");
 	if (!dh_db) {
-		throw Exception(ExceptionType::CATALOG, "Duckherder database 'dh' not attached");
+		throw CatalogException("Duckherder database 'dh' not attached");
 	}
 
 	auto &catalog = dh_db->GetCatalog();
 	if (catalog.GetCatalogType() != "duckherder") {
-		throw Exception(ExceptionType::CATALOG, "Database 'dh' is not a duckherder database");
+		throw CatalogException("Database 'dh' is not a duckherder database");
 	}
 
 	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
 	if (!dh_catalog_ptr) {
-		throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
+		throw CatalogException("Failed to cast catalog to DuckherderCatalog");
 	}
 	dh_catalog_ptr->UnregisterRemoteTable(table_name);
 }
@@ -87,17 +87,17 @@ namespace duckdb {
 		auto &db_manager = DatabaseManager::Get(context);
 		auto dh_db = db_manager.GetDatabase(context, "dh");
 		if (!dh_db) {
-			throw Exception(ExceptionType::CATALOG, "Duckherder database 'dh' not attached");
+			throw CatalogException("Duckherder database 'dh' not attached");
 		}
 
 		auto &catalog = dh_db->GetCatalog();
 		if (catalog.GetCatalogType() != "duckherder") {
-			throw Exception(ExceptionType::CATALOG, "Database 'dh' is not a duckherder database");
+			throw CatalogException("Database 'dh' is not a duckherder database");
 		}
 
 		auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
 		if (!dh_catalog_ptr) {
-			throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
+			throw CatalogException("Failed to cast catalog to DuckherderCatalog");
 		}
 
 		auto load_result = dh_catalog_ptr->GetClient(context).LoadExtension(extension_name_str);

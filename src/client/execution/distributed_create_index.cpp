@@ -70,16 +70,14 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	auto &client = GetDistributedClient(context.client, catalog);
 	auto result = client.ExecuteStatement(create_sql, StatementType::CREATE_STATEMENT);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to create index on server: %s", result->GetError()));
+		throw CatalogException("Failed to create index on server: %s", result->GetError());
 	}
 
 	// Create local catalog entry for tracking, and register the index as remote.
 	auto transaction = catalog.GetCatalogTransaction(context.client);
 	auto index_entry = schema.CreateIndex(transaction, *info, table);
 	if (index_entry == nullptr) {
-		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to create catalog entry for index %s", info->index_name));
+		throw CatalogException("Failed to create catalog entry for index %s", info->index_name);
 	}
 
 	gstate.executed = true;

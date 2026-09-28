@@ -179,8 +179,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateFunction(CatalogT
 		auto result = catalog.GetClient(transaction.GetContext())
 		                  .ExecuteStatement(macro_info.ToString(), StatementType::CREATE_STATEMENT, catalog.GetName());
 		if (result->HasError()) {
-			throw Exception(ExceptionType::CATALOG,
-			                StringUtil::Format("Failed to create macro on server: %s", result->GetError()));
+			throw CatalogException("Failed to create macro on server: %s", result->GetError());
 		}
 	}
 
@@ -203,8 +202,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 	auto &client = dh_catalog.GetClient(transaction.GetContext());
 	auto result = client.ExecuteStatement(create_sql, StatementType::CREATE_STATEMENT, dh_catalog.GetName());
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to create table on server: %s", result->GetError()));
+		throw CatalogException("Failed to create table on server: %s", result->GetError());
 	}
 	if (!dh_catalog.IsRemoteTable(table_name)) {
 		dh_catalog.RegisterRemoteTable(table_name, dh_catalog.GetServerUrl(),
@@ -261,8 +259,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateType(CatalogTrans
 	auto result = catalog.GetClient(transaction.GetContext())
 	                  .ExecuteStatement(info.ToString(), StatementType::CREATE_STATEMENT, catalog.GetName());
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to create type on server: %s", result->GetError()));
+		throw CatalogException("Failed to create type on server: %s", result->GetError());
 	}
 
 	return schema_catalog_entry->CreateType(std::move(transaction), info);
@@ -364,8 +361,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 	auto &client = dh_catalog.GetClient(context);
 	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to drop remote index on server: %s", result->GetError()));
+		throw CatalogException("Failed to drop remote index on server: %s", result->GetError());
 	}
 
 	md_catalog.UnregisterRemoteIndex(info.name);
@@ -390,8 +386,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 	auto &client = dh_catalog.GetClient(context);
 	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG,
-		                StringUtil::Format("Failed to drop remote table on server: %s", result->GetError()));
+		throw CatalogException("Failed to drop remote table on server: %s", result->GetError());
 	}
 
 	md_catalog.UnregisterRemoteTable(info.name);
@@ -444,8 +439,7 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			auto &client = dh_catalog.GetClient(transaction.GetContext());
 			auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
 			if (result->HasError()) {
-				throw Exception(ExceptionType::CATALOG,
-				                StringUtil::Format("Failed to alter table on server: %s", result->GetError()));
+				throw CatalogException("Failed to alter table on server: %s", result->GetError());
 			}
 
 			// Clear cache for remote tables since cache entry is already stale.
