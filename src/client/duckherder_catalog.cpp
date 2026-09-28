@@ -1,14 +1,17 @@
 #include "duckherder_catalog.hpp"
 
+#include "client/duckherder_connection_state.hpp"
 #include "client/execution/distributed_client.hpp"
 #include "client/execution/remote_dml.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -27,19 +30,22 @@
 namespace duckdb {
 
 DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
-                                     string server_db_path_p, distributed::ClientRole role_p)
+                                     string server_db_path_p, distributed::ClientRole role_p,
+                                     connection_t attach_connection_id_p)
     : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()),
-      server_host(std::move(server_host_p)), server_port(server_port_p), server_db_path(std::move(server_db_path_p)) {
-	distributed_client = make_uniq<DistributedClient>(GetServerUrl(), role_p, db_instance);
+      server_host(std::move(server_host_p)), server_port(server_port_p), server_db_path(std::move(server_db_path_p)),
+      role(role_p), attach_connection_id(attach_connection_id_p),
+      client_state_key(StringUtil::Format("duckherder_client_%s", UUID::ToString(UUID::GenerateRandomUUID()))) {
+	attach_client = make_uniq<DistributedClient>(GetServerUrl(), role, db_instance);
 }
 
-DuckherderCatalog::~DuckherderCatalog() = default;
+DuckherderCatalog::~DuckherderCatalog() {
+	CloseClients();
+}
 
 void DuckherderCatalog::OnDetach(ClientContext &context) {
-	concurrency::lock_guard<concurrency::mutex> lock(client_mu);
-	if (distributed_client) {
-		distributed_client->Close();
-	}
+	CloseClients();
+	context.registered_state->Remove(client_state_key);
 }
 
 void DuckherderCatalog::Initialize(bool load_builtin) {
@@ -276,10 +282,62 @@ string DuckherderCatalog::GetServerUrl() const {
 	return StringUtil::Format("grpc://%s:%d", server_host, server_port);
 }
 
-DistributedClient &DuckherderCatalog::GetClient() {
-	concurrency::lock_guard<concurrency::mutex> lock(client_mu);
-	D_ASSERT(distributed_client);
-	return *distributed_client;
+DistributedClient &DuckherderCatalog::GetClient(ClientContext &context) {
+	if (role == distributed::CLIENT_ROLE_READ_WRITE && context.GetConnectionId() != attach_connection_id) {
+		throw InvalidInputException(
+		    "A read-write Duckherder attachment can only be used by the DuckDB connection that attached it; "
+		    "attach a separate Duckherder database with READ_ONLY access from this connection");
+	}
+	concurrency::lock_guard<concurrency::mutex> lock(client_states_mu);
+	if (detached) {
+		throw InvalidInputException("Duckherder attachment is detached");
+	}
+	shared_ptr<DuckherderConnectionState> state;
+	if (context.GetConnectionId() == attach_connection_id && attach_client) {
+		state = context.registered_state->GetOrCreate<DuckherderConnectionState>(client_state_key,
+		                                                                         std::move(attach_client));
+	} else {
+		state = context.registered_state->GetOrCreate<DuckherderConnectionState>(client_state_key, GetServerUrl(), role,
+		                                                                         db_instance);
+	}
+	for (auto entry = client_states.begin(); entry != client_states.end();) {
+		if (entry->second.expired()) {
+			entry = client_states.erase(entry);
+		} else {
+			++entry;
+		}
+	}
+	client_states[context.GetConnectionId()] = state;
+	return state->GetClient();
+}
+
+bool DuckherderCatalog::CanUse(ClientContext &context) const {
+	concurrency::lock_guard<concurrency::mutex> lock(client_states_mu);
+	return !detached &&
+	       (role != distributed::CLIENT_ROLE_READ_WRITE || context.GetConnectionId() == attach_connection_id);
+}
+
+void DuckherderCatalog::CloseClients() {
+	vector<shared_ptr<DuckherderConnectionState>> states;
+	unique_ptr<DistributedClient> pending_client;
+	{
+		concurrency::lock_guard<concurrency::mutex> lock(client_states_mu);
+		detached = true;
+		pending_client = std::move(attach_client);
+		for (auto &entry : client_states) {
+			auto state = entry.second.lock();
+			if (state) {
+				states.emplace_back(std::move(state));
+			}
+		}
+		client_states.clear();
+	}
+	if (pending_client) {
+		pending_client->Close();
+	}
+	for (auto &state : states) {
+		state->Close();
+	}
 }
 
 } // namespace duckdb

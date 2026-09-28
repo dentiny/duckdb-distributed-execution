@@ -7,6 +7,7 @@ namespace duckdb {
 // Create scalar functions for starting driver node management.
 ScalarFunction GetStartLocalServerFunction();
 ScalarFunction GetStopLocalServerFunction();
+ScalarFunction GetClientCountFunction();
 ScalarFunction GetRegisterOrReplaceDriverFunction();
 
 // Create scalar functions for worker management.

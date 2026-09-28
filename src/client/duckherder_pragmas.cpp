@@ -100,7 +100,7 @@ namespace duckdb {
 			throw Exception(ExceptionType::CATALOG, "Failed to cast catalog to DuckherderCatalog");
 		}
 
-		auto load_result = dh_catalog_ptr->GetClient().LoadExtension(extension_name_str);
+		auto load_result = dh_catalog_ptr->GetClient(context).LoadExtension(extension_name_str);
 		if (load_result->HasError()) {
 			throw Exception(ExceptionType::EXECUTOR, StringUtil::Format("Server failed to load extension %s: %s",
 			                                                            extension_name_str, load_result->GetError()));

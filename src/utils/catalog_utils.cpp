@@ -98,21 +98,21 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 	return sql;
 }
 
-DistributedClient &GetDistributedClient(TableCatalogEntry &table) {
+DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntry &table) {
 	auto &catalog = table.ParentCatalog();
 	if (catalog.GetCatalogType() != "duckherder") {
 		throw InternalException("Expected DuckherderCatalog for distributed operation");
 	}
 	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
-	return dh_catalog.GetClient();
+	return dh_catalog.GetClient(context);
 }
 
-DistributedClient &GetDistributedClient(Catalog &catalog) {
+DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog) {
 	if (catalog.GetCatalogType() != "duckherder") {
 		throw InternalException("Expected DuckherderCatalog for distributed operation");
 	}
 	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
-	return dh_catalog.GetClient();
+	return dh_catalog.GetClient(context);
 }
 
 } // namespace duckdb

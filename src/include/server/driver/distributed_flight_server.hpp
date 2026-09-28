@@ -78,6 +78,8 @@ public:
 
 	// Get the number of registered workers.
 	idx_t GetWorkerCount() const;
+	// Get the number of active client registrations.
+	idx_t GetClientCount() const;
 
 	// Record query execution information.
 	void RecordQueryExecution(QueryExecutionInfo info);

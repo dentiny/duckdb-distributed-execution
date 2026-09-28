@@ -61,6 +61,7 @@ set(CLIENT_SOURCES
     ${CLIENT_EXECUTION_SOURCES}
     ${CLIENT_TRANSPORT_SOURCES}
     src/client/duckherder_catalog.cpp
+    src/client/duckherder_connection_state.cpp
     src/client/duckherder_index_catalog_entry.cpp
     src/client/duckherder_pragmas.cpp
     src/client/duckherder_storage.cpp

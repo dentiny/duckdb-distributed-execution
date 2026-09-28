@@ -16,39 +16,66 @@ DuckherderTransactionManager::DuckherderTransactionManager(AttachedDatabase &db)
 
 DuckherderTransactionManager::~DuckherderTransactionManager() = default;
 
-DistributedClient &DuckherderTransactionManager::GetClient() {
-	return attached_database.GetCatalog().Cast<DuckherderCatalog>().GetClient();
+DistributedClient &DuckherderTransactionManager::GetClient(ClientContext &context) {
+	return attached_database.GetCatalog().Cast<DuckherderCatalog>().GetClient(context);
 }
 
 Transaction &DuckherderTransactionManager::StartTransaction(ClientContext &context) {
+	auto &client = GetClient(context);
 	auto &transaction = duckdb_transaction_manager->StartTransaction(context);
-	GetClient().SetTransactionContext(context);
+	if (!client.SetTransactionContext(context)) {
+		duckdb_transaction_manager->RollbackTransaction(transaction);
+		throw IOException("Duckherder client was closed while starting a transaction");
+	}
 	return transaction;
 }
 
 ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction) {
-	auto &client = GetClient();
-	if (client.HasActiveRemoteTransaction()) {
-		auto result = client.CommitTransaction();
-		if (result->HasError()) {
-			duckdb_transaction_manager->RollbackTransaction(transaction);
-			client.SetTransactionContext(nullptr);
-			return ErrorData(result->GetError());
+	DistributedClient *client;
+	try {
+		client = &GetClient(context);
+		if (client->HasActiveRemoteTransaction()) {
+			auto result = client->CommitTransaction();
+			if (result->HasError()) {
+				duckdb_transaction_manager->RollbackTransaction(transaction);
+				client->SetTransactionContext(nullptr);
+				return ErrorData(result->GetError());
+			}
 		}
+	} catch (std::exception &ex) {
+		duckdb_transaction_manager->RollbackTransaction(transaction);
+		return ErrorData(ex);
 	}
 	auto error = duckdb_transaction_manager->CommitTransaction(context, transaction);
-	client.SetTransactionContext(nullptr);
+	client->SetTransactionContext(nullptr);
 	return error;
 }
 
 void DuckherderTransactionManager::RollbackTransaction(Transaction &transaction) {
-	auto &client = GetClient();
+	auto context = transaction.context.lock();
+	if (!context) {
+		duckdb_transaction_manager->RollbackTransaction(transaction);
+		return;
+	}
+	DistributedClient *client;
+	try {
+		client = &GetClient(*context);
+	} catch (...) {
+		duckdb_transaction_manager->RollbackTransaction(transaction);
+		throw;
+	}
 	unique_ptr<QueryResult> result;
-	if (client.HasActiveRemoteTransaction()) {
-		result = client.RollbackTransaction();
+	try {
+		if (client->HasActiveRemoteTransaction()) {
+			result = client->RollbackTransaction();
+		}
+	} catch (...) {
+		duckdb_transaction_manager->RollbackTransaction(transaction);
+		client->SetTransactionContext(nullptr);
+		throw;
 	}
 	duckdb_transaction_manager->RollbackTransaction(transaction);
-	client.SetTransactionContext(nullptr);
+	client->SetTransactionContext(nullptr);
 	if (result && result->HasError()) {
 		throw Exception(ExceptionType::TRANSACTION, result->GetError());
 	}

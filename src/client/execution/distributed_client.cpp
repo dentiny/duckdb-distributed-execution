@@ -81,19 +81,37 @@ DistributedClient::DistributedClient(string server_url_p, distributed::ClientRol
 }
 
 void DistributedClient::Close() {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return;
+	}
 	client->Close();
+	closed = true;
 }
 
-void DistributedClient::SetTransactionContext(optional_ptr<ClientContext> context) {
+bool DistributedClient::SetTransactionContext(optional_ptr<ClientContext> context) {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return false;
+	}
 	client->SetTransactionContext(context);
+	return true;
 }
 
 bool DistributedClient::HasActiveRemoteTransaction() {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		throw IOException("Duckherder client is closed");
+	}
 	return client->HasActiveTransaction();
 }
 
 unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,
                                                      const vector<LogicalType> *expected_types) {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return MakeErrorResult("Duckherder client is closed");
+	}
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	auto status = client->ScanTable(table_name, limit, offset, batches);
 	if (!status.ok()) {
@@ -153,15 +171,23 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 }
 
 bool DistributedClient::TableExists(const string &table_name) {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		throw IOException("Duckherder client is closed");
+	}
 	bool exists = false;
 	auto status = client->TableExists(table_name, exists);
 	if (!status.ok()) {
-		return false;
+		throw IOException("Failed to check remote table existence: %s", status.ToString());
 	}
 	return exists;
 }
 
 unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, const string &client_catalog) {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return MakeErrorResult("Duckherder client is closed");
+	}
 	distributed::DistributedResponse response;
 	auto status = client->ExecuteStatement(sql, client_catalog, response);
 	auto error = GetResponseError(status, response);
@@ -172,10 +198,18 @@ unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, c
 }
 
 unique_ptr<QueryResult> DistributedClient::CommitTransaction() {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return MakeErrorResult("Duckherder client is closed");
+	}
 	return ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT);
 }
 
 unique_ptr<QueryResult> DistributedClient::RollbackTransaction() {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return MakeErrorResult("Duckherder client is closed");
+	}
 	return ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK);
 }
 
@@ -191,6 +225,10 @@ unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::Transa
 
 unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension_name, const string &repository,
                                                          const string &version) {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return MakeErrorResult("Duckherder client is closed");
+	}
 	distributed::DistributedResponse response;
 	auto status = client->LoadExtension(extension_name, repository, version, response);
 	auto error = GetResponseError(status, response);
@@ -201,6 +239,10 @@ unique_ptr<QueryResult> DistributedClient::LoadExtension(const string &extension
 }
 
 unique_ptr<QueryResult> DistributedClient::GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out) {
+	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	if (closed) {
+		return MakeErrorResult("Duckherder client is closed");
+	}
 	distributed::DistributedResponse response;
 	auto status = client->GetQueryExecutionStats(response);
 	auto error = GetResponseError(status, response);

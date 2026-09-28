@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckherder_catalog.hpp"
 #include "duckherder_transaction_manager.hpp"
 
@@ -58,7 +59,9 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	options.options.erase("server_db_path");
 	options.options.erase("client_role");
 
-	return make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, std::move(server_db_path), role);
+	auto catalog = make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, std::move(server_db_path),
+	                                            role, context.GetConnectionId());
+	return std::move(catalog);
 }
 
 } // namespace

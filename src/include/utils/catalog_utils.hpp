@@ -22,9 +22,9 @@ string SanitizeQuery(const string &sql, const string &catalog_name);
 string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name);
 
 // Get the DistributedClient from a TableCatalogEntry's parent catalog.
-DistributedClient &GetDistributedClient(TableCatalogEntry &table);
+DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntry &table);
 
 // Get the DistributedClient from a Catalog.
-DistributedClient &GetDistributedClient(Catalog &catalog);
+DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog);
 
 } // namespace duckdb

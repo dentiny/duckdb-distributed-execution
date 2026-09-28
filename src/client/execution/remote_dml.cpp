@@ -72,7 +72,7 @@ SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, D
 	state.executed = true;
 
 	auto executable_sql = BuildRemotePreparedDMLSQL(context.client, sql);
-	auto result = GetDistributedClient(table).ExecuteStatement(executable_sql, table.catalog.GetName());
+	auto result = GetDistributedClient(context.client, table).ExecuteStatement(executable_sql, table.catalog.GetName());
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to execute DML on control node: " + result->GetError());
 	}

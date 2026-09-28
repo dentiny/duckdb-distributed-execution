@@ -62,7 +62,7 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
-	auto &client = GetDistributedClient(catalog);
+	auto &client = GetDistributedClient(context.client, catalog);
 	auto result = client.ExecuteStatement(alter_sql);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());

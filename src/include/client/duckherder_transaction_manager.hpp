@@ -28,8 +28,8 @@ public:
 	}
 
 private:
-	// Returns the distributed client owned by this attached database's catalog.
-	DistributedClient &GetClient();
+	// Returns the distributed client owned by this DuckDB connection.
+	DistributedClient &GetClient(ClientContext &context);
 
 	AttachedDatabase &attached_database;
 	unique_ptr<DuckTransactionManager> duckdb_transaction_manager;

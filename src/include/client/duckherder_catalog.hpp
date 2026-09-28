@@ -5,6 +5,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
@@ -18,6 +19,7 @@ namespace duckdb {
 class DuckCatalog;
 class DatabaseInstance;
 class DistributedClient;
+class DuckherderConnectionState;
 
 // Configuration for remote tables
 struct RemoteTableConfig {
@@ -35,7 +37,7 @@ struct RemoteTableConfig {
 class DuckherderCatalog : public DuckCatalog {
 public:
 	DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p, string server_db_path_p,
-	                  distributed::ClientRole role_p);
+	                  distributed::ClientRole role_p, connection_t attach_connection_id_p);
 
 	~DuckherderCatalog() override;
 
@@ -95,8 +97,9 @@ public:
 	// Get server URL from stored configuration.
 	string GetServerUrl() const;
 
-	// Get the client instance for this catalog.
-	DistributedClient &GetClient();
+	// Get the remote session owned by this DuckDB connection.
+	DistributedClient &GetClient(ClientContext &context);
+	bool CanUse(ClientContext &context) const;
 
 	// Remote index management.
 	void RegisterRemoteIndex(const string &index_name);
@@ -104,6 +107,8 @@ public:
 	bool IsRemoteIndex(const string &index_name) const;
 
 private:
+	void CloseClients();
+
 	concurrency::mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries DUCKDB_GUARDED_BY(mu);
 
@@ -114,6 +119,13 @@ private:
 	string server_host;
 	int server_port;
 	string server_db_path;
+	distributed::ClientRole role;
+	connection_t attach_connection_id;
+	string client_state_key;
+	mutable concurrency::mutex client_states_mu;
+	bool detached DUCKDB_GUARDED_BY(client_states_mu) = false;
+	unique_ptr<DistributedClient> attach_client DUCKDB_GUARDED_BY(client_states_mu);
+	unordered_map<connection_t, weak_ptr<DuckherderConnectionState>> client_states DUCKDB_GUARDED_BY(client_states_mu);
 
 	// Remote table configuration.
 	// TODO(hjiang): Currently remote tables lives in memory, should provide options to persist and load.
@@ -124,13 +136,6 @@ private:
 	// TODO(hjiang): Currently remote indexes live in memory, should provide options to persist and load.
 	mutable concurrency::mutex remote_indexes_mu;
 	unordered_set<string> remote_indexes DUCKDB_GUARDED_BY(remote_indexes_mu);
-
-	// Client instance for this catalog.
-	//
-	// TODO(hjiang): Own one remote client registration per DuckDB ClientContext so every user connection maps to an
-	// independent Control Node connection instead of sharing this catalog-level client.
-	mutable concurrency::mutex client_mu;
-	unique_ptr<DistributedClient> distributed_client DUCKDB_GUARDED_BY(client_mu);
 };
 
 } // namespace duckdb
