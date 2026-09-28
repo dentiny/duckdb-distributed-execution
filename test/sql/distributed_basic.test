@@ -9,8 +9,7 @@ statement ok
 SELECT duckherder_start_local_server(8834, 4);
 
 statement ok
-ATTACH DATABASE 'localhost:8834' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8834' AS dh (TYPE duckherder);
 
 statement ok
 USE dh;

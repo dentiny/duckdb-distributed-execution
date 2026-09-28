@@ -8,8 +8,7 @@ statement ok
 SELECT duckherder_start_local_server(8844);
 
 statement ok
-ATTACH DATABASE 'localhost:8844' AS dh
-  (TYPE duckherder, client_role 'read_write');
+ATTACH DATABASE 'localhost:8844' AS dh (TYPE duckherder, client_role 'read_write');
 
 statement ok
 CREATE TYPE dh.order_status AS ENUM ('pending', 'complete');

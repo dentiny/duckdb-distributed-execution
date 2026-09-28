@@ -39,8 +39,7 @@ SELECT duckherder_get_worker_count();
 2
 
 statement ok
-ATTACH DATABASE 'localhost:8815' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8815' AS dh (TYPE duckherder);
 
 statement ok
 USE dh;

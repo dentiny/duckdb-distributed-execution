@@ -8,8 +8,7 @@ statement ok
 SELECT duckherder_start_local_server(8818);
 
 statement ok
-ATTACH DATABASE 'localhost:8818' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8818' AS dh (TYPE duckherder);
 
 # DROP TABLE on non-existent table should succeed (idempotent).
 statement ok

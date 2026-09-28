@@ -8,8 +8,7 @@ statement ok
 SELECT duckherder_start_local_server(8822);
 
 statement ok
-ATTACH DATABASE 'localhost:8822' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8822' AS dh (TYPE duckherder);
 
 statement ok
 USE dh;
@@ -33,8 +32,7 @@ statement ok
 DETACH dh;
 
 statement ok
-ATTACH DATABASE 'localhost:8822' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8822' AS dh (TYPE duckherder);
 
 query I
 SELECT * FROM dh.registration_test_table;

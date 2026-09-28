@@ -14,8 +14,7 @@ SELECT duckherder_start_local_server(8821, 4);
 
 # Attach distributed database
 statement ok
-ATTACH DATABASE 'localhost:8821' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8821' AS dh (TYPE duckherder);
 
 statement ok
 USE dh;

@@ -8,8 +8,7 @@ statement ok
 SELECT duckherder_start_local_server(8842);
 
 statement ok
-ATTACH DATABASE 'localhost:8842' AS dh
-  (TYPE duckherder, client_role 'read_write');
+ATTACH DATABASE 'localhost:8842' AS dh (TYPE duckherder, client_role 'read_write');
 
 statement ok
 CREATE TABLE dh.add_column_test (id INTEGER, name VARCHAR);

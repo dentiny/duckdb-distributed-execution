@@ -10,8 +10,7 @@
 # SELECT duckherder_start_local_server(8823);
 
 # statement ok
-# ATTACH DATABASE 'localhost:8823' AS dh
-#   (TYPE duckherder);
+# ATTACH DATABASE 'localhost:8823' AS dh (TYPE duckherder);
 
 # statement ok
 # DROP TABLE IF EXISTS dh.remote_exec_table;

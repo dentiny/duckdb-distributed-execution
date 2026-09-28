@@ -8,38 +8,32 @@ statement ok
 SELECT duckherder_start_local_server(8837);
 
 statement error
-ATTACH 'localhost:8837' AS invalid_role
-  (TYPE duckherder, client_role 'admin');
+ATTACH 'localhost:8837' AS invalid_role (TYPE duckherder, client_role 'admin');
 ----
 <REGEX>:.*client_role must be 'read_only' or 'read_write'.*
 
 statement ok
-ATTACH 'localhost:8837' AS dh
-  (TYPE duckherder, client_role 'read_write');
+ATTACH 'localhost:8837' AS dh (TYPE duckherder, client_role 'read_write');
 
 # A second writable attachment is rejected while the first writer is alive.
 statement error con1
-ATTACH 'localhost:8837' AS rejected_writer
-  (TYPE duckherder, client_role 'read_write');
+ATTACH 'localhost:8837' AS rejected_writer (TYPE duckherder, client_role 'read_write');
 ----
 <REGEX>:.*already has a writable Duckherder client.*
 
 # Multiple read-only attachments can coexist with the writer.
 statement ok con1
-ATTACH 'localhost:8837' AS reader_one
-  (TYPE duckherder, READ_ONLY);
+ATTACH 'localhost:8837' AS reader_one (TYPE duckherder, READ_ONLY);
 
 statement ok con2
-ATTACH 'localhost:8837' AS reader_two
-  (TYPE duckherder, READ_ONLY);
+ATTACH 'localhost:8837' AS reader_two (TYPE duckherder, READ_ONLY);
 
 # DETACH releases the writer slot while readers remain attached.
 statement ok
 DETACH dh;
 
 statement ok con3
-ATTACH 'localhost:8837' AS dh
-  (TYPE duckherder, READ_ONLY);
+ATTACH 'localhost:8837' AS dh (TYPE duckherder, READ_ONLY);
 
 # The control node enforces the role.
 statement error con3
@@ -51,5 +45,4 @@ statement ok con3
 DETACH dh;
 
 statement ok
-ATTACH 'localhost:8837' AS dh
-  (TYPE duckherder, client_role 'read_write');
+ATTACH 'localhost:8837' AS dh (TYPE duckherder, client_role 'read_write');

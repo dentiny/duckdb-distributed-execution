@@ -15,8 +15,7 @@ ATTACH 'local.duckdb' AS invalid_file (TYPE duckherder);
 <REGEX>:.*expected 'host:port'.*
 
 statement error
-ATTACH 'localhost:8849' AS legacy_options
-  (TYPE duckherder, server_host 'localhost', server_port 8849);
+ATTACH 'localhost:8849' AS legacy_options (TYPE duckherder, server_host 'localhost', server_port 8849);
 ----
 <REGEX>:.*server_host/server_port options are no longer supported.*
 

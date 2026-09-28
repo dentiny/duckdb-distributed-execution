@@ -13,8 +13,7 @@ statement ok
 SELECT duckherder_start_local_server(8825, 4);
 
 statement ok
-ATTACH DATABASE 'localhost:8825' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8825' AS dh (TYPE duckherder);
 
 statement ok
 USE dh;

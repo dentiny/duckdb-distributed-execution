@@ -305,12 +305,10 @@ SELECT duckherder_stop_local_server();
 
 ```sql
 -- READ_WRITE is the default.
-ATTACH DATABASE 'localhost:8815' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8815' AS dh (TYPE duckherder);
 
 -- READ_ONLY must be explicit.
-ATTACH DATABASE 'localhost:8815' AS dh
-  (TYPE duckherder, READ_ONLY);
+ATTACH DATABASE 'localhost:8815' AS dh (TYPE duckherder, READ_ONLY);
 ```
 
 The ATTACH path does not store Duckherder data. Duckherder always backs its local `DuckCatalog` metadata cache with an
@@ -331,8 +329,7 @@ and write; every operation from another connection is rejected:
 
 ```sql
 -- Connection 1: creates and owns the READ_WRITE attachment.
-ATTACH DATABASE 'localhost:8815' AS dh
-  (TYPE duckherder);
+ATTACH DATABASE 'localhost:8815' AS dh (TYPE duckherder);
 SELECT * FROM dh.my_table; -- allowed
 INSERT INTO dh.my_table VALUES (1); -- allowed
 
@@ -349,8 +346,7 @@ rejected:
 
 ```sql
 -- Connection 1: creates a READ_ONLY attachment.
-ATTACH DATABASE 'localhost:8815' AS dh
-  (TYPE duckherder, READ_ONLY);
+ATTACH DATABASE 'localhost:8815' AS dh (TYPE duckherder, READ_ONLY);
 
 -- Connection 1 and Connection 2: both allowed, using different Flight clients.
 SELECT * FROM duckherder_get_query_execution_stats();
