@@ -48,27 +48,21 @@ unique_ptr<CreateInfo> ParseCreateInfo(const string &sql) {
 	return std::move(parser.statements[0]->Cast<CreateStatement>().info);
 }
 
-vector<vector<Value>> FetchRows(DistributedClient &client, const string &sql, const vector<LogicalType> &types) {
+template <class FUNC>
+void ForEachRow(DistributedClient &client, const string &sql, const vector<LogicalType> &types, FUNC &&callback) {
 	auto result = client.ScanTable(sql, NO_QUERY_LIMIT, NO_QUERY_OFFSET, &types);
 	if (result->HasError()) {
 		throw IOException("Failed to load remote catalog metadata: %s", result->GetError());
 	}
-	vector<vector<Value>> rows;
 	while (true) {
 		auto chunk = result->Fetch();
 		if (!chunk || chunk->size() == 0) {
 			break;
 		}
 		for (idx_t row_idx = 0; row_idx < chunk->size(); row_idx++) {
-			vector<Value> row;
-			row.reserve(chunk->ColumnCount());
-			for (idx_t column_idx = 0; column_idx < chunk->ColumnCount(); column_idx++) {
-				row.push_back(chunk->GetValue(column_idx, row_idx));
-			}
-			rows.push_back(std::move(row));
+			callback(*chunk, row_idx);
 		}
 	}
-	return rows;
 }
 
 string QuotedIdentifier(const string &name) {
@@ -112,44 +106,43 @@ void DuckherderCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
 
 void DuckherderCatalog::LoadRemoteCatalog(ClientContext &context) {
 	auto &client = GetClient(context);
+	auto transaction = CatalogTransaction::GetSystemTransaction(db_instance);
+	auto &schema = duckdb_catalog->GetSchema(transaction, DEFAULT_SCHEMA);
 
-	auto type_rows = FetchRows(client,
-	                           "SELECT type_name, labels FROM duckdb_types() "
-	                           "WHERE database_name = current_database() AND schema_name = 'main' AND NOT internal "
-	                           "AND labels IS NOT NULL ORDER BY type_name",
-	                           {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)});
-	for (auto &row : type_rows) {
-		vector<string> labels;
-		for (auto &label : ListValue::GetChildren(row[1])) {
-			labels.push_back(label.ToSQLString());
-		}
-		auto sql = StringUtil::Format("CREATE TYPE %s AS ENUM (%s)", QualifiedMainName(row[0].GetValue<string>()),
-		                              StringUtil::Join(labels, ", "));
-		auto info = ParseCreateInfo(sql);
-		auto &type_info = info->Cast<CreateTypeInfo>();
-		type_info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-		auto transaction = CatalogTransaction::GetSystemTransaction(db_instance);
-		auto &schema = duckdb_catalog->GetSchema(transaction, DEFAULT_SCHEMA);
-		schema.CreateType(transaction, type_info);
-	}
+	ForEachRow(client,
+	           "SELECT type_name, labels FROM duckdb_types() "
+	           "WHERE database_name = current_database() AND schema_name = 'main' AND NOT internal "
+	           "AND labels IS NOT NULL ORDER BY type_name",
+	           {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)}, [&](DataChunk &chunk, idx_t row_idx) {
+		           vector<string> labels;
+		           auto labels_value = chunk.GetValue(1, row_idx);
+		           for (auto &label : ListValue::GetChildren(labels_value)) {
+			           labels.push_back(label.ToSQLString());
+		           }
+		           auto sql = StringUtil::Format("CREATE TYPE %s AS ENUM (%s)",
+		                                         QualifiedMainName(chunk.GetValue(0, row_idx).GetValue<string>()),
+		                                         StringUtil::Join(labels, ", "));
+		           auto info = ParseCreateInfo(sql);
+		           auto &type_info = info->Cast<CreateTypeInfo>();
+		           type_info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+		           schema.CreateType(transaction, type_info);
+	           });
 
-	auto table_rows = FetchRows(client,
-	                            "SELECT table_name, sql FROM duckdb_tables() "
-	                            "WHERE database_name = current_database() AND schema_name = 'main' AND NOT internal "
-	                            "ORDER BY table_name",
-	                            {LogicalType::VARCHAR, LogicalType::VARCHAR});
-	for (auto &row : table_rows) {
-		auto info = unique_ptr_cast<CreateInfo, CreateTableInfo>(ParseCreateInfo(row[1].GetValue<string>()));
-		info->schema = DEFAULT_SCHEMA;
-		info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-		auto transaction = CatalogTransaction::GetSystemTransaction(db_instance);
-		auto &schema = duckdb_catalog->GetSchema(transaction, DEFAULT_SCHEMA);
-		auto binder = Binder::CreateBinder(context);
-		auto bound_info = binder->BindCreateTableInfo(std::move(info), schema);
-		duckdb_catalog->CreateTable(transaction, schema, *bound_info);
-		auto table_name = row[0].GetValue<string>();
-		RegisterRemoteTable(table_name, GetServerUrl(), QuotedIdentifier(table_name));
-	}
+	ForEachRow(client,
+	           "SELECT table_name, sql FROM duckdb_tables() "
+	           "WHERE database_name = current_database() AND schema_name = 'main' AND NOT internal "
+	           "ORDER BY table_name",
+	           {LogicalType::VARCHAR, LogicalType::VARCHAR}, [&](DataChunk &chunk, idx_t row_idx) {
+		           auto info = unique_ptr_cast<CreateInfo, CreateTableInfo>(
+		               ParseCreateInfo(chunk.GetValue(1, row_idx).GetValue<string>()));
+		           info->schema = DEFAULT_SCHEMA;
+		           info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+		           auto binder = Binder::CreateBinder(context);
+		           auto bound_info = binder->BindCreateTableInfo(std::move(info), schema);
+		           duckdb_catalog->CreateTable(transaction, schema, *bound_info);
+		           auto table_name = chunk.GetValue(0, row_idx).GetValue<string>();
+		           RegisterRemoteTable(table_name, GetServerUrl(), QuotedIdentifier(table_name));
+	           });
 }
 
 optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
