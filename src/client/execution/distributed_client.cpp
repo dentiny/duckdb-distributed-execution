@@ -20,8 +20,8 @@ unique_ptr<QueryResult> MakeErrorResult(const string &error) {
 }
 
 unique_ptr<QueryResult> MakeEmptyResult(StatementType statement_type) {
-	vector<string> names;
-	vector<LogicalType> types;
+	vector<string> names {"Count"};
+	vector<LogicalType> types {LogicalType::BIGINT};
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
 	                                          ClientProperties());
@@ -174,6 +174,10 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	}
 
 	if (collection == nullptr) {
+		if (expected_types != nullptr) {
+			types = *expected_types;
+			names.resize(types.size());
+		}
 		collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 	}
 	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), names,

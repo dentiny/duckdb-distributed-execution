@@ -42,6 +42,7 @@ public:
 	~DuckherderCatalog() override;
 
 	void Initialize(bool load_builtin) override;
+	void FinalizeLoad(optional_ptr<ClientContext> context) override;
 	void OnDetach(ClientContext &context) override;
 
 	string GetCatalogType() override {
@@ -106,6 +107,7 @@ public:
 	bool IsRemoteIndex(const string &index_name) const;
 
 private:
+	void LoadRemoteCatalog(ClientContext &context);
 	void CloseClients();
 	void EnsureWriteOwner(ClientContext &context) DUCKDB_REQUIRES(client_states_mu);
 	shared_ptr<DuckherderConnectionState> GetOrCreateClientState(ClientContext &context)

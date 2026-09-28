@@ -73,15 +73,9 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	auto &client = GetDistributedClient(context, bind_data.table);
-	if (!client.TableExists(bind_data.remote_table_name)) {
-		output.SetCardinality(0);
-		local_state.finished = true;
-		return;
-	}
-
 	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
+	auto &client = GetDistributedClient(context, bind_data.table);
 	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), local_state.offset,
 	                               &expected_types);
 	if (result->HasError()) {

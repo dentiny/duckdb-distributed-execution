@@ -314,7 +314,9 @@ ATTACH DATABASE ':memory:' AS dh
 ```
 
 The ATTACH path does not store Duckherder data. Duckherder always backs its local `DuckCatalog` metadata cache with an
-in-memory database; the control node remains authoritative and no local catalog or table file is persisted.
+in-memory database; the control node remains authoritative and no local catalog or table file is persisted. During
+ATTACH, Duckherder discovers remote enum types and tables and loads their definitions into this cache. Tables created
+through the attachment are created remotely first and added to the cache automatically.
 
 #### Connection and Access Model
 
@@ -362,6 +364,9 @@ lease, so a crashed writer is reclaimed after its lease expires. Client and cont
 version because role registration is not compatible with older binaries.
 
 ### Register and Unregister Remote Tables
+
+ATTACH discovery and `CREATE TABLE` register same-name remote tables automatically. These pragmas are only needed for
+an explicit local-to-remote alias.
 
 ```sql
 -- Register a remote table mapping.

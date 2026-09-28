@@ -5,6 +5,7 @@
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -191,31 +192,25 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 
 	auto &create_info = info.Base();
 	string table_name = create_info.table;
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote table %s", table_name));
 
-	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&duckherder_catalog_ref);
-	const bool is_remote = dh_catalog_ptr && dh_catalog_ptr->IsRemoteTable(table_name);
-	if (is_remote) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote table %s", table_name));
-
-		// Preserve the complete CREATE TABLE definition, including constraints, defaults, and generated columns.
-		auto create_sql = create_info.ToString();
-		auto &instance_state = GetInstanceStateOrThrow(db_instance);
-		const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(create_sql);
-		auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
-		auto &client = dh_catalog.GetClient(transaction.GetContext());
-		auto result = client.ExecuteStatement(create_sql, dh_catalog.GetName());
-		if (result->HasError()) {
-			throw Exception(ExceptionType::CATALOG,
-			                StringUtil::Format("Failed to create table on server: %s", result->GetError()));
-		}
-	} else {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create local table %s", table_name));
+	// Preserve the complete CREATE TABLE definition, including constraints, defaults, and generated columns.
+	auto create_sql = create_info.ToString();
+	auto &instance_state = GetInstanceStateOrThrow(db_instance);
+	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(create_sql);
+	auto &dh_catalog = duckherder_catalog_ref.Cast<DuckherderCatalog>();
+	auto &client = dh_catalog.GetClient(transaction.GetContext());
+	auto result = client.ExecuteStatement(create_sql, dh_catalog.GetName());
+	if (result->HasError()) {
+		throw Exception(ExceptionType::CATALOG,
+		                StringUtil::Format("Failed to create table on server: %s", result->GetError()));
+	}
+	if (!dh_catalog.IsRemoteTable(table_name)) {
+		dh_catalog.RegisterRemoteTable(table_name, dh_catalog.GetServerUrl(),
+		                               KeywordHelper::WriteQuoted(table_name, '"'));
 	}
 
-	// Create local catalog entry even for registered remote tables, which allows DuckDB to know the table existence and
-	// its schema. All actual operations (i.e., scan, insert) will be intercepted and sent to server.
-	//
-	// TODO(hjiang): Check whether we could fake a remote table entry, which doesn't do ay IO operations.
+	// The local entry is only the in-memory metadata cache used for binding.
 	return schema_catalog_entry->CreateTable(std::move(transaction), info);
 }
 
