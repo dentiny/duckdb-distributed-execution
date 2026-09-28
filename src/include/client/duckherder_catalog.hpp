@@ -107,7 +107,7 @@ public:
 
 private:
 	void CloseClients();
-	void ValidateClientAccess(ClientContext &context) const DUCKDB_REQUIRES(client_states_mu);
+	void EnsureWriteOwner(ClientContext &context) DUCKDB_REQUIRES(client_states_mu);
 	shared_ptr<DuckherderConnectionState> GetOrCreateClientState(ClientContext &context)
 	    DUCKDB_REQUIRES(client_states_mu);
 

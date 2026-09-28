@@ -54,6 +54,7 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 
 	auto catalog =
 	    make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, role, context.GetConnectionId());
+	catalog->GetClient(context);
 	return std::move(catalog);
 }
 

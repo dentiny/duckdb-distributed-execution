@@ -23,6 +23,15 @@ SELECT count(*) FROM dh.connection_owned_table;
 ----
 <REGEX>:.*read-write Duckherder attachment can only be used by the DuckDB connection that attached it.*
 
+# Closing the owner releases the writer registration and lets the replacement
+# connection take ownership of the existing attachment.
+reconnect
+
+query I
+SELECT count(*) FROM dh.connection_owned_table;
+----
+0
+
 statement ok
 DETACH dh;
 
