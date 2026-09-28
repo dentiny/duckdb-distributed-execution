@@ -19,7 +19,6 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	// Extract server configuration from ATTACH DATABASE options.
 	string server_host = "localhost";
 	int server_port = 8815;
-	string server_db_path;
 	const bool attach_read_only = options.access_mode == AccessMode::READ_ONLY;
 	auto role = attach_read_only ? distributed::CLIENT_ROLE_READ_ONLY : distributed::CLIENT_ROLE_READ_WRITE;
 
@@ -31,11 +30,6 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	it = options.options.find("server_port");
 	if (it != options.options.end()) {
 		server_port = it->second.GetValue<int32_t>();
-	}
-
-	it = options.options.find("server_db_path");
-	if (it != options.options.end()) {
-		server_db_path = it->second.ToString();
 	}
 
 	it = options.options.find("client_role");
@@ -56,11 +50,10 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	// Remove our custom options so StorageManager doesn't validate them.
 	options.options.erase("server_host");
 	options.options.erase("server_port");
-	options.options.erase("server_db_path");
 	options.options.erase("client_role");
 
-	auto catalog = make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, std::move(server_db_path),
-	                                            role, context.GetConnectionId());
+	auto catalog =
+	    make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, role, context.GetConnectionId());
 	return std::move(catalog);
 }
 

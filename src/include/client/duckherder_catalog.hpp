@@ -36,8 +36,8 @@ struct RemoteTableConfig {
 
 class DuckherderCatalog : public DuckCatalog {
 public:
-	DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p, string server_db_path_p,
-	                  distributed::ClientRole role_p, connection_t attach_connection_id_p);
+	DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p, distributed::ClientRole role_p,
+	                  connection_t attach_connection_id_p);
 
 	~DuckherderCatalog() override;
 
@@ -118,7 +118,6 @@ private:
 	// Server configuration.
 	string server_host;
 	int server_port;
-	string server_db_path;
 	distributed::ClientRole role;
 	connection_t attach_connection_id;
 	string client_state_key;
