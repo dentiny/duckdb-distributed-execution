@@ -126,6 +126,9 @@ private:
 	unordered_set<string> remote_indexes;
 
 	// Client instance for this catalog.
+	//
+	// TODO(hjiang): Own one remote client registration per DuckDB ClientContext so every user connection maps to an
+	// independent Control Node connection instead of sharing this catalog-level client.
 	mutable mutex client_mu;
 	unique_ptr<DistributedClient> distributed_client;
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client.pb.h"
+#include "transaction.pb.h"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
@@ -21,7 +22,6 @@ class DistributedExecutor;
 class DuckDB;
 class WorkerManager;
 
-enum class ClientTransactionStatus : uint8_t { NONE, ACTIVE, COMMITTED, ROLLED_BACK };
 enum class ClientRequestTransport : uint8_t { NONE, ACTION, DO_GET, DO_PUT };
 
 // Owns the Control Node resources and bounded transaction replay state for one registered client.
@@ -43,7 +43,7 @@ struct ClientRegistration {
 	// starts.
 	uint64_t active_transaction_id = 0;
 	uint64_t finished_transaction_id = 0;
-	ClientTransactionStatus finished_transaction_status = ClientTransactionStatus::NONE;
+	distributed::TransactionStatus finished_transaction_status = distributed::TRANSACTION_STATUS_UNKNOWN;
 	// Only the latest request in an active transaction is retained. A retry with the same sequence replays this
 	// result, while a newer sequence replaces it, keeping replay memory bounded apart from the latest query result.
 	uint64_t last_request_sequence = 0;

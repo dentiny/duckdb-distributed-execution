@@ -74,6 +74,13 @@ private:
 	RequestIdentity AssignRequestIdentity(distributed::DistributedRequest &req);
 	void FinishRequest(const RequestIdentity &identity, const arrow::Status &status);
 	arrow::Status EnsureExplicitTransaction();
+	distributed::DistributedRequest CreateTransactionRequest(distributed::TransactionAction action,
+	                                                         uint64_t request_sequence) const;
+	arrow::Status SendActionWithRetry(const distributed::DistributedRequest &req,
+	                                  distributed::DistributedResponse &resp);
+	arrow::Status ResolvePendingTransaction();
+	void InitTransactionState();
+	void ResetExplicitTransaction();
 	// RPC implementation to send request and block wait response.
 	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);
 	// Assign the active transaction and one operation sequence, then replay that operation on transport failures.
@@ -93,15 +100,15 @@ private:
 	std::thread heartbeat_thread;
 	// Serializes all transaction RPCs and retains stable identifiers needed to retry an ambiguous operation.
 	mutex transaction_mutex;
-	uint64_t transaction_id = 0;
-	uint64_t next_transaction_id = 1;
-	uint64_t next_request_sequence = 1;
+	uint64_t transaction_id;
+	uint64_t next_transaction_id;
+	uint64_t next_request_sequence;
 	// A statement with an exhausted transport retry has an ambiguous outcome; only ROLLBACK may follow.
-	bool transaction_requires_rollback = false;
+	bool transaction_requires_rollback;
 	// Retains an ambiguous one-RPC autocommit identifier so the same operation can be retried safely.
-	bool pending_autocommit_operation = false;
+	bool pending_autocommit_operation;
 	// A lifecycle action with a lost response is retried before a later BEGIN can allocate another transaction ID.
-	distributed::TransactionAction pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	distributed::TransactionAction pending_transaction_action;
 };
 
 } // namespace duckdb

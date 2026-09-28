@@ -64,6 +64,12 @@ string StripClientCatalog(const string &sql, const string &client_catalog) {
 	return result;
 }
 
+void SetUnknownTransactionResponse(distributed::DistributedResponse &response, const string &message) {
+	response.set_success(false);
+	response.set_error_message(message);
+	response.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+}
+
 } // namespace
 
 DistributedFlightServer::DistributedFlightServer(string host_p, int port_p) : host(std::move(host_p)), port(port_p) {
@@ -289,7 +295,7 @@ void DistributedFlightServer::CacheActionResponse(const distributed::Distributed
 	registration.last_action_response = response.SerializeAsString();
 	if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
 		registration.finished_transaction_id = request.transaction_id();
-		registration.finished_transaction_status = ClientTransactionStatus::COMMITTED;
+		registration.finished_transaction_status = distributed::TRANSACTION_STATUS_COMMITTED;
 	}
 }
 
@@ -400,123 +406,82 @@ arrow::Status DistributedFlightServer::HandleTransaction(const distributed::Dist
 		return arrow::Status::OK();
 	}
 
-	auto *transaction_response = resp.mutable_transaction();
-	auto set_response_status = [&](ClientTransactionStatus status) {
-		switch (status) {
-		case ClientTransactionStatus::ACTIVE:
-			transaction_response->set_status(distributed::TRANSACTION_STATUS_ACTIVE);
-			break;
-		case ClientTransactionStatus::COMMITTED:
-			transaction_response->set_status(distributed::TRANSACTION_STATUS_COMMITTED);
-			break;
-		case ClientTransactionStatus::ROLLED_BACK:
-			transaction_response->set_status(distributed::TRANSACTION_STATUS_ROLLED_BACK);
-			break;
-		case ClientTransactionStatus::NONE:
-			transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
-			break;
-		}
-	};
-	auto set_unknown = [&](const string &message) {
-		resp.set_success(false);
-		resp.set_error_message(message);
-		transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
-	};
 	if (ShouldFailResponseForTesting(unknown_transaction_responses)) {
-		set_unknown("Injected unknown transaction outcome");
+		SetUnknownTransactionResponse(resp, "Injected unknown transaction outcome");
 		return arrow::Status::OK();
 	}
 
 	try {
-		switch (req.transaction().action()) {
-		case distributed::TRANSACTION_ACTION_BEGIN:
+		auto action = req.transaction().action();
+		if (action == distributed::TRANSACTION_ACTION_BEGIN) {
 			if (registration.active_transaction_id != 0) {
 				if (registration.active_transaction_id != req.transaction_id()) {
 					resp.set_success(false);
 					resp.set_error_message("Another transaction is already active on this client connection");
-					set_response_status(ClientTransactionStatus::ACTIVE);
+					resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_ACTIVE);
 					return arrow::Status::OK();
 				}
-				set_response_status(ClientTransactionStatus::ACTIVE);
-				break;
-			}
-			if (req.transaction_id() <= registration.finished_transaction_id) {
+				resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_ACTIVE);
+			} else if (req.transaction_id() <= registration.finished_transaction_id) {
 				resp.set_success(false);
 				resp.set_error_message("Transaction identifier has already been finalized");
 				if (req.transaction_id() == registration.finished_transaction_id) {
-					set_response_status(registration.finished_transaction_status);
+					resp.mutable_transaction()->set_status(registration.finished_transaction_status);
 				} else {
-					transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+					resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
 				}
 				return arrow::Status::OK();
-			}
-			if (req.transaction_id() != registration.finished_transaction_id + 1) {
-				set_unknown("Transaction identifier is not the next expected value");
+			} else if (req.transaction_id() != registration.finished_transaction_id + 1) {
+				SetUnknownTransactionResponse(resp, "Transaction identifier is not the next expected value");
 				return arrow::Status::OK();
+			} else {
+				registration.connection->BeginTransaction();
+				registration.active_transaction_id = req.transaction_id();
+				ClearRequestReplay(registration);
+				registration.last_request_sequence = req.request_sequence();
+				resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_ACTIVE);
 			}
-			registration.connection->BeginTransaction();
-			registration.active_transaction_id = req.transaction_id();
-			ClearRequestReplay(registration);
-			registration.last_request_sequence = req.request_sequence();
-			set_response_status(ClientTransactionStatus::ACTIVE);
-			break;
-		case distributed::TRANSACTION_ACTION_COMMIT:
+		} else {
+			auto commit = action == distributed::TRANSACTION_ACTION_COMMIT;
+			auto completed_status =
+			    commit ? distributed::TRANSACTION_STATUS_COMMITTED : distributed::TRANSACTION_STATUS_ROLLED_BACK;
+			auto action_name = commit ? "COMMIT" : "ROLLBACK";
+
 			if (registration.active_transaction_id == req.transaction_id()) {
 				if (req.request_sequence() <= registration.last_request_sequence) {
-					set_unknown("COMMIT request sequence is not newer than the previous operation");
+					SetUnknownTransactionResponse(
+					    resp, StringUtil::Format("%s request sequence is not newer than the previous operation",
+					                             action_name));
 					return arrow::Status::OK();
 				}
-				registration.connection->Commit();
+				if (commit) {
+					registration.connection->Commit();
+				} else {
+					registration.connection->Rollback();
+				}
 				registration.active_transaction_id = 0;
 				registration.finished_transaction_id = req.transaction_id();
-				registration.finished_transaction_status = ClientTransactionStatus::COMMITTED;
+				registration.finished_transaction_status = completed_status;
 				ClearRequestReplay(registration);
-				set_response_status(ClientTransactionStatus::COMMITTED);
-				break;
-			}
-			if (registration.finished_transaction_id == req.transaction_id()) {
-				set_response_status(registration.finished_transaction_status);
-				if (registration.finished_transaction_status == ClientTransactionStatus::COMMITTED) {
-					break;
-				}
-				resp.set_success(false);
-				resp.set_error_message("Remote Duckherder transaction was already rolled back");
+			} else if (registration.finished_transaction_id != req.transaction_id()) {
+				SetUnknownTransactionResponse(
+				    resp,
+				    StringUtil::Format("Remote Duckherder %s outcome is unknown: transaction state is unavailable",
+				                       action_name));
 				return arrow::Status::OK();
 			}
-			set_unknown("Remote Duckherder COMMIT outcome is unknown: transaction state is unavailable");
-			return arrow::Status::OK();
-		case distributed::TRANSACTION_ACTION_ROLLBACK:
-			if (registration.active_transaction_id == req.transaction_id()) {
-				if (req.request_sequence() <= registration.last_request_sequence) {
-					set_unknown("ROLLBACK request sequence is not newer than the previous operation");
-					return arrow::Status::OK();
-				}
-				registration.connection->Rollback();
-				registration.active_transaction_id = 0;
-				registration.finished_transaction_id = req.transaction_id();
-				registration.finished_transaction_status = ClientTransactionStatus::ROLLED_BACK;
-				ClearRequestReplay(registration);
-				set_response_status(ClientTransactionStatus::ROLLED_BACK);
-				break;
-			}
-			if (registration.finished_transaction_id == req.transaction_id()) {
-				set_response_status(registration.finished_transaction_status);
-				if (registration.finished_transaction_status == ClientTransactionStatus::ROLLED_BACK) {
-					break;
-				}
+			resp.mutable_transaction()->set_status(registration.finished_transaction_status);
+			if (registration.finished_transaction_status != completed_status) {
 				resp.set_success(false);
-				resp.set_error_message("Remote Duckherder transaction was already committed");
+				resp.set_error_message(StringUtil::Format("Remote Duckherder transaction was already %s",
+				                                          commit ? "rolled back" : "committed"));
 				return arrow::Status::OK();
 			}
-			set_unknown("Remote Duckherder ROLLBACK outcome is unknown: transaction state is unavailable");
-			return arrow::Status::OK();
-		default:
-			return arrow::Status::Invalid("Invalid transaction action after validation");
 		}
 	} catch (const std::exception &ex) {
 		resp.set_success(false);
 		resp.set_error_message(ex.what());
-		transaction_response->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+		resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
 		return arrow::Status::OK();
 	}
 	resp.set_success(true);
@@ -674,7 +639,7 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 		registration->last_query_batches = std::move(batches);
 		if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
 			registration->finished_transaction_id = request.transaction_id();
-			registration->finished_transaction_status = ClientTransactionStatus::COMMITTED;
+			registration->finished_transaction_status = distributed::TRANSACTION_STATUS_COMMITTED;
 		}
 	}
 
