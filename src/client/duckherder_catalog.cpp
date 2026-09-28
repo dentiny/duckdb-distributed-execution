@@ -292,8 +292,7 @@ bool DuckherderCatalog::IsRemoteTable(const string &schema_name, const string &t
 	return remote_tables.find(table_name) != remote_tables.end();
 }
 
-DuckherderCatalog::RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &schema_name,
-                                                                             const string &table_name) const {
+RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &schema_name, const string &table_name) const {
 	if (StringUtil::CIEquals(schema_name, DEFAULT_SCHEMA)) {
 		concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
 		auto table = remote_tables.find(table_name);

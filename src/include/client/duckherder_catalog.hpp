@@ -1,13 +1,11 @@
 #pragma once
 
-#include <utility>
-
+#include "client/duckherder_remote_table_config.hpp"
 #include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
-#include "duckdb/common/string.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/shared_ptr.hpp"
+#include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -60,29 +58,6 @@ private:
 	friend class DuckherderPragmas;
 	friend class DuckherderSchemaCatalogEntry;
 	friend class DuckherderTableCatalogEntry;
-
-	struct RemoteTableConfig {
-		string server_url;
-		string remote_table_name;
-
-		RemoteTableConfig(string server_url_p, string remote_table_name_p)
-		    : server_url(std::move(server_url_p)), remote_table_name(std::move(remote_table_name_p)) {
-		}
-	};
-
-	struct IdentifierHash {
-		size_t operator()(const string &identifier) const {
-			return StringUtil::CIHash(identifier);
-		}
-	};
-
-	struct IdentifierEqual {
-		bool operator()(const string &lhs, const string &rhs) const {
-			return StringUtil::CIEquals(lhs, rhs);
-		}
-	};
-
-	using RemoteTableMap = unordered_map<string, RemoteTableConfig, IdentifierHash, IdentifierEqual>;
 
 	void RegisterRemoteTable(const string &table_name, const string &server_url, const string &remote_table_name);
 	void UnregisterRemoteTable(const string &table_name);
