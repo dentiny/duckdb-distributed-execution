@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "client/transport/transaction_state.hpp"
 #include "distributed.pb.h"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -67,16 +68,6 @@ private:
 		distributed::TransactionMode mode;
 	};
 
-	struct TransactionState {
-		optional_ptr<ClientContext> context;
-		uint64_t transaction_id = 0;
-		uint64_t next_transaction_id = 1;
-		uint64_t next_request_sequence = 1;
-		bool requires_rollback = false;
-		bool pending_autocommit_operation = false;
-		distributed::TransactionAction pending_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
-	};
-
 	arrow::Status RegisterClient();
 	void UnregisterClientNoThrow();
 	void HeartbeatLoop();
@@ -109,7 +100,7 @@ private:
 	std::thread heartbeat_thread;
 	// Serializes all transaction RPCs and retains stable identifiers needed to retry an ambiguous operation.
 	mutex transaction_mutex;
-	TransactionState transaction_state;
+	DistributedTransactionState transaction_state;
 };
 
 } // namespace duckdb
