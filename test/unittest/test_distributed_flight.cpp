@@ -33,13 +33,6 @@ public:
 		std::this_thread::sleep_for(std::chrono::seconds(2));
 	}
 
-	~FlightTestServer() {
-		server->Shutdown();
-		if (server_thread.joinable()) {
-			server_thread.join();
-		}
-	}
-
 	DistributedFlightServer &GetServer() {
 		return *server;
 	}
