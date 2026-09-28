@@ -177,11 +177,6 @@ idx_t DistributedFlightServer::GetWorkerCount() const {
 	return worker_manager->GetWorkerCount();
 }
 
-idx_t DistributedFlightServer::GetClientCount() const {
-	const concurrency::shared_lock<concurrency::shared_mutex> lock(clients_mutex);
-	return clients.size();
-}
-
 void DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
 	if (!worker_manager) {
 		throw InternalException("WorkerManager not initialized");

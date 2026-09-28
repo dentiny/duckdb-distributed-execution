@@ -99,7 +99,6 @@ public:
 
 	// Get the remote session owned by this DuckDB connection.
 	DistributedClient &GetClient(ClientContext &context);
-	bool CanUse(ClientContext &context) const;
 
 	// Remote index management.
 	void RegisterRemoteIndex(const string &index_name);
@@ -115,11 +114,13 @@ private:
 	unique_ptr<DuckCatalog> duckdb_catalog;
 	DatabaseInstance &db_instance;
 
-	// Server configuration.
+	// Attachment configuration.
 	string server_host;
 	int server_port;
 	distributed::ClientRole role;
 	connection_t attach_connection_id;
+
+	// Per-connection remote session state.
 	string client_state_key;
 	mutable concurrency::mutex client_states_mu;
 	bool detached DUCKDB_GUARDED_BY(client_states_mu) = false;

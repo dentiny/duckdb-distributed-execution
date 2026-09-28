@@ -310,12 +310,6 @@ DistributedClient &DuckherderCatalog::GetClient(ClientContext &context) {
 	return state->GetClient();
 }
 
-bool DuckherderCatalog::CanUse(ClientContext &context) const {
-	concurrency::lock_guard<concurrency::mutex> lock(client_states_mu);
-	return !detached &&
-	       (role != distributed::CLIENT_ROLE_READ_WRITE || context.GetConnectionId() == attach_connection_id);
-}
-
 void DuckherderCatalog::CloseClients() {
 	vector<shared_ptr<DuckherderConnectionState>> states;
 	unique_ptr<DistributedClient> pending_client;

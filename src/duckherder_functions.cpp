@@ -131,12 +131,6 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	    /*examples=*/ {"SELECT duckherder_stop_local_server();"},
 	    /*categories=*/ {"duckherder", "distributed_execution", "server"});
 	RegisterScalarFunction(
-	    loader, GetClientCountFunction(),
-	    /*parameter_names=*/ {},
-	    /*description=*/"Returns the number of client sessions registered with the local Duckherder driver server.",
-	    /*examples=*/ {"SELECT duckherder_get_client_count();"},
-	    /*categories=*/ {"duckherder", "distributed_execution", "server"});
-	RegisterScalarFunction(
 	    loader, GetRegisterOrReplaceDriverFunction(),
 	    /*parameter_names=*/ {"driver_id", "location"},
 	    /*description=*/"Registers a driver node, replacing the currently registered driver if one exists.",

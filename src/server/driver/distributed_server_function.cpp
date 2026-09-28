@@ -144,17 +144,6 @@ void GetWorkerCount(DataChunk &args, ExpressionState &state, Vector &result) {
 	result.SetValue(0, Value::BIGINT(count));
 }
 
-void GetClientCount(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &server_state = GetTestServerState();
-
-	if (server_state.test_server == nullptr) {
-		result.SetValue(0, Value::BIGINT(0));
-		return;
-	}
-
-	result.SetValue(0, Value::BIGINT(server_state.test_server->GetClientCount()));
-}
-
 void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &server_state = GetTestServerState();
 
@@ -263,12 +252,6 @@ ScalarFunction GetStopLocalServerFunction() {
 	return ScalarFunction("duckherder_stop_local_server",
 	                      /*arguments=*/ {},
 	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StopLocalServer);
-}
-
-ScalarFunction GetClientCountFunction() {
-	return ScalarFunction("duckherder_get_client_count",
-	                      /*arguments=*/ {},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BIGINT}, GetClientCount);
 }
 
 ScalarFunction GetWorkerCountFunction() {

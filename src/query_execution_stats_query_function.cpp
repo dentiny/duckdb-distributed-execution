@@ -73,10 +73,8 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
 			continue;
 		}
 		auto &duckherder_catalog = catalog.Cast<DuckherderCatalog>();
-		if (duckherder_catalog.CanUse(context)) {
-			client_to_use = &duckherder_catalog.GetClient(context);
-			break;
-		}
+		client_to_use = &duckherder_catalog.GetClient(context);
+		break;
 	}
 
 	if (client_to_use == nullptr) {
@@ -85,9 +83,7 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
 
 	auto query_result = client_to_use->GetQueryExecutionStats(result->query_stats);
 	if (query_result->HasError()) {
-		throw Exception(
-		    ExceptionType::INTERNAL,
-		    StringUtil::Format("Failed to get Duckherder query execution stats: %s", query_result->GetError()));
+		query_result->ThrowError("Failed to get Duckherder query execution stats: ");
 	}
 	return std::move(result);
 }
