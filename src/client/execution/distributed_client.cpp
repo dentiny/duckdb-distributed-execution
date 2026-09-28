@@ -27,6 +27,7 @@ unique_ptr<QueryResult> MakeEmptyResult(StatementType statement_type, string nam
 	                                          ClientProperties());
 }
 
+// Match DuckDB's binder-defined result schemas, when these remote operations return no result rows.
 unique_ptr<QueryResult> MakeStatementResult(StatementType statement_type) {
 	switch (statement_type) {
 	case StatementType::CREATE_STATEMENT:
@@ -191,8 +192,12 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	}
 
 	if (collection == nullptr) {
+		// DuckDB initializes an empty result from the bound schema before execution. Flight can return no batches for
+		// an empty relation, so retain the caller's bound types instead of constructing an invalid zero-column result.
 		if (expected_types != nullptr) {
 			types = *expected_types;
+			// The table scan's output names come from its binding; placeholders keep this internal result schema
+			// aligned.
 			names.resize(types.size());
 		}
 		collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
