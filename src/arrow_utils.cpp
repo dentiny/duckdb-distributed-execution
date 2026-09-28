@@ -2,11 +2,13 @@
 
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/conversion_exception.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/string.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -211,22 +213,39 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		break;
 	}
 	case LogicalTypeId::UUID: {
-		// UUID is stored as EXTENSION type with FIXED_SIZE_BINARY(16) storage
-		const uint8_t *data = nullptr;
-
-		if (arrow_array->type_id() == arrow::Type::EXTENSION) {
+		hugeint_t uuid_val;
+		if (arrow_array->type_id() == arrow::Type::STRING) {
+			auto string_array = std::static_pointer_cast<arrow::StringArray>(arrow_array);
+			auto uuid_string = string_array->GetString(arrow_idx);
+			if (!UUID::FromString(uuid_string, uuid_val, true)) {
+				throw ConversionException("Invalid UUID value from Arrow: %s", uuid_string);
+			}
+		} else if (arrow_array->type_id() == arrow::Type::LARGE_STRING) {
+			auto string_array = std::static_pointer_cast<arrow::LargeStringArray>(arrow_array);
+			auto uuid_string = string_array->GetString(arrow_idx);
+			if (!UUID::FromString(uuid_string, uuid_val, true)) {
+				throw ConversionException("Invalid UUID value from Arrow: %s", uuid_string);
+			}
+		} else if (arrow_array->type_id() == arrow::Type::EXTENSION) {
 			auto ext_array = std::static_pointer_cast<arrow::ExtensionArray>(arrow_array);
 			auto storage_array = ext_array->storage();
+			if (storage_array->type_id() != arrow::Type::FIXED_SIZE_BINARY) {
+				throw InternalException("Unsupported Arrow UUID storage type: %s", storage_array->type()->ToString());
+			}
 			auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(storage_array);
-			data = binary_array->GetValue(arrow_idx);
-		} else {
-			D_ASSERT(arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY);
+			if (binary_array->byte_width() != 16) {
+				throw InternalException("Arrow UUID storage must contain 16-byte values");
+			}
+			uuid_val = UUID::FromBlob(binary_array->GetValue(arrow_idx));
+		} else if (arrow_array->type_id() == arrow::Type::FIXED_SIZE_BINARY) {
 			auto binary_array = std::static_pointer_cast<arrow::FixedSizeBinaryArray>(arrow_array);
-			data = binary_array->GetValue(arrow_idx);
+			if (binary_array->byte_width() != 16) {
+				throw InternalException("Arrow UUID storage must contain 16-byte values");
+			}
+			uuid_val = UUID::FromBlob(binary_array->GetValue(arrow_idx));
+		} else {
+			throw InternalException("Unsupported Arrow type for UUID conversion: %s", arrow_array->type()->ToString());
 		}
-
-		hugeint_t uuid_val;
-		memcpy(&uuid_val, data, 16);
 		FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = uuid_val;
 		break;
 	}
@@ -280,27 +299,33 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_NS:
 	case LogicalTypeId::TIMESTAMP_TZ: {
-		// Arrow TIMESTAMP can be in various units, with or without timezone.
 		auto ts_array = std::static_pointer_cast<arrow::TimestampArray>(arrow_array);
 		auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_array->type());
 		int64_t value = ts_array->Value(arrow_idx);
-		timestamp_t ts_val;
-
-		switch (ts_type->unit()) {
-		case arrow::TimeUnit::SECOND:
-			ts_val = Timestamp::FromEpochSeconds(value);
+		switch (type.id()) {
+		case LogicalTypeId::TIMESTAMP_SEC:
+			D_ASSERT(ts_type->unit() == arrow::TimeUnit::SECOND);
+			FlatVector::GetData<timestamp_sec_t>(duckdb_vector)[duck_idx] = timestamp_sec_t(value);
 			break;
-		case arrow::TimeUnit::MILLI:
-			ts_val = Timestamp::FromEpochMs(value);
+		case LogicalTypeId::TIMESTAMP_MS:
+			D_ASSERT(ts_type->unit() == arrow::TimeUnit::MILLI);
+			FlatVector::GetData<timestamp_ms_t>(duckdb_vector)[duck_idx] = timestamp_ms_t(value);
 			break;
-		case arrow::TimeUnit::MICRO:
-			ts_val = Timestamp::FromEpochMicroSeconds(value);
+		case LogicalTypeId::TIMESTAMP:
+			D_ASSERT(ts_type->unit() == arrow::TimeUnit::MICRO);
+			FlatVector::GetData<timestamp_t>(duckdb_vector)[duck_idx] = timestamp_t(value);
 			break;
-		case arrow::TimeUnit::NANO:
-			ts_val = Timestamp::FromEpochNanoSeconds(value);
+		case LogicalTypeId::TIMESTAMP_NS:
+			D_ASSERT(ts_type->unit() == arrow::TimeUnit::NANO);
+			FlatVector::GetData<timestamp_ns_t>(duckdb_vector)[duck_idx] = timestamp_ns_t(value);
 			break;
+		case LogicalTypeId::TIMESTAMP_TZ:
+			D_ASSERT(ts_type->unit() == arrow::TimeUnit::MICRO);
+			FlatVector::GetData<timestamp_tz_t>(duckdb_vector)[duck_idx] = timestamp_tz_t(value);
+			break;
+		default:
+			throw InternalException("Unexpected DuckDB timestamp type");
 		}
-		FlatVector::GetData<timestamp_t>(duckdb_vector)[duck_idx] = ts_val;
 		break;
 	}
 	case LogicalTypeId::INTERVAL: {
@@ -349,10 +374,27 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		FlatVector::GetData<interval_t>(duckdb_vector)[duck_idx] = interval_val;
 		break;
 	}
-	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::HUGEINT: {
+		if (arrow_array->type_id() != arrow::Type::DECIMAL128) {
+			throw InternalException("Unsupported Arrow type for HUGEINT conversion: %s",
+			                        arrow_array->type()->ToString());
+		}
+		auto decimal_array = std::static_pointer_cast<arrow::Decimal128Array>(arrow_array);
+		hugeint_t value;
+		memcpy(&value, decimal_array->GetValue(arrow_idx), sizeof(value));
+		FlatVector::GetData<hugeint_t>(duckdb_vector)[duck_idx] = value;
+		break;
+	}
 	case LogicalTypeId::UHUGEINT: {
-		throw InternalException(
-		    "HUGEINT/UHUGEINT conversion not implemented - type should be detected as VARCHAR or BLOB");
+		if (arrow_array->type_id() != arrow::Type::DECIMAL128) {
+			throw InternalException("Unsupported Arrow type for UHUGEINT conversion: %s",
+			                        arrow_array->type()->ToString());
+		}
+		auto decimal_array = std::static_pointer_cast<arrow::Decimal128Array>(arrow_array);
+		uhugeint_t value;
+		memcpy(&value, decimal_array->GetValue(arrow_idx), sizeof(value));
+		FlatVector::GetData<uhugeint_t>(duckdb_vector)[duck_idx] = value;
+		break;
 	}
 	case LogicalTypeId::DECIMAL: {
 		if (arrow_array->type_id() == arrow::Type::DECIMAL128) {
