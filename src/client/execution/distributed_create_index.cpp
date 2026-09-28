@@ -9,6 +9,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckherder_catalog.hpp"
 #include "utils/catalog_utils.hpp"
+#include "utils/mutex.hpp"
 
 namespace duckdb {
 
@@ -21,7 +22,7 @@ public:
 	}
 
 	bool executed;
-	mutex lock;
+	concurrency::mutex lock;
 
 	idx_t MaxThreads() override {
 		return 1; // Single-threaded execution
@@ -50,7 +51,7 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
 
 	// Execute the CREATE INDEX on the remote server and register it locally.
-	lock_guard<mutex> lock(gstate.lock);
+	concurrency::lock_guard<concurrency::mutex> lock(gstate.lock);
 	if (gstate.executed) {
 		return SourceResultType::FINISHED;
 	}

@@ -7,12 +7,12 @@ QueryRecorderHandle QueryRecorder::RecordQueryStart(string query) {
 }
 
 void QueryRecorder::RecordFinish(string query, uint64_t duration_millisec) {
-	const lock_guard<mutex> lck(mu);
+	const concurrency::lock_guard<concurrency::mutex> lck(mu);
 	query_timing[std::move(query)].emplace_back(duration_millisec);
 }
 
 vector<QueryRecord> QueryRecorder::GetQueryRecords() const {
-	const lock_guard<mutex> lck(mu);
+	const concurrency::lock_guard<concurrency::mutex> lck(mu);
 	vector<QueryRecord> query_records;
 	query_records.reserve(query_timing.size());
 	for (const auto &[query, timings] : query_timing) {
@@ -26,7 +26,7 @@ vector<QueryRecord> QueryRecorder::GetQueryRecords() const {
 }
 
 void QueryRecorder::ClearQueryRecords() {
-	const lock_guard<mutex> lck(mu);
+	const concurrency::lock_guard<concurrency::mutex> lck(mu);
 	query_timing.clear();
 }
 

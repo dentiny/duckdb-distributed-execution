@@ -6,6 +6,10 @@ set(TARGET_NAME duckherder)
 set(CMAKE_CXX_FLAGS"${CMAKE_CXX_FLAGS} -Wunused-variable -Wunused-function -Wunused-but-set-variable"
 )
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=thread-safety")
+endif()
+
 find_package(Arrow REQUIRED CONFIG)
 find_package(ArrowFlight REQUIRED CONFIG)
 find_package(Protobuf REQUIRED)

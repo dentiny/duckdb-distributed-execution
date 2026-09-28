@@ -3,12 +3,12 @@
 #include "base_query_recorder.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "utils/mutex.hpp"
 
 namespace duckdb {
 
@@ -69,7 +69,7 @@ public:
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
 private:
-	mutex mu;
+	concurrency::mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
 
 	unique_ptr<DuckCatalog> duckdb_catalog;

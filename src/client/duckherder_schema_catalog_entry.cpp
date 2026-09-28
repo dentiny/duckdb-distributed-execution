@@ -314,7 +314,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::LookupEntry(CatalogTran
 	    .name = lookup_info.GetEntryName(),
 	};
 
-	lock_guard<mutex> lck(mu);
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	auto iter = catalog_entries.find(key);
 	if (iter != catalog_entries.end()) {
 		DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::LookupEntry cache hit");
@@ -423,7 +423,7 @@ void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 	    .type = info.type,
 	    .name = info.name,
 	};
-	lock_guard<mutex> lck(mu);
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	// Here we don't check erase result since we haven't implemented all catalog entry types.
 	catalog_entries.erase(key);
 }
@@ -452,7 +452,7 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			    .type = CatalogType::TABLE_ENTRY,
 			    .name = info.name,
 			};
-			lock_guard<mutex> lck(mu);
+			concurrency::lock_guard<concurrency::mutex> lck(mu);
 			catalog_entries.erase(key);
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
 		}

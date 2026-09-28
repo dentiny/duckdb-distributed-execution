@@ -2,7 +2,6 @@
 
 #include "distributed.pb.h"
 #include "duckdb.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unique_ptr.hpp"
@@ -11,12 +10,12 @@
 #include "server/driver/distributed_flight_server_test_state.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
 #include "server/driver/worker_manager.hpp"
+#include "utils/mutex.hpp"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
 #include <chrono>
 #include <memory>
-#include <shared_mutex>
 
 namespace duckdb {
 
@@ -174,13 +173,13 @@ private:
 	unique_ptr<WorkerManager> worker_manager;
 
 	// Client admission: at most one writable attachment, with any number of readers.
-	mutable std::shared_mutex clients_mutex;
+	mutable concurrency::shared_mutex clients_mutex;
 	unordered_map<string, shared_ptr<ClientRegistration>> clients;
 	string writable_client_id;
 	DistributedFlightServerTestState test_state;
 
 	// Query execution tracking.
-	mutable mutex query_history_mutex;
+	mutable concurrency::mutex query_history_mutex;
 	vector<QueryExecutionInfo> query_history;
 };
 

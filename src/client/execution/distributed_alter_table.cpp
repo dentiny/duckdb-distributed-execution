@@ -10,6 +10,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "utils/catalog_utils.hpp"
+#include "utils/mutex.hpp"
 
 namespace duckdb {
 
@@ -22,7 +23,7 @@ public:
 	}
 
 	bool executed;
-	mutex lock;
+	concurrency::mutex lock;
 
 	idx_t MaxThreads() override {
 		return 1; // Single-threaded execution
@@ -51,7 +52,7 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
 	auto &db_instance = DatabaseInstance::GetDatabase(context.client);
 
 	// Execute the ALTER TABLE on the remote server.
-	lock_guard<mutex> lock(gstate.lock);
+	concurrency::lock_guard<concurrency::mutex> lock(gstate.lock);
 	if (gstate.executed) {
 		return SourceResultType::FINISHED;
 	}

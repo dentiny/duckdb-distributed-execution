@@ -2,12 +2,12 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/helper.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "server/driver/worker_node_client.hpp"
 #include "server/worker/worker_node.hpp"
+#include "utils/mutex.hpp"
 
 namespace duckdb {
 
@@ -49,7 +49,7 @@ public:
 
 private:
 	vector<unique_ptr<WorkerInfo>> workers;
-	mutable mutex mu;
+	mutable concurrency::mutex mu;
 	DuckDB &db;
 
 	// Driver node.

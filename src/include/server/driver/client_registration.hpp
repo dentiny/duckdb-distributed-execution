@@ -3,11 +3,11 @@
 #include "client.pb.h"
 #include "transaction.pb.h"
 #include "duckdb/common/atomic.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "transaction_constants.hpp"
+#include "utils/mutex.hpp"
 
 #include <memory>
 
@@ -34,7 +34,7 @@ struct ClientRegistration {
 	// Last authorized request time in steady-clock milliseconds, updated concurrently by RPC handlers.
 	atomic<int64_t> last_seen;
 	// DuckDB connections are session-scoped and must not execute concurrent requests.
-	mutex connection_mutex;
+	concurrency::mutex connection_mutex;
 	// Dedicated DuckDB session for this registered client.
 	unique_ptr<Connection> connection;
 	// Distributed execution components bound to this client's DuckDB session.

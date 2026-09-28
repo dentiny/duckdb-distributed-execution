@@ -36,7 +36,7 @@ DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p,
 DuckherderCatalog::~DuckherderCatalog() = default;
 
 void DuckherderCatalog::OnDetach(ClientContext &context) {
-	lock_guard<mutex> lock(client_mu);
+	concurrency::lock_guard<concurrency::mutex> lock(client_mu);
 	if (distributed_client) {
 		distributed_client->Close();
 	}
@@ -57,7 +57,7 @@ optional_ptr<SchemaCatalogEntry> DuckherderCatalog::LookupSchema(CatalogTransact
 	auto entry_lookup_str = schema_lookup.GetEntryName();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderCatalog::LookupSchema %s", entry_lookup_str));
 
-	lock_guard<mutex> lck(mu);
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	auto iter = schema_catalog_entries.find(entry_lookup_str);
 	if (iter == schema_catalog_entries.end()) {
 		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
@@ -209,7 +209,7 @@ void DuckherderCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 
 void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
                                             const string &remote_table_name) {
-	lock_guard<mutex> lck(remote_tables_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
 	auto remote_table_config = RemoteTableConfig(server_url, remote_table_name);
 	const bool succ = remote_tables.emplace(table_name, std::move(remote_table_config)).second;
 	if (!succ) {
@@ -221,7 +221,7 @@ void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const stri
 }
 
 void DuckherderCatalog::UnregisterRemoteTable(const string &table_name) {
-	lock_guard<mutex> lck(remote_tables_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
 	const size_t count = remote_tables.erase(table_name);
 	if (count != 1) {
 		throw InvalidInputException(
@@ -231,14 +231,14 @@ void DuckherderCatalog::UnregisterRemoteTable(const string &table_name) {
 }
 
 bool DuckherderCatalog::IsRemoteTable(const string &table_name) const {
-	lock_guard<mutex> lck(remote_tables_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
 	auto it = remote_tables.find(table_name);
 	bool found = it != remote_tables.end() && it->second.is_distributed;
 	return found;
 }
 
 RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &table_name) const {
-	lock_guard<mutex> lck(remote_tables_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
 	auto it = remote_tables.find(table_name);
 	if (it != remote_tables.end()) {
 		return it->second;
@@ -248,7 +248,7 @@ RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &table_na
 }
 
 void DuckherderCatalog::RegisterRemoteIndex(const string &index_name) {
-	lock_guard<mutex> lck(remote_indexes_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_indexes_mu);
 	const bool succ = remote_indexes.insert(index_name).second;
 	if (!succ) {
 		throw InvalidInputException(
@@ -258,7 +258,7 @@ void DuckherderCatalog::RegisterRemoteIndex(const string &index_name) {
 }
 
 void DuckherderCatalog::UnregisterRemoteIndex(const string &index_name) {
-	lock_guard<mutex> lck(remote_indexes_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_indexes_mu);
 	const size_t count = remote_indexes.erase(index_name);
 	if (count != 1) {
 		throw InvalidInputException(
@@ -268,7 +268,7 @@ void DuckherderCatalog::UnregisterRemoteIndex(const string &index_name) {
 }
 
 bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
-	lock_guard<mutex> lck(remote_indexes_mu);
+	concurrency::lock_guard<concurrency::mutex> lck(remote_indexes_mu);
 	return remote_indexes.find(index_name) != remote_indexes.end();
 }
 
@@ -277,7 +277,7 @@ string DuckherderCatalog::GetServerUrl() const {
 }
 
 DistributedClient &DuckherderCatalog::GetClient() {
-	lock_guard<mutex> lock(client_mu);
+	concurrency::lock_guard<concurrency::mutex> lock(client_mu);
 	D_ASSERT(distributed_client);
 	return *distributed_client;
 }
