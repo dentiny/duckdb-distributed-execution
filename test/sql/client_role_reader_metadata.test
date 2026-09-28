@@ -8,8 +8,8 @@ statement ok
 SELECT duckherder_start_local_server(8838);
 
 statement ok
-ATTACH ':memory:' AS dh
-  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8838);
+ATTACH 'localhost:8838' AS dh
+  (TYPE duckherder, client_role 'read_write');
 
 statement ok
 CREATE TYPE dh.reader_status AS ENUM ('ready', 'done');
@@ -42,8 +42,8 @@ statement ok
 DETACH dh;
 
 statement ok
-ATTACH ':memory:' AS dh
-  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8838);
+ATTACH 'localhost:8838' AS dh
+  (TYPE duckherder, READ_ONLY);
 
 query IT
 SELECT * FROM dh.reader_visible_data;

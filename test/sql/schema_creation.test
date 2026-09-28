@@ -8,8 +8,8 @@ statement ok
 SELECT duckherder_start_local_server(8849);
 
 statement ok
-ATTACH ':memory:' AS dh
-  (TYPE duckherder, client_role 'read_write', server_host 'localhost', server_port 8849);
+ATTACH 'localhost:8849' AS dh
+  (TYPE duckherder, client_role 'read_write');
 
 query I
 SELECT count(*) FROM duckdb_schemas()

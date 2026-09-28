@@ -1,5 +1,5 @@
 # name: test/sql/registration.test
-# description: test duckherder extension to register and unregister table
+# description: test automatic remote table routing
 # group: [sql]
 
 require duckherder
@@ -8,56 +8,54 @@ statement ok
 SELECT duckherder_start_local_server(8822);
 
 statement ok
-ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8822);
+ATTACH DATABASE 'localhost:8822' AS dh
+  (TYPE duckherder);
 
 statement ok
-PRAGMA duckherder_register_remote_table('registration_test_table', 'registration_test_table');
-
-# Double registration.
-statement error
-PRAGMA duckherder_register_remote_table('registration_test_table', 'registration_test_table');
-----
-Invalid Input Error: Failed to register table registration_test_table because it's already registered!
+USE dh;
 
 statement ok
-PRAGMA duckherder_unregister_remote_table('registration_test_table');
-
-statement error
-PRAGMA duckherder_unregister_remote_table('non_existent_table_xyz');
-----
-Invalid Input Error: Failed to unregister table non_existent_table_xyz because it hasn't been registered!
-
-# Double unregistration.
-statement error
-PRAGMA duckherder_unregister_remote_table('registration_test_table');
-----
-Invalid Input Error: Failed to unregister table registration_test_table because it hasn't been registered!
-
-# Routing override identifiers follow DuckDB's case-insensitive catalog semantics.
-statement ok
-CREATE TABLE dh."PhysicalCase" (value INTEGER);
+CREATE TABLE registration_test_table (id INTEGER);
 
 statement ok
-INSERT INTO dh."PhysicalCase" VALUES (111);
-
-statement ok
-CREATE TABLE dh."LogicalCase" (value INTEGER);
-
-statement ok
-PRAGMA duckherder_register_remote_table('logicalcase', 'PhysicalCase');
+INSERT INTO registration_test_table VALUES (42);
 
 query I
-SELECT value FROM dh."LogicalCase";
+SELECT * FROM registration_test_table;
+----
+42
+
+# Reattaching discovers the existing remote table without a public registration API.
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH DATABASE 'localhost:8822' AS dh
+  (TYPE duckherder);
+
+query I
+SELECT * FROM dh.registration_test_table;
+----
+42
+
+statement ok
+DROP TABLE dh.registration_test_table;
+
+# Automatically registered identifiers follow DuckDB's case-insensitive catalog semantics.
+statement ok
+CREATE TABLE dh."MixedCase" (value INTEGER);
+
+statement ok
+INSERT INTO dh."MixedCase" VALUES (111);
+
+query I
+SELECT value FROM dh.mixedcase;
 ----
 111
 
-# Mixed-case DROP must remove the override so the key can be reused.
+# Mixed-case DROP follows DuckDB's case-insensitive catalog semantics.
 statement ok
-DROP TABLE dh.LOGICALCASE;
-
-statement ok
-PRAGMA duckherder_register_remote_table('LOGICALCASE', 'PhysicalCase');
-
-# Explicit unregistration is also case-insensitive.
-statement ok
-PRAGMA duckherder_unregister_remote_table('logicalcase');
+DROP TABLE dh.MIXEDCASE;

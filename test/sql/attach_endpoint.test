@@ -1,0 +1,41 @@
+# name: test/sql/attach_endpoint.test
+# description: Duckherder ATTACH uses the path as the remote endpoint
+# group: [sql]
+
+require duckherder
+
+statement error
+ATTACH ':memory:' AS invalid_memory (TYPE duckherder);
+----
+<REGEX>:.*expected 'host:port'.*
+
+statement error
+ATTACH 'local.duckdb' AS invalid_file (TYPE duckherder);
+----
+<REGEX>:.*expected 'host:port'.*
+
+statement error
+ATTACH 'localhost:8849' AS legacy_options
+  (TYPE duckherder, server_host 'localhost', server_port 8849);
+----
+<REGEX>:.*server_host/server_port options are no longer supported.*
+
+statement ok
+SELECT duckherder_start_local_server(8849);
+
+statement ok
+ATTACH 'grpc://localhost:8849' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.endpoint_table (id INTEGER);
+
+statement ok
+INSERT INTO dh.endpoint_table VALUES (1);
+
+query I
+SELECT * FROM dh.endpoint_table;
+----
+1
+
+statement ok
+DROP TABLE dh.endpoint_table;

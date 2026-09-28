@@ -13,11 +13,6 @@
 
 namespace duckdb {
 
-/*static*/ PragmaFunction DuckherderPragmas::GetRegisterRemoteTableFunction() {
-	return PragmaFunction::PragmaCall("duckherder_register_remote_table", RegisterRemoteTable,
-	                                  {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}});
-}
-
 /*static*/ PragmaFunction DuckherderPragmas::GetUnregisterRemoteTableFunction() {
 	return PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable,
 	                                  {LogicalType {LogicalTypeId::VARCHAR}});
@@ -26,31 +21,6 @@ namespace duckdb {
 /*static*/ ScalarFunction DuckherderPragmas::GetLoadExtensionFunction() {
 	return ScalarFunction("duckherder_load_extension", {LogicalType {LogicalTypeId::VARCHAR}},
 	                      LogicalType {LogicalTypeId::BOOLEAN}, LoadExtension);
-}
-
-/*static*/ void DuckherderPragmas::RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters) {
-	auto table_name = parameters.values[0].ToString();
-	auto remote_table_name = parameters.values[1].ToString();
-
-	// Get the duckherder catalog - assuming it's attached as "dh".
-	auto &db_manager = DatabaseManager::Get(context);
-	auto dh_db = db_manager.GetDatabase(context, "dh");
-	if (!dh_db) {
-		throw CatalogException("Duckherder database 'dh' not attached");
-	}
-
-	auto &catalog = dh_db->GetCatalog();
-	if (catalog.GetCatalogType() != "duckherder") {
-		throw CatalogException("Database 'dh' is not a duckherder database");
-	}
-
-	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
-	if (!dh_catalog_ptr) {
-		throw CatalogException("Failed to cast catalog to DuckherderCatalog");
-	}
-
-	auto server_url = dh_catalog_ptr->GetServerUrl();
-	dh_catalog_ptr->RegisterRemoteTable(table_name, server_url, remote_table_name);
 }
 
 /*static*/ void DuckherderPragmas::UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters) {

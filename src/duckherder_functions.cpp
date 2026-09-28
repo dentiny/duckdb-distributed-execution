@@ -82,12 +82,6 @@ ScalarFunction GetClearQueryRecorderStatsFunction() {
 } // namespace
 
 void RegisterDuckherderFunctions(ExtensionLoader &loader) {
-	RegisterPragmaFunction(
-	    loader, DuckherderPragmas::GetRegisterRemoteTableFunction(),
-	    /*parameter_names=*/ {"local_table_name", "remote_table_name"},
-	    /*description=*/"Registers a local table name as a mapping to a table on the attached Duckherder server.",
-	    /*examples=*/ {"PRAGMA duckherder_register_remote_table('orders', 'remote_orders');"},
-	    /*categories=*/ {"duckherder", "distributed_execution", "catalog"});
 	RegisterPragmaFunction(loader, DuckherderPragmas::GetUnregisterRemoteTableFunction(),
 	                       /*parameter_names=*/ {"local_table_name"},
 	                       /*description=*/"Removes a remote table mapping from the attached Duckherder catalog.",

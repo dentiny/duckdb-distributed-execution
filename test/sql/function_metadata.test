@@ -14,7 +14,6 @@ WHERE function_name IN (
     'duckherder_get_worker_count',
     'duckherder_load_extension',
     'duckherder_register_or_replace_driver',
-    'duckherder_register_remote_table',
     'duckherder_register_worker',
     'duckherder_start_local_server',
     'duckherder_start_standalone_worker',
@@ -27,4 +26,11 @@ AND len(categories) > 0
 AND NOT list_contains(parameters, 'col0')
 AND NOT list_contains(parameters, 'col1');
 ----
-12
+11
+
+query I
+SELECT count(*)
+FROM duckdb_functions()
+WHERE function_name = 'duckherder_register_remote_table';
+----
+0

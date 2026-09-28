@@ -15,12 +15,10 @@ struct FunctionParameters;
 // TODO(hjiang): Current implementation assumes hard-coded database and catalog type, remove.
 class DuckherderPragmas {
 public:
-	static PragmaFunction GetRegisterRemoteTableFunction();
 	static PragmaFunction GetUnregisterRemoteTableFunction();
 	static ScalarFunction GetLoadExtensionFunction();
 
 private:
-	static void RegisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
 	static void UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters);
 	static void LoadExtension(DataChunk &args, ExpressionState &state, Vector &result);
 };

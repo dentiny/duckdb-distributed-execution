@@ -9,13 +9,11 @@ statement ok
 SELECT duckherder_start_local_server(8827, 4);
 
 statement ok
-ATTACH DATABASE ':memory:' AS dh (TYPE duckherder, server_host 'localhost', server_port 8827);
+ATTACH DATABASE 'localhost:8827' AS dh
+  (TYPE duckherder);
 
 statement ok
 USE dh;
-
-statement ok
-PRAGMA duckherder_register_remote_table('parallel_test', 'parallel_test');
 
 statement ok
 DROP TABLE IF EXISTS parallel_test;
@@ -54,6 +52,6 @@ SELECT id, category, value FROM parallel_test WHERE category = 'electronics';
 # Test 4: Verify execution mode.
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
-              WHERE sql LIKE '%FROM parallel_test%' AND execution_mode = 'DELEGATED');
+              WHERE sql LIKE '%parallel_test%' AND execution_mode = 'DELEGATED');
 ----
 true

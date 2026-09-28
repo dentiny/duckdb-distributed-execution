@@ -305,18 +305,20 @@ SELECT duckherder_stop_local_server();
 
 ```sql
 -- READ_WRITE is the default.
-ATTACH DATABASE ':memory:' AS dh
-  (TYPE duckherder, server_host 'localhost', server_port 8815);
+ATTACH DATABASE 'localhost:8815' AS dh
+  (TYPE duckherder);
 
 -- READ_ONLY must be explicit.
-ATTACH DATABASE ':memory:' AS dh
-  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8815);
+ATTACH DATABASE 'localhost:8815' AS dh
+  (TYPE duckherder, READ_ONLY);
 ```
 
 The ATTACH path does not store Duckherder data. Duckherder always backs its local `DuckCatalog` metadata cache with an
 in-memory database; the control node remains authoritative and no local catalog or table file is persisted. During
 ATTACH, Duckherder discovers remote enum types and tables and loads their definitions into this cache. Tables created
-through the attachment are created remotely first and added to the cache automatically.
+through the attachment are created remotely first and added to the cache automatically. The path must be a remote
+`host:port` endpoint (an explicit `grpc://host:port` URL is also accepted); `:memory:` and filesystem paths are not
+supported by the Duckherder storage type.
 
 #### Connection and Access Model
 
@@ -329,8 +331,8 @@ and write; every operation from another connection is rejected:
 
 ```sql
 -- Connection 1: creates and owns the READ_WRITE attachment.
-ATTACH DATABASE ':memory:' AS dh
-  (TYPE duckherder, server_host 'localhost', server_port 8815);
+ATTACH DATABASE 'localhost:8815' AS dh
+  (TYPE duckherder);
 SELECT * FROM dh.my_table; -- allowed
 INSERT INTO dh.my_table VALUES (1); -- allowed
 
@@ -347,8 +349,8 @@ rejected:
 
 ```sql
 -- Connection 1: creates a READ_ONLY attachment.
-ATTACH DATABASE ':memory:' AS dh
-  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8815);
+ATTACH DATABASE 'localhost:8815' AS dh
+  (TYPE duckherder, READ_ONLY);
 
 -- Connection 1 and Connection 2: both allowed, using different Flight clients.
 SELECT * FROM duckherder_get_query_execution_stats();
@@ -363,16 +365,12 @@ closes every client belonging to the attachment and releases the writable slot. 
 lease, so a crashed writer is reclaimed after its lease expires. Client and control node must use the same protocol
 version because role registration is not compatible with older binaries.
 
-### Register and Unregister Remote Tables
+### Remote Table Registration
 
-ATTACH discovery and `CREATE TABLE` register same-name remote tables automatically. These pragmas are only needed for
-an explicit local-to-remote alias.
+ATTACH discovery and `CREATE TABLE` register remote tables automatically. Duckherder does not expose a manual
+registration API. A mapping can still be removed explicitly:
 
 ```sql
--- Register a remote table mapping.
--- Syntax: duckherder_register_remote_table(local_table_name, remote_table_name)
-PRAGMA duckherder_register_remote_table('my_table', 'my_table');
-
 -- Unregister a remote table mapping.
 -- Syntax: duckherder_unregister_remote_table(local_table_name)
 PRAGMA duckherder_unregister_remote_table('my_table');

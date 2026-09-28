@@ -1,3 +1,15 @@
+## Unreleased
+
+### Changed
+
+- Use the Duckherder `ATTACH` path as the remote `host:port` endpoint instead of `server_host` and `server_port`
+  options.
+
+### Removed
+
+- Remove the public `duckherder_register_remote_table` pragma; remote tables are registered automatically during
+  discovery and creation.
+
 ## 0.0.10
 
 ### Added
