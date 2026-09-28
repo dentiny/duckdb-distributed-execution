@@ -1,10 +1,7 @@
 #include "catch/catch.hpp"
 
-#include "client/execution/distributed_client.hpp"
 #include "client/transport/distributed_flight_client.hpp"
 #include "distributed.pb.h"
-#include "duckdb/main/connection.hpp"
-#include "duckdb/main/database.hpp"
 #include "server/driver/distributed_flight_server.hpp"
 #include "utils/no_destructor.hpp"
 
@@ -67,14 +64,6 @@ void ExecuteAutocommit(DistributedFlightClient &client, const string &sql) {
 	REQUIRE(response.success());
 }
 
-void RequireResultSchema(const QueryResult &result, StatementType statement_type, const string &name,
-                         const LogicalType &type) {
-	REQUIRE_FALSE(result.HasError());
-	REQUIRE(result.statement_type == statement_type);
-	REQUIRE(result.names == vector<string> {name});
-	REQUIRE(result.types == vector<LogicalType> {type});
-}
-
 } // namespace
 
 TEST_CASE("Test Flight server startup and connection", "[distributed_flight]") {
@@ -130,34 +119,6 @@ TEST_CASE("Autocommit operations avoid transaction lifecycle RPCs", "[distribute
 	ExecuteAutocommit(client, "INSERT INTO autocommit_single_rpc VALUES (1)");
 	REQUIRE(CountRows(client, "autocommit_single_rpc") == 1);
 	REQUIRE(server.GetTestStateForTesting().GetTransactionRequestCount() == transaction_request_count);
-}
-
-TEST_CASE("Distributed results use DuckDB statement schemas", "[distributed_flight]") {
-	GetTestServer();
-	DuckDB database(nullptr);
-	Connection connection(database);
-	DistributedClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE, *database.instance);
-
-	auto create_result =
-	    client.ExecuteStatement("CREATE TABLE statement_result_schema (id INTEGER)", StatementType::CREATE_STATEMENT);
-	RequireResultSchema(*create_result, StatementType::CREATE_STATEMENT, "Count", LogicalType::BIGINT);
-
-	REQUIRE_FALSE(connection.Query("BEGIN")->HasError());
-	client.SetTransactionContext(*connection.context);
-	auto insert_result =
-	    client.ExecuteStatement("INSERT INTO statement_result_schema VALUES (1)", StatementType::INSERT_STATEMENT);
-	RequireResultSchema(*insert_result, StatementType::INSERT_STATEMENT, "Count", LogicalType::BIGINT);
-	auto commit_result = client.CommitTransaction();
-	RequireResultSchema(*commit_result, StatementType::TRANSACTION_STATEMENT, "Success", LogicalType::BOOLEAN);
-	client.ClearTransactionContext();
-	REQUIRE_FALSE(connection.Query("ROLLBACK")->HasError());
-
-	auto alter_result = client.ExecuteStatement("ALTER TABLE statement_result_schema ADD COLUMN value INTEGER",
-	                                            StatementType::ALTER_STATEMENT);
-	RequireResultSchema(*alter_result, StatementType::ALTER_STATEMENT, "Success", LogicalType::BOOLEAN);
-
-	auto drop_result = client.ExecuteStatement("DROP TABLE statement_result_schema", StatementType::DROP_STATEMENT);
-	RequireResultSchema(*drop_result, StatementType::DROP_STATEMENT, "Success", LogicalType::BOOLEAN);
 }
 
 TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight]") {

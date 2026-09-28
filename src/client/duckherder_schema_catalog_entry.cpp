@@ -4,6 +4,7 @@
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
@@ -363,7 +364,8 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, DropI
 	auto &client = dh_catalog.GetClient(context);
 	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG, "Failed to drop remote index on server: " + result->GetError());
+		throw Exception(ExceptionType::CATALOG,
+		                StringUtil::Format("Failed to drop remote index on server: %s", result->GetError()));
 	}
 
 	md_catalog.UnregisterRemoteIndex(info.name);
@@ -388,7 +390,8 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, DropI
 	auto &client = dh_catalog.GetClient(context);
 	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
 	if (result->HasError()) {
-		throw Exception(ExceptionType::CATALOG, "Failed to drop remote table on server: " + result->GetError());
+		throw Exception(ExceptionType::CATALOG,
+		                StringUtil::Format("Failed to drop remote table on server: %s", result->GetError()));
 	}
 
 	md_catalog.UnregisterRemoteTable(info.name);
@@ -441,7 +444,8 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			auto &client = dh_catalog.GetClient(transaction.GetContext());
 			auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
 			if (result->HasError()) {
-				throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());
+				throw Exception(ExceptionType::CATALOG,
+				                StringUtil::Format("Failed to alter table on server: %s", result->GetError()));
 			}
 
 			// Clear cache for remote tables since cache entry is already stale.

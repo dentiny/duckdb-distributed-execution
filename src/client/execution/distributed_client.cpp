@@ -107,7 +107,8 @@ DistributedClient::DistributedClient(string server_url_p, distributed::ClientRol
 	client = make_uniq<DistributedFlightClient>(server_url, role_p, db_instance);
 	auto status = client->Connect();
 	if (!status.ok()) {
-		throw Exception(ExceptionType::CONNECTION, "Failed to connect to Flight server: " + status.ToString());
+		throw Exception(ExceptionType::CONNECTION,
+		                StringUtil::Format("Failed to connect to Flight server: %s", status.ToString()));
 	}
 }
 

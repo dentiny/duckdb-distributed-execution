@@ -70,7 +70,7 @@ string QuotedIdentifier(const string &name) {
 }
 
 string QualifiedMainName(const string &name) {
-	return QuotedIdentifier(DEFAULT_SCHEMA) + "." + QuotedIdentifier(name);
+	return StringUtil::Format("%s.%s", QuotedIdentifier(DEFAULT_SCHEMA), QuotedIdentifier(name));
 }
 
 } // namespace
