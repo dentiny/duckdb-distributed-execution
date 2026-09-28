@@ -97,7 +97,7 @@ private:
 	std::unique_ptr<arrow::flight::FlightClient> client;
 	atomic<bool> stop_heartbeat {false};
 	concurrency::mutex heartbeat_mutex;
-	std::condition_variable heartbeat_cv;
+	std::condition_variable heartbeat_cv DUCKDB_GUARDED_BY(heartbeat_mutex);
 	std::thread heartbeat_thread;
 	// Serializes all transaction RPCs and retains stable identifiers needed to retry an ambiguous operation.
 	concurrency::mutex transaction_mutex;

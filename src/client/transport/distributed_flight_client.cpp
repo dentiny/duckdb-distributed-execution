@@ -36,7 +36,10 @@ arrow::Status DistributedFlightClient::Connect() {
 
 void DistributedFlightClient::Close() {
 	stop_heartbeat = true;
-	heartbeat_cv.notify_all();
+	{
+		const concurrency::lock_guard<concurrency::mutex> lock(heartbeat_mutex);
+		heartbeat_cv.notify_all();
+	}
 	if (heartbeat_thread.joinable()) {
 		heartbeat_thread.join();
 	}
