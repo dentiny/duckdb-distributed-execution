@@ -282,15 +282,23 @@ string DuckherderCatalog::GetServerUrl() const {
 }
 
 DistributedClient &DuckherderCatalog::GetClient(ClientContext &context) {
+	concurrency::lock_guard<concurrency::mutex> lock(client_states_mu);
+	ValidateClientAccess(context);
+	return GetOrCreateClientState(context)->GetClient();
+}
+
+void DuckherderCatalog::ValidateClientAccess(ClientContext &context) const {
+	if (detached) {
+		throw InvalidInputException("Duckherder attachment is detached");
+	}
 	if (role == distributed::CLIENT_ROLE_READ_WRITE && context.GetConnectionId() != attach_connection_id) {
 		throw InvalidInputException(
 		    "A read-write Duckherder attachment can only be used by the DuckDB connection that attached it; "
 		    "attach a separate Duckherder database with READ_ONLY access from this connection");
 	}
-	concurrency::lock_guard<concurrency::mutex> lock(client_states_mu);
-	if (detached) {
-		throw InvalidInputException("Duckherder attachment is detached");
-	}
+}
+
+shared_ptr<DuckherderConnectionState> DuckherderCatalog::GetOrCreateClientState(ClientContext &context) {
 	shared_ptr<DuckherderConnectionState> state;
 	if (context.GetConnectionId() == attach_connection_id && attach_client) {
 		state = context.registered_state->GetOrCreate<DuckherderConnectionState>(client_state_key,
@@ -307,7 +315,7 @@ DistributedClient &DuckherderCatalog::GetClient(ClientContext &context) {
 		}
 	}
 	client_states[context.GetConnectionId()] = state;
-	return state->GetClient();
+	return state;
 }
 
 void DuckherderCatalog::CloseClients() {
