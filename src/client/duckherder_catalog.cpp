@@ -314,6 +314,12 @@ shared_ptr<DuckherderConnectionState> DuckherderCatalog::GetOrCreateClientState(
 		state = context.registered_state->GetOrCreate<DuckherderConnectionState>(client_state_key, GetServerUrl(), role,
 		                                                                         db_instance);
 	}
+	PruneExpiredClientStates();
+	client_states[context.GetConnectionId()] = state;
+	return state;
+}
+
+void DuckherderCatalog::PruneExpiredClientStates() {
 	for (auto entry = client_states.begin(); entry != client_states.end();) {
 		if (entry->second.expired()) {
 			entry = client_states.erase(entry);
@@ -321,8 +327,6 @@ shared_ptr<DuckherderConnectionState> DuckherderCatalog::GetOrCreateClientState(
 			++entry;
 		}
 	}
-	client_states[context.GetConnectionId()] = state;
-	return state;
 }
 
 void DuckherderCatalog::CloseClients() {

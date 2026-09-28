@@ -110,6 +110,7 @@ private:
 	void EnsureWriteOwner(ClientContext &context) DUCKDB_REQUIRES(client_states_mu);
 	shared_ptr<DuckherderConnectionState> GetOrCreateClientState(ClientContext &context)
 	    DUCKDB_REQUIRES(client_states_mu);
+	void PruneExpiredClientStates() DUCKDB_REQUIRES(client_states_mu);
 
 	concurrency::mutex mu;
 	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries DUCKDB_GUARDED_BY(mu);
