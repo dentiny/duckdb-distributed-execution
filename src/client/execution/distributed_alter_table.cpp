@@ -63,7 +63,7 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
 
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
 	auto &client = GetDistributedClient(context.client, catalog);
-	auto result = client.ExecuteStatement(alter_sql);
+	auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::CATALOG, "Failed to alter table on server: " + result->GetError());
 	}

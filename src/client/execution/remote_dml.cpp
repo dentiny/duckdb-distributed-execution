@@ -18,6 +18,19 @@ struct RemoteDMLSourceState : public GlobalSourceState {
 	bool executed = false;
 };
 
+StatementType GetDMLStatementType(PhysicalOperatorType type) {
+	switch (type) {
+	case PhysicalOperatorType::INSERT:
+		return StatementType::INSERT_STATEMENT;
+	case PhysicalOperatorType::DELETE_OPERATOR:
+		return StatementType::DELETE_STATEMENT;
+	case PhysicalOperatorType::UPDATE:
+		return StatementType::UPDATE_STATEMENT;
+	default:
+		throw InternalException("Unsupported remote DML operator");
+	}
+}
+
 string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
 	Parser parser;
 	parser.ParseQuery(context.GetCurrentQuery());
@@ -72,7 +85,8 @@ SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, D
 	state.executed = true;
 
 	auto executable_sql = BuildRemotePreparedDMLSQL(context.client, sql);
-	auto result = GetDistributedClient(context.client, table).ExecuteStatement(executable_sql, table.catalog.GetName());
+	auto result = GetDistributedClient(context.client, table)
+	                  .ExecuteStatement(executable_sql, GetDMLStatementType(type), table.catalog.GetName());
 	if (result->HasError()) {
 		throw Exception(ExceptionType::IO, "Failed to execute DML on control node: " + result->GetError());
 	}

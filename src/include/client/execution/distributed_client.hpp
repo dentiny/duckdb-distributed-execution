@@ -41,7 +41,8 @@ public:
 	bool HasActiveRemoteTransaction();
 
 	// Execute one complete non-query statement on the control node.
-	unique_ptr<QueryResult> ExecuteStatement(const string &sql, const string &client_catalog = "");
+	unique_ptr<QueryResult> ExecuteStatement(const string &sql, StatementType statement_type,
+	                                         const string &client_catalog = "");
 
 	unique_ptr<QueryResult> CommitTransaction();
 	unique_ptr<QueryResult> RollbackTransaction();
