@@ -48,23 +48,23 @@ void DistributedFlightClient::Close() {
 }
 
 void DistributedFlightClient::SetTransactionContext(optional_ptr<ClientContext> context) {
-	transaction_context = context;
+	transaction_state.context = context;
 }
 
 bool DistributedFlightClient::HasActiveTransaction() {
 	const lock_guard<mutex> lock(transaction_mutex);
-	return transaction_id != 0;
+	return transaction_state.transaction_id != 0;
 }
 
 arrow::Status DistributedFlightClient::EnsureExplicitTransaction() {
 	{
 		const lock_guard<mutex> lock(transaction_mutex);
-		if (pending_transaction_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
+		if (transaction_state.pending_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
 			distributed::DistributedResponse response;
 			ARROW_RETURN_NOT_OK(ResolvePendingTransaction(response));
 		}
 	}
-	if (!transaction_context || transaction_context->transaction.IsAutoCommit() || HasActiveTransaction()) {
+	if (!transaction_state.context || transaction_state.context->transaction.IsAutoCommit() || HasActiveTransaction()) {
 		return arrow::Status::OK();
 	}
 	distributed::DistributedResponse response;
@@ -79,7 +79,7 @@ distributed::DistributedRequest DistributedFlightClient::CreateTransactionReques
                                                                                   uint64_t request_sequence) const {
 	distributed::DistributedRequest request;
 	request.mutable_transaction()->set_action(action);
-	request.set_transaction_id(transaction_id);
+	request.set_transaction_id(transaction_state.transaction_id);
 	request.set_request_sequence(request_sequence);
 	request.set_transaction_mode(distributed::TRANSACTION_MODE_EXPLICIT);
 	return request;
@@ -97,21 +97,19 @@ arrow::Status DistributedFlightClient::SendActionWithRetry(const distributed::Di
 }
 
 void DistributedFlightClient::ResetExplicitTransaction() {
-	transaction_id = 0;
-	next_request_sequence = 1;
-	transaction_requires_rollback = false;
-	pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	transaction_state.transaction_id = 0;
+	transaction_state.next_request_sequence = 1;
+	transaction_state.requires_rollback = false;
+	transaction_state.pending_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
 }
 
 void DistributedFlightClient::InitTransactionState() {
-	ResetExplicitTransaction();
-	next_transaction_id = 1;
-	pending_autocommit_operation = false;
-	transaction_context = nullptr;
+	transaction_state = TransactionState();
 }
 
 arrow::Status DistributedFlightClient::ResolvePendingTransaction(distributed::DistributedResponse &response) {
-	auto pending_request = CreateTransactionRequest(pending_transaction_action, next_request_sequence);
+	auto pending_request =
+	    CreateTransactionRequest(transaction_state.pending_action, transaction_state.next_request_sequence);
 	auto status = SendActionWithRetry(pending_request, response);
 	if (!status.ok()) {
 		return arrow::Status::Invalid(
@@ -121,16 +119,16 @@ arrow::Status DistributedFlightClient::ResolvePendingTransaction(distributed::Di
 		return arrow::Status::Invalid("Previous remote transaction outcome remains unresolved");
 	}
 
-	if (pending_transaction_action == distributed::TRANSACTION_ACTION_BEGIN) {
-		auto rollback_request =
-		    CreateTransactionRequest(distributed::TRANSACTION_ACTION_ROLLBACK, next_request_sequence + 1);
+	if (transaction_state.pending_action == distributed::TRANSACTION_ACTION_BEGIN) {
+		auto rollback_request = CreateTransactionRequest(distributed::TRANSACTION_ACTION_ROLLBACK,
+		                                                 transaction_state.next_request_sequence + 1);
 		status = SendActionWithRetry(rollback_request, response);
 		if (!status.ok() || !response.success()) {
 			return arrow::Status::Invalid("Previous remote BEGIN could not be rolled back");
 		}
 	}
 
-	next_transaction_id++;
+	transaction_state.next_transaction_id++;
 	ResetExplicitTransaction();
 	return arrow::Status::OK();
 }
@@ -194,58 +192,58 @@ arrow::Status DistributedFlightClient::ExecuteStatement(const string &sql, const
 arrow::Status DistributedFlightClient::ManageTransaction(distributed::TransactionAction action,
                                                          distributed::DistributedResponse &response) {
 	lock_guard<mutex> lock(transaction_mutex);
-	if (action == distributed::TRANSACTION_ACTION_BEGIN && transaction_id != 0 &&
-	    pending_transaction_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
+	if (action == distributed::TRANSACTION_ACTION_BEGIN && transaction_state.transaction_id != 0 &&
+	    transaction_state.pending_action != distributed::TRANSACTION_ACTION_UNSPECIFIED) {
 		ARROW_RETURN_NOT_OK(ResolvePendingTransaction(response));
 	}
 	if (action == distributed::TRANSACTION_ACTION_ROLLBACK &&
-	    pending_transaction_action == distributed::TRANSACTION_ACTION_BEGIN) {
+	    transaction_state.pending_action == distributed::TRANSACTION_ACTION_BEGIN) {
 		return ResolvePendingTransaction(response);
 	}
 	if (action == distributed::TRANSACTION_ACTION_BEGIN) {
-		if (pending_autocommit_operation) {
+		if (transaction_state.pending_autocommit_operation) {
 			return arrow::Status::Invalid("Previous autocommit operation outcome remains unresolved");
 		}
-		if (transaction_id != 0) {
+		if (transaction_state.transaction_id != 0) {
 			return arrow::Status::Invalid("A remote transaction is already active or has an unresolved outcome");
 		}
-		transaction_id = next_transaction_id;
-		next_request_sequence = 1;
-		transaction_requires_rollback = false;
-		pending_transaction_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
-	} else if (transaction_id == 0) {
+		transaction_state.transaction_id = transaction_state.next_transaction_id;
+		transaction_state.next_request_sequence = 1;
+		transaction_state.requires_rollback = false;
+		transaction_state.pending_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	} else if (transaction_state.transaction_id == 0) {
 		return arrow::Status::Invalid("No remote transaction is active");
-	} else if (action == distributed::TRANSACTION_ACTION_COMMIT && transaction_requires_rollback) {
+	} else if (action == distributed::TRANSACTION_ACTION_COMMIT && transaction_state.requires_rollback) {
 		return arrow::Status::Invalid(
 		    "A remote operation has an unresolved outcome; the transaction must be rolled back");
 	}
 
-	auto request = CreateTransactionRequest(action, next_request_sequence);
+	auto request = CreateTransactionRequest(action, transaction_state.next_request_sequence);
 	auto status = SendActionWithRetry(request, response);
 	if (!status.ok()) {
-		pending_transaction_action = action;
+		transaction_state.pending_action = action;
 		return status;
 	}
 	if (!response.success() && response.has_transaction() &&
 	    response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
-		pending_transaction_action = action;
+		transaction_state.pending_action = action;
 		return status;
 	}
-	next_request_sequence++;
+	transaction_state.next_request_sequence++;
 
 	if (!response.success()) {
 		if (action == distributed::TRANSACTION_ACTION_BEGIN ||
 		    (response.has_transaction() &&
 		     response.transaction().status() != distributed::TRANSACTION_STATUS_UNKNOWN)) {
 			if (action != distributed::TRANSACTION_ACTION_BEGIN) {
-				next_transaction_id++;
+				transaction_state.next_transaction_id++;
 			}
 			ResetExplicitTransaction();
 		}
 		return status;
 	}
 	if (action == distributed::TRANSACTION_ACTION_COMMIT || action == distributed::TRANSACTION_ACTION_ROLLBACK) {
-		next_transaction_id++;
+		transaction_state.next_transaction_id++;
 		ResetExplicitTransaction();
 	}
 	return status;
@@ -358,10 +356,11 @@ arrow::Status DistributedFlightClient::GetQueryExecutionStats(distributed::Distr
 DistributedFlightClient::RequestIdentity
 DistributedFlightClient::AssignRequestIdentity(distributed::DistributedRequest &req) {
 	RequestIdentity identity;
-	if (transaction_id == 0) {
-		identity = {next_transaction_id, 1, distributed::TRANSACTION_MODE_AUTOCOMMIT};
+	if (transaction_state.transaction_id == 0) {
+		identity = {transaction_state.next_transaction_id, 1, distributed::TRANSACTION_MODE_AUTOCOMMIT};
 	} else {
-		identity = {transaction_id, next_request_sequence++, distributed::TRANSACTION_MODE_EXPLICIT};
+		identity = {transaction_state.transaction_id, transaction_state.next_request_sequence++,
+		            distributed::TRANSACTION_MODE_EXPLICIT};
 	}
 	req.set_transaction_id(identity.transaction_id);
 	req.set_request_sequence(identity.request_sequence);
@@ -372,15 +371,15 @@ DistributedFlightClient::AssignRequestIdentity(distributed::DistributedRequest &
 void DistributedFlightClient::FinishRequest(const RequestIdentity &identity, const arrow::Status &status) {
 	if (identity.mode == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
 		if (status.ok()) {
-			next_transaction_id++;
-			pending_autocommit_operation = false;
+			transaction_state.next_transaction_id++;
+			transaction_state.pending_autocommit_operation = false;
 		} else {
-			pending_autocommit_operation = true;
+			transaction_state.pending_autocommit_operation = true;
 		}
 		return;
 	}
 	if (!status.ok()) {
-		transaction_requires_rollback = true;
+		transaction_state.requires_rollback = true;
 	}
 }
 

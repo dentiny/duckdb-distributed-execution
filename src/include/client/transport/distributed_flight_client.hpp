@@ -67,6 +67,16 @@ private:
 		distributed::TransactionMode mode;
 	};
 
+	struct TransactionState {
+		optional_ptr<ClientContext> context;
+		uint64_t transaction_id = 0;
+		uint64_t next_transaction_id = 1;
+		uint64_t next_request_sequence = 1;
+		bool requires_rollback = false;
+		bool pending_autocommit_operation = false;
+		distributed::TransactionAction pending_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+	};
+
 	arrow::Status RegisterClient();
 	void UnregisterClientNoThrow();
 	void HeartbeatLoop();
@@ -90,7 +100,6 @@ private:
 	string server_url;
 	distributed::ClientRole role;
 	optional_ptr<DatabaseInstance> db_instance;
-	optional_ptr<ClientContext> transaction_context;
 	string client_id;
 	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;
@@ -100,15 +109,7 @@ private:
 	std::thread heartbeat_thread;
 	// Serializes all transaction RPCs and retains stable identifiers needed to retry an ambiguous operation.
 	mutex transaction_mutex;
-	uint64_t transaction_id;
-	uint64_t next_transaction_id;
-	uint64_t next_request_sequence;
-	// A statement with an exhausted transport retry has an ambiguous outcome; only ROLLBACK may follow.
-	bool transaction_requires_rollback;
-	// Retains an ambiguous one-RPC autocommit identifier so the same operation can be retried safely.
-	bool pending_autocommit_operation;
-	// A lifecycle action with a lost response is retried before a later BEGIN can allocate another transaction ID.
-	distributed::TransactionAction pending_transaction_action;
+	TransactionState transaction_state;
 };
 
 } // namespace duckdb
