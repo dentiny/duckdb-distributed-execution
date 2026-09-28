@@ -20,6 +20,23 @@ EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
+DUCKHERDER_UNITTEST_RELEASE := ./build/release/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
+DUCKHERDER_UNITTEST_DEBUG := ./build/debug/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
+DUCKHERDER_UNITTEST_RELDEBUG := ./build/reldebug/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
+
+test_release_internal: test_duckherder_release
+test_debug_internal: test_duckherder_debug
+test_reldebug_internal: test_duckherder_reldebug
+
+test_duckherder_release:
+	$(DUCKHERDER_UNITTEST_RELEASE)
+
+test_duckherder_debug:
+	$(DUCKHERDER_UNITTEST_DEBUG)
+
+test_duckherder_reldebug:
+	$(DUCKHERDER_UNITTEST_RELDEBUG)
+
 format-all: format
 	clang-format --sort-includes=0 -style=file -i $(wildcard test/unittest/*.hpp test/unittest/*.cpp)
 	@cmake-format -i CMakeLists.txt
@@ -29,4 +46,4 @@ format-all: format
 test-object-storage-s3:
 	bash test/object_storage/run_single_writer_reader_e2e.sh
 
-.PHONY: format-all test-object-storage-s3
+.PHONY: format-all test-object-storage-s3  test_duckherder_release test_duckherder_debug test_duckherder_reldebug
