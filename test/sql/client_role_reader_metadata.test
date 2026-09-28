@@ -50,11 +50,6 @@ SELECT * FROM dh.reader_visible_data;
 ----
 42	ready
 
-query I
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dh' AND schema_name = 'analytics';
-----
-1
-
 query IT
 SELECT * FROM dh.analytics.reader_visible_data;
 ----

@@ -162,66 +162,40 @@ ALTER TABLE dh.nonexistent_table DROP COLUMN IF EXISTS some_column;
 Catalog Error: Table with name nonexistent_table does not exist
 
 statement ok
-DROP TABLE dh.test_alter_table;
-
-statement ok
-CREATE TABLE dh."CacheCase" (id INTEGER);
-
-statement ok
-INSERT INTO dh."CacheCase" VALUES (1);
+ALTER TABLE dh.test_alter_table RENAME TO "CacheCase";
 
 query I
-SELECT * FROM dh.cachecase;
+SELECT count(*) FROM dh.cachecase;
 ----
-1
-
-statement ok
-ALTER TABLE dh."CACHECASE" ADD COLUMN payload VARCHAR DEFAULT 'x';
-
-query IT
-SELECT * FROM dh.cachecase;
-----
-1	x
+5
 
 statement ok
 BEGIN;
 
 statement ok
-ALTER TABLE dh.cachecase ADD COLUMN transient INTEGER DEFAULT 7;
+ALTER TABLE dh."CACHECASE" ADD COLUMN transient INTEGER DEFAULT 7;
 
-query ITI
-SELECT * FROM dh.cachecase;
+query IIIII
+SELECT * FROM dh.cachecase WHERE id = 1;
 ----
-1	x	7
+1	Alice	active	NULL	7
 
 statement ok
 ROLLBACK;
 
-statement ok
-INSERT INTO dh.cachecase VALUES (2, 'y');
-
-query IT
-SELECT * FROM dh.cachecase ORDER BY id;
+query IIII
+SELECT * FROM dh.cachecase WHERE id = 1;
 ----
-1	x
-2	y
-
-statement ok
-CREATE TABLE dh."DropCase" (id INTEGER);
-
-query I
-SELECT count(*) FROM dh.dropcase;
-----
-0
+1	Alice	active	NULL
 
 statement ok
 BEGIN;
 
 statement ok
-DROP TABLE dh."DROPCASE";
+DROP TABLE dh."CACHECASE";
 
 statement error
-SELECT * FROM dh.dropcase;
+SELECT * FROM dh.cachecase;
 ----
 <REGEX>:.*Table with name.*does not exist.*
 
@@ -229,6 +203,9 @@ statement ok
 ROLLBACK;
 
 query I
-SELECT count(*) FROM dh.dropcase;
+SELECT count(*) FROM dh.cachecase;
 ----
-0
+5
+
+statement ok
+DROP TABLE dh.cachecase;

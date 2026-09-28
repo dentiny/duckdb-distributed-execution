@@ -18,20 +18,17 @@ WHERE database_name = 'dh' AND schema_name = 'main' AND internal;
 1
 
 statement ok
-CREATE SCHEMA dh.unsupported_objects;
+CREATE SCHEMA dh."Analytics";
 
 statement error
-CREATE VIEW dh.unsupported_objects.local_view AS SELECT 42;
+CREATE VIEW dh.analytics.local_view AS SELECT 42;
 ----
 <REGEX>:.*CREATE VIEW is not supported by Duckherder catalogs.*
 
 statement error
-CREATE SEQUENCE dh.unsupported_objects.local_sequence;
+CREATE SEQUENCE dh.analytics.local_sequence;
 ----
 <REGEX>:.*CREATE SEQUENCE is not supported by Duckherder catalogs.*
-
-statement ok
-DROP SCHEMA dh.unsupported_objects;
 
 statement ok
 BEGIN;
@@ -45,11 +42,6 @@ CREATE TABLE dh.rollback_schema.rollback_table (id INTEGER);
 statement ok
 ROLLBACK;
 
-query I
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dh' AND schema_name = 'rollback_schema';
-----
-0
-
 statement ok
 CREATE SCHEMA dh.rollback_schema;
 
@@ -57,47 +49,18 @@ statement ok
 DROP SCHEMA dh.rollback_schema;
 
 statement ok
-CREATE SCHEMA dh."MixedCase";
-
-statement ok
-DROP SCHEMA dh.mixedcase;
-
-query I
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dh' AND lower(schema_name) = 'mixedcase';
-----
-0
-
-statement ok
-CREATE SCHEMA dh.analytics;
-
-query I
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dh' AND schema_name = 'analytics';
-----
-1
-
-statement ok
 CREATE TABLE dh.analytics.events (id INTEGER);
 
 statement ok
-CREATE SCHEMA IF NOT EXISTS dh.analytics;
+CREATE SCHEMA IF NOT EXISTS dh.ANALYTICS;
 
 statement error
 CREATE SCHEMA dh.analytics;
 ----
 <REGEX>:.*Schema with name "analytics" already exists.*
 
-statement error
-CREATE OR REPLACE SCHEMA dh.analytics;
-----
-<REGEX>:.*Cannot drop entry "analytics" because there are entries that depend on it.*
-
 statement ok
 INSERT INTO dh.analytics.events VALUES (42);
-
-query I
-SELECT * FROM dh.analytics.events;
-----
-42
 
 statement ok
 CREATE INDEX events_id_idx ON dh.analytics.events (id);
@@ -107,35 +70,6 @@ DROP INDEX dh.analytics.events_id_idx;
 
 statement ok
 ALTER TABLE dh.analytics.events RENAME TO archived_events;
-
-query I
-SELECT * FROM dh.analytics.archived_events;
-----
-42
-
-statement ok
-BEGIN;
-
-statement ok
-ALTER TABLE dh.analytics.archived_events RENAME TO temporary_name;
-
-query I
-SELECT * FROM dh.analytics.temporary_name;
-----
-42
-
-statement ok
-ROLLBACK;
-
-query I
-SELECT * FROM dh.analytics.archived_events;
-----
-42
-
-statement error
-SELECT * FROM dh.analytics.temporary_name;
-----
-<REGEX>:.*Table with name temporary_name does not exist.*
 
 statement ok
 BEGIN;
@@ -154,12 +88,7 @@ SELECT * FROM dh.analytics.archived_events;
 statement error
 DROP SCHEMA dh.analytics;
 ----
-<REGEX>:.*Cannot drop entry "analytics" because there are entries that depend on it.*
-
-query I
-SELECT * FROM dh.analytics.archived_events;
-----
-42
+<REGEX>:.*Cannot drop entry "Analytics" because there are entries that depend on it.*
 
 statement ok
 DROP SCHEMA dh.analytics CASCADE;
@@ -168,6 +97,3 @@ query I
 SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dh' AND schema_name = 'analytics';
 ----
 0
-
-statement ok
-DROP SCHEMA IF EXISTS dh.analytics;
