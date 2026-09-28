@@ -301,19 +301,59 @@ SELECT duckherder_stop_local_server();
 ### Attach to the Server
 
 ```sql
--- Attach to the duckherder server as database 'dh'
--- TODO(hjiang): currently only support database 'dh'
-ATTACH DATABASE 'dh' (TYPE duckherder, server_host 'localhost', server_port 8815);
+-- READ_WRITE is the default.
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, server_host 'localhost', server_port 8815);
 
--- Additional clients must attach read-only while a writable client is attached.
-ATTACH DATABASE 'dh_reader'
+-- READ_ONLY must be explicit.
+ATTACH DATABASE ':memory:' AS dh
   (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8815);
 ```
 
-The control node admits at most one writable Duckherder attachment and any number of read-only attachments. `DETACH`
-releases the writable slot; the server also rejects mutation RPCs carrying a read-only client ID. Attachments renew a
-short control-node lease, so a crashed writer is reclaimed after its lease expires. Client and control node must use
-the same protocol version because role registration is not compatible with older binaries.
+#### Connection and Access Model
+
+A Duckherder attachment is visible to every DuckDB connection that shares the same `DatabaseInstance`. Each connection
+that is allowed to use the attachment owns a separate Flight client, control-node registration, and server-side DuckDB
+connection.
+
+For a `READ_WRITE` attachment, exactly one DuckDB connection owns the attachment at a time. That connection may read
+and write; every operation from another connection is rejected:
+
+```sql
+-- Connection 1: creates and owns the READ_WRITE attachment.
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, server_host 'localhost', server_port 8815);
+SELECT * FROM dh.my_table; -- allowed
+INSERT INTO dh.my_table VALUES (1); -- allowed
+
+-- Connection 2, while Connection 1 is alive:
+SELECT * FROM dh.my_table;
+-- Error: the READ_WRITE attachment belongs to another connection.
+```
+
+When the owner connection closes, its Flight client and server registration are closed. The next connection that uses
+the attachment becomes its new owner.
+
+For a `READ_ONLY` attachment, every DuckDB connection may read through its own independent client, while mutations are
+rejected:
+
+```sql
+-- Connection 1: creates a READ_ONLY attachment.
+ATTACH DATABASE ':memory:' AS dh
+  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8815);
+
+-- Connection 1 and Connection 2: both allowed, using different Flight clients.
+SELECT * FROM duckherder_get_query_execution_stats();
+
+-- Either connection:
+INSERT INTO dh.my_table VALUES (1);
+-- Error: Duckherder client is read-only.
+```
+
+The control node admits at most one writable client registration and any number of read-only registrations. `DETACH`
+closes every client belonging to the attachment and releases the writable slot. Attachments renew a short control-node
+lease, so a crashed writer is reclaimed after its lease expires. Client and control node must use the same protocol
+version because role registration is not compatible with older binaries.
 
 ### Register and Unregister Remote Tables
 
