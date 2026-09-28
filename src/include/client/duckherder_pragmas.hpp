@@ -7,10 +7,10 @@
 namespace duckdb {
 
 class ClientContext;
-class FunctionParameters;
 class DataChunk;
-class ExpressionState;
 class Vector;
+struct ExpressionState;
+struct FunctionParameters;
 
 // TODO(hjiang): Current implementation assumes hard-coded database and catalog type, remove.
 class DuckherderPragmas {

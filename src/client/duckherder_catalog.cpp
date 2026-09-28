@@ -3,8 +3,10 @@
 #include "client/duckherder_connection_state.hpp"
 #include "client/execution/distributed_client.hpp"
 #include "client/execution/remote_dml.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/dependency_list.hpp"
+#include "duckdb/catalog/default/default_schemas.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
@@ -20,6 +22,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/planner/logical_operator.hpp"
@@ -69,17 +72,18 @@ string QuotedIdentifier(const string &name) {
 	return KeywordHelper::WriteQuoted(name, '"');
 }
 
-string QualifiedMainName(const string &name) {
-	return StringUtil::Format("%s.%s", QuotedIdentifier(DEFAULT_SCHEMA), QuotedIdentifier(name));
+string QualifiedRemoteName(const string &schema_name, const string &entry_name) {
+	auto quoted_schema_name = QuotedIdentifier(schema_name);
+	auto quoted_entry_name = QuotedIdentifier(entry_name);
+	return StringUtil::Format("%s.%s", quoted_schema_name, quoted_entry_name);
 }
 
 } // namespace
 
 DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
                                      distributed::ClientRole role_p, connection_t attach_connection_id_p)
-    : DuckCatalog(db), duckdb_catalog(make_uniq<DuckCatalog>(db)), db_instance(db.GetDatabase()),
-      server_host(std::move(server_host_p)), server_port(server_port_p), role(role_p),
-      attach_connection_id(attach_connection_id_p),
+    : DuckCatalog(db), db_instance(db.GetDatabase()), server_host(std::move(server_host_p)), server_port(server_port_p),
+      role(role_p), attach_connection_id(attach_connection_id_p),
       client_state_key(StringUtil::Format("duckherder_client_%s", UUID::ToString(UUID::GenerateRandomUUID()))) {
 	attach_client = make_uniq<DistributedClient>(GetServerUrl(), role, db_instance);
 }
@@ -93,12 +97,8 @@ void DuckherderCatalog::OnDetach(ClientContext &context) {
 	context.registered_state->Remove(client_state_key);
 }
 
-void DuckherderCatalog::Initialize(bool load_builtin) {
-	duckdb_catalog->Initialize(load_builtin);
-}
-
 void DuckherderCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
-	duckdb_catalog->FinalizeLoad(context);
+	DuckCatalog::FinalizeLoad(context);
 	if (context) {
 		LoadRemoteCatalog(*context);
 	}
@@ -109,135 +109,134 @@ void DuckherderCatalog::LoadRemoteCatalog(ClientContext &context) {
 	// sequences, and other entry types that require dependency-aware loading.
 	auto &client = GetClient(context);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db_instance);
-	auto &schema = duckdb_catalog->GetSchema(transaction, DEFAULT_SCHEMA);
 
+	// Fetch one ordered snapshot so concurrent remote DDL cannot leave a partially discovered catalog.
 	ForEachRow(client,
-	           "SELECT type_name, labels FROM duckdb_types() "
-	           "WHERE database_name = current_database() AND schema_name = 'main' AND NOT internal "
-	           "AND labels IS NOT NULL ORDER BY type_name",
-	           {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)}, [&](DataChunk &chunk, idx_t row_idx) {
-		           vector<string> labels;
-		           auto labels_value = chunk.GetValue(1, row_idx);
-		           for (auto &label : ListValue::GetChildren(labels_value)) {
-			           labels.push_back(label.ToSQLString());
+	           "SELECT 0 AS entry_order, schema_name, NULL::VARCHAR AS entry_name, NULL::VARCHAR AS sql, "
+	           "NULL::VARCHAR[] AS labels FROM duckdb_schemas() "
+	           "WHERE database_name = current_database() AND schema_name <> 'main' AND NOT internal "
+	           "UNION ALL "
+	           "SELECT 1, schema_name, type_name, NULL::VARCHAR, labels FROM duckdb_types() "
+	           "WHERE database_name = current_database() AND NOT internal AND labels IS NOT NULL "
+	           "UNION ALL "
+	           "SELECT 2, schema_name, table_name, sql, NULL::VARCHAR[] FROM duckdb_tables() "
+	           "WHERE database_name = current_database() AND NOT internal "
+	           "ORDER BY entry_order, schema_name, entry_name",
+	           {LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	            LogicalType::LIST(LogicalType::VARCHAR)},
+	           [&](DataChunk &chunk, idx_t row_idx) {
+		           auto entry_order = chunk.GetValue(0, row_idx).GetValue<int32_t>();
+		           auto schema_name = chunk.GetValue(1, row_idx).GetValue<string>();
+		           if (entry_order == 0) {
+			           CreateSchemaInfo info;
+			           info.schema = schema_name;
+			           info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+			           CreateSchemaLocal(transaction, info);
+			           return;
 		           }
-		           auto sql = StringUtil::Format("CREATE TYPE %s AS ENUM (%s)",
-		                                         QualifiedMainName(chunk.GetValue(0, row_idx).GetValue<string>()),
-		                                         StringUtil::Join(labels, ", "));
-		           auto info = ParseCreateInfo(sql);
-		           auto &type_info = info->Cast<CreateTypeInfo>();
-		           type_info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-		           schema.CreateType(transaction, type_info);
-	           });
 
-	ForEachRow(client,
-	           "SELECT table_name, sql FROM duckdb_tables() "
-	           "WHERE database_name = current_database() AND schema_name = 'main' AND NOT internal "
-	           "ORDER BY table_name",
-	           {LogicalType::VARCHAR, LogicalType::VARCHAR}, [&](DataChunk &chunk, idx_t row_idx) {
+		           auto entry_name = chunk.GetValue(2, row_idx).GetValue<string>();
+		           auto &schema = GetSchema(transaction, schema_name).Cast<DuckherderSchemaCatalogEntry>();
+		           if (entry_order == 1) {
+			           vector<string> labels;
+			           auto labels_value = chunk.GetValue(4, row_idx);
+			           for (auto &label : ListValue::GetChildren(labels_value)) {
+				           labels.push_back(label.ToSQLString());
+			           }
+			           auto sql = StringUtil::Format("CREATE TYPE %s AS ENUM (%s)",
+			                                         QualifiedRemoteName(schema_name, entry_name),
+			                                         StringUtil::Join(labels, ", "));
+			           auto info = ParseCreateInfo(sql);
+			           auto &type_info = info->Cast<CreateTypeInfo>();
+			           type_info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+			           schema.CreateTypeLocal(transaction, type_info);
+			           return;
+		           }
+
 		           auto info = unique_ptr_cast<CreateInfo, CreateTableInfo>(
-		               ParseCreateInfo(chunk.GetValue(1, row_idx).GetValue<string>()));
-		           info->schema = DEFAULT_SCHEMA;
+		               ParseCreateInfo(chunk.GetValue(3, row_idx).GetValue<string>()));
+		           info->schema = schema_name;
 		           info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 		           auto binder = Binder::CreateBinder(context);
 		           auto bound_info = binder->BindCreateTableInfo(std::move(info), schema);
-		           duckdb_catalog->CreateTable(transaction, schema, *bound_info);
-		           auto table_name = chunk.GetValue(0, row_idx).GetValue<string>();
-		           RegisterRemoteTable(table_name, GetServerUrl(), QuotedIdentifier(table_name));
+		           schema.CreateTableLocal(transaction, *bound_info);
 	           });
+}
+
+optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchemaLocal(CatalogTransaction transaction,
+                                                                CreateSchemaInfo &info) {
+	LogicalDependencyList dependencies;
+	auto entry = unique_ptr<DuckherderSchemaCatalogEntry>(new DuckherderSchemaCatalogEntry(*this, db_instance, info));
+	auto result = entry.get();
+	if (GetSchemaCatalogSet().CreateEntry(transaction, info.schema, std::move(entry), dependencies)) {
+		return result;
+	}
+
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		return nullptr;
+	}
+	if (info.on_conflict != OnCreateConflict::ERROR_ON_CONFLICT &&
+	    info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT) {
+		throw InternalException("Unsupported OnCreateConflict for Duckherder schema");
+	}
+	if (!GetSchemaCatalogSet().DropEntry(transaction, info.schema, true)) {
+		throw InternalException("Failed to refresh local schema cache entry %s", info.schema);
+	}
+	entry = unique_ptr<DuckherderSchemaCatalogEntry>(new DuckherderSchemaCatalogEntry(*this, db_instance, info));
+	result = entry.get();
+	if (!GetSchemaCatalogSet().CreateEntry(transaction, info.schema, std::move(entry), dependencies)) {
+		throw InternalException("Failed to create refreshed local schema cache entry %s", info.schema);
+	}
+	return result;
 }
 
 optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::CreateSchema");
-	return duckdb_catalog->CreateSchema(std::move(transaction), info);
-}
-
-optional_ptr<SchemaCatalogEntry> DuckherderCatalog::LookupSchema(CatalogTransaction transaction,
-                                                                 const EntryLookupInfo &schema_lookup,
-                                                                 OnEntryNotFound if_not_found) {
-	auto entry_lookup_str = schema_lookup.GetEntryName();
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderCatalog::LookupSchema %s", entry_lookup_str));
-
-	concurrency::lock_guard<concurrency::mutex> lck(mu);
-	auto iter = schema_catalog_entries.find(entry_lookup_str);
-	if (iter == schema_catalog_entries.end()) {
-		auto catalog_entry = duckdb_catalog->LookupSchema(std::move(transaction), schema_lookup, if_not_found);
-		if (!catalog_entry) {
-			return catalog_entry;
-		}
-
-		auto create_schema_info = make_uniq<CreateSchemaInfo>();
-		create_schema_info->schema = catalog_entry->name;
-		create_schema_info->comment = catalog_entry->comment;
-		create_schema_info->tags = catalog_entry->tags;
-
-		auto *schema_catalog_entry = dynamic_cast<SchemaCatalogEntry *>(catalog_entry.get());
-		D_ASSERT(schema_catalog_entry != nullptr);
-		auto duckherder_schema_entry = make_uniq<DuckherderSchemaCatalogEntry>(*this, db_instance, schema_catalog_entry,
-		                                                                       std::move(create_schema_info));
-		iter = schema_catalog_entries.emplace(std::move(entry_lookup_str), std::move(duckherder_schema_entry)).first;
+	if (info.internal) {
+		D_ASSERT(info.schema == DEFAULT_SCHEMA);
+		return CreateSchemaLocal(std::move(transaction), info);
 	}
-
-	return iter->second.get();
-}
-
-void DuckherderCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
-	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::ScanSchemas");
-	duckdb_catalog->ScanSchemas(context, std::move(callback));
-}
-
-PhysicalOperator &DuckherderCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
-                                                       LogicalCreateTable &op, PhysicalOperator &plan) {
-	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanCreateTableAs");
-	return duckdb_catalog->PlanCreateTableAs(context, planner, op, plan);
+	if (DefaultSchemaGenerator::IsDefaultSchema(info.schema)) {
+		return DuckCatalog::CreateSchema(std::move(transaction), info);
+	}
+	if (!transaction.HasContext()) {
+		throw InternalException("Cannot create a remote Duckherder schema without a client context");
+	}
+	auto result = GetClient(transaction.GetContext())
+	                  .ExecuteStatement(info.ToString(), StatementType::CREATE_STATEMENT, GetName());
+	if (result->HasError()) {
+		throw CatalogException("Failed to create schema on server: %s", result->GetError());
+	}
+	return CreateSchemaLocal(std::move(transaction), info);
 }
 
 PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanInsert");
 
-	// Attempt insertion into remote table if registered.
-	bool is_remote = IsRemoteTable(op.table.name);
-	if (is_remote) {
-		auto sql = GetRemoteStatementSQL(context);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push INSERT to control node: %s", sql));
-		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::INSERT, op.types, op.table, std::move(sql),
-		                                       op.estimated_cardinality);
-	}
-
-	// Fallback to local insertion.
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local insertion to table %s", op.table.name));
-	return duckdb_catalog->PlanInsert(context, planner, op, plan);
+	auto sql = GetRemoteStatementSQL(context);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push INSERT to control node: %s", sql));
+	return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::INSERT, op.types, op.table, std::move(sql),
+	                                       op.estimated_cardinality);
 }
 
 PhysicalOperator &DuckherderCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalDelete &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanDelete");
 
-	// Attempt deletion from remote table if registered.
-	bool is_remote = IsRemoteTable(op.table.name);
-	if (is_remote) {
-		auto sql = GetRemoteStatementSQL(context);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push DELETE to control node: %s", sql));
-		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::DELETE_OPERATOR, op.types, op.table,
-		                                       std::move(sql), op.estimated_cardinality);
-	}
-
-	// Fallback to local deletion.
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Execute local deletion from table %s", op.table.name));
-	return duckdb_catalog->PlanDelete(context, planner, op, plan);
+	auto sql = GetRemoteStatementSQL(context);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push DELETE to control node: %s", sql));
+	return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::DELETE_OPERATOR, op.types, op.table, std::move(sql),
+	                                       op.estimated_cardinality);
 }
 
 PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner,
                                                 LogicalUpdate &op, PhysicalOperator &plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanUpdate");
-	if (IsRemoteTable(op.table.name)) {
-		auto sql = GetRemoteStatementSQL(context);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPDATE to control node: %s", sql));
-		return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::UPDATE, op.types, op.table, std::move(sql),
-		                                       op.estimated_cardinality);
-	}
-	return duckdb_catalog->PlanUpdate(context, planner, op, plan);
+	auto sql = GetRemoteStatementSQL(context);
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPDATE to control node: %s", sql));
+	return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::UPDATE, op.types, op.table, std::move(sql),
+	                                       op.estimated_cardinality);
 }
 
 unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
@@ -245,67 +244,24 @@ unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, C
                                                                unique_ptr<LogicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::BindCreateIndex");
 
-	// Attempt remote table if applicable.
 	string table_name = table.name;
-	if (IsRemoteTable(table_name)) {
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Bind CREATE INDEX on remote table %s", table_name));
-		// For remote tables, we use a custom logical operator that doesn't require scanning the table locally.
-		// The index will be created on the remote server via DuckherderSchemaCatalogEntry::CreateIndex.
-		auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
-		return make_uniq<LogicalRemoteCreateIndexOperator>(std::move(create_index_info), table.schema, table);
-	}
-
-	// Fallback to local tables.
-	return duckdb_catalog->BindCreateIndex(binder, stmt, table, std::move(plan));
-}
-
-unique_ptr<LogicalOperator> DuckherderCatalog::BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
-                                                                 unique_ptr<LogicalOperator> plan,
-                                                                 unique_ptr<CreateIndexInfo> create_info,
-                                                                 unique_ptr<AlterTableInfo> alter_info) {
-	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::BindAlterAddIndex");
-	return duckdb_catalog->BindAlterAddIndex(binder, table_entry, std::move(plan), std::move(create_info),
-	                                         std::move(alter_info));
-}
-
-DatabaseSize DuckherderCatalog::GetDatabaseSize(ClientContext &context) {
-	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::GetDatabaseSize");
-	return duckdb_catalog->GetDatabaseSize(context);
-}
-
-vector<MetadataBlockInfo> DuckherderCatalog::GetMetadataInfo(ClientContext &context) {
-	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::GetMetadataInfo");
-	return duckdb_catalog->GetMetadataInfo(context);
-}
-
-bool DuckherderCatalog::InMemory() {
-	return duckdb_catalog->InMemory();
-}
-
-string DuckherderCatalog::GetDBPath() {
-	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::GetDBPath", duckdb_catalog->GetDBPath());
-	return duckdb_catalog->GetDBPath();
-}
-
-bool DuckherderCatalog::IsEncrypted() const {
-	return duckdb_catalog->IsEncrypted();
-}
-
-string DuckherderCatalog::GetEncryptionCipher() const {
-	return duckdb_catalog->GetEncryptionCipher();
-}
-
-optional_idx DuckherderCatalog::GetCatalogVersion(ClientContext &context) {
-	return duckdb_catalog->GetCatalogVersion(context);
-}
-
-optional_ptr<DependencyManager> DuckherderCatalog::GetDependencyManager() {
-	return duckdb_catalog->GetDependencyManager();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Bind CREATE INDEX on remote table %s", table_name));
+	auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
+	return make_uniq<LogicalRemoteCreateIndexOperator>(std::move(create_index_info), table.schema, table);
 }
 
 void DuckherderCatalog::DropSchema(ClientContext &context, DropInfo &info) {
-	// TODO(hjiang): Implement drop feature.
-	throw NotImplementedException("DropSchema not implemented");
+	auto transaction = GetCatalogTransaction(context);
+	auto schema = GetSchemaCatalogSet().GetEntry(transaction, info.name);
+	if (schema && schema->internal) {
+		throw CatalogException("Cannot drop internal schema \"%s\"", info.name);
+	}
+	auto result = GetClient(context).ExecuteStatement(info.ToString(), StatementType::DROP_STATEMENT, GetName());
+	if (result->HasError()) {
+		throw CatalogException("Failed to drop schema on server: %s", result->GetError());
+	}
+	// The remote catalog is authoritative. After it accepts the DROP, remove any stale local children as well.
+	GetSchemaCatalogSet().DropEntry(transaction, info.name, true);
 }
 
 void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
@@ -314,8 +270,7 @@ void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const stri
 	auto remote_table_config = RemoteTableConfig(server_url, remote_table_name);
 	const bool succ = remote_tables.emplace(table_name, std::move(remote_table_config)).second;
 	if (!succ) {
-		throw InvalidInputException(
-		    StringUtil::Format("Failed to register table %s because it's already registered!", table_name));
+		throw InvalidInputException("Failed to register table %s because it's already registered!", table_name);
 	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote table %s -> %s:%s", table_name, server_url,
 	                                                 remote_table_name));
@@ -323,54 +278,31 @@ void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const stri
 
 void DuckherderCatalog::UnregisterRemoteTable(const string &table_name) {
 	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-	const size_t count = remote_tables.erase(table_name);
-	if (count != 1) {
-		throw InvalidInputException(
-		    StringUtil::Format("Failed to unregister table %s because it hasn't been registered!", table_name));
+	if (remote_tables.erase(table_name) != 1) {
+		throw InvalidInputException("Failed to unregister table %s because it hasn't been registered!", table_name);
 	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote table %s", table_name));
 }
 
-bool DuckherderCatalog::IsRemoteTable(const string &table_name) const {
+bool DuckherderCatalog::IsRemoteTable(const string &schema_name, const string &table_name) const {
+	if (!StringUtil::CIEquals(schema_name, DEFAULT_SCHEMA)) {
+		return false;
+	}
 	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-	auto it = remote_tables.find(table_name);
-	bool found = it != remote_tables.end() && it->second.is_distributed;
-	return found;
+	return remote_tables.find(table_name) != remote_tables.end();
 }
 
-RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &table_name) const {
-	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-	auto it = remote_tables.find(table_name);
-	if (it != remote_tables.end()) {
-		return it->second;
+DuckherderCatalog::RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &schema_name,
+                                                                             const string &table_name) const {
+	if (StringUtil::CIEquals(schema_name, DEFAULT_SCHEMA)) {
+		concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
+		auto table = remote_tables.find(table_name);
+		if (table != remote_tables.end()) {
+			return table->second;
+		}
 	}
-	// Fallbacks to default, which is not distributed table.
-	return RemoteTableConfig();
-}
-
-void DuckherderCatalog::RegisterRemoteIndex(const string &index_name) {
-	concurrency::lock_guard<concurrency::mutex> lck(remote_indexes_mu);
-	const bool succ = remote_indexes.insert(index_name).second;
-	if (!succ) {
-		throw InvalidInputException(
-		    StringUtil::Format("Failed to register index %s because it's already registered!", index_name));
-	}
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote index %s", index_name));
-}
-
-void DuckherderCatalog::UnregisterRemoteIndex(const string &index_name) {
-	concurrency::lock_guard<concurrency::mutex> lck(remote_indexes_mu);
-	const size_t count = remote_indexes.erase(index_name);
-	if (count != 1) {
-		throw InvalidInputException(
-		    StringUtil::Format("Failed to unregister index %s because it hasn't been registered!", index_name));
-	}
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote index %s", index_name));
-}
-
-bool DuckherderCatalog::IsRemoteIndex(const string &index_name) const {
-	concurrency::lock_guard<concurrency::mutex> lck(remote_indexes_mu);
-	return remote_indexes.find(index_name) != remote_indexes.end();
+	return RemoteTableConfig(StringUtil::Format("grpc://%s:%d", server_host, server_port),
+	                         QualifiedRemoteName(schema_name, table_name));
 }
 
 string DuckherderCatalog::GetServerUrl() const {

@@ -15,10 +15,22 @@ statement ok
 CREATE TYPE dh.reader_status AS ENUM ('ready', 'done');
 
 statement ok
+CREATE SCHEMA dh.analytics;
+
+statement ok
+CREATE TYPE dh.analytics.reader_status AS ENUM ('queued', 'complete');
+
+statement ok
 CREATE TABLE dh.reader_visible_data (id INTEGER, status dh.reader_status);
 
 statement ok
 INSERT INTO dh.reader_visible_data VALUES (42, 'ready');
+
+statement ok
+CREATE TABLE dh.analytics.reader_visible_data (id INTEGER, status dh.analytics.reader_status);
+
+statement ok
+INSERT INTO dh.analytics.reader_visible_data VALUES (84, 'queued');
 
 statement ok
 CREATE TABLE dh."Order Items" (id INTEGER);
@@ -37,6 +49,16 @@ query IT
 SELECT * FROM dh.reader_visible_data;
 ----
 42	ready
+
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dh' AND schema_name = 'analytics';
+----
+1
+
+query IT
+SELECT * FROM dh.analytics.reader_visible_data;
+----
+84	queued
 
 query I
 SELECT * FROM dh."Order Items";

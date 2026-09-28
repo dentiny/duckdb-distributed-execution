@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 
 # Set extension name here
 set(TARGET_NAME duckherder)
@@ -18,6 +18,7 @@ set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
+
 include_directories(src/include)
 include_directories(src/include/client)
 include_directories(src/include/server)
@@ -80,12 +81,8 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/distributed_flight_server_test_state.cpp
     src/server/driver/distributed_server_function.cpp
     src/server/driver/distributed_server_main.cpp
-    src/server/driver/duckling_catalog.cpp
-    src/server/driver/duckling_index_catalog_entry.cpp
-    src/server/driver/duckling_schema_catalog_entry.cpp
     src/server/driver/duckling_storage.cpp
     src/server/driver/worker_node_client.cpp
-    src/server/driver/duckling_table_catalog_entry.cpp
     src/server/driver/duckling_transaction.cpp
     src/server/driver/duckling_transaction_manager.cpp
     src/server/driver/partition_sql_generator.cpp
