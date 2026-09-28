@@ -1,0 +1,13 @@
+{
+  "description": "Run selected DuckDB SQLLogicTests through a local Duckherder control node.",
+  "max_test_threads": 1,
+  "on_init": "SELECT duckherder_start_local_server(8815); ATTACH 'localhost:8815' AS __test__config__duckherder (TYPE duckherder);",
+  "on_new_connection": "USE __test__config__duckherder;",
+  "on_cleanup": "SELECT duckherder_stop_local_server();",
+  "on_load": "skip",
+  "skip_compiled": true,
+  "statically_loaded_extensions": [
+    "core_functions",
+    "duckherder"
+  ]
+}

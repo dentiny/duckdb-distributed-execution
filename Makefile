@@ -37,6 +37,46 @@ test_duckherder_debug:
 test_duckherder_reldebug:
 	$(DUCKHERDER_UNITTEST_RELDEBUG)
 
+DUCKDB_TEST_TARGETS := test_debug_duckdb test_reldebug_duckdb test_release_duckdb
+DUCKDB_TEST_ARGUMENTS := $(filter-out $(DUCKDB_TEST_TARGETS),$(MAKECMDGOALS))
+DUCKDB_TEST_FILTER ?= $(DUCKDB_TEST_ARGUMENTS)
+DUCKDB_TEST_CONFIG := test/configs/duckherder.json
+
+ifneq ($(filter $(DUCKDB_TEST_TARGETS),$(MAKECMDGOALS)),)
+ifneq ($(strip $(DUCKDB_TEST_ARGUMENTS)),)
+.PHONY: $(DUCKDB_TEST_ARGUMENTS)
+$(DUCKDB_TEST_ARGUMENTS):
+	@:
+endif
+endif
+
+define RUN_DUCKDB_TESTS
+TEST_PID=; \
+cleanup() { \
+	if [ -n "$$TEST_PID" ]; then \
+		rm -rf "$(PROJ_DIR)duckdb/duckdb_unittest_tempdir/$$TEST_PID"; \
+	fi; \
+}; \
+terminate() { \
+	if [ -n "$$TEST_PID" ]; then kill "$$TEST_PID" 2>/dev/null || true; fi; \
+}; \
+trap cleanup EXIT; \
+trap terminate INT TERM; \
+./build/$(1)/test/unittest --test-config $(DUCKDB_TEST_CONFIG) --test-dir duckdb \
+	$(if $(DUCKDB_TEST_FILTER),"$(DUCKDB_TEST_FILTER)") & \
+TEST_PID=$$!; \
+wait "$$TEST_PID"
+endef
+
+test_debug_duckdb:
+	@$(call RUN_DUCKDB_TESTS,debug)
+
+test_reldebug_duckdb:
+	@$(call RUN_DUCKDB_TESTS,reldebug)
+
+test_release_duckdb:
+	@$(call RUN_DUCKDB_TESTS,release)
+
 format-all: format
 	clang-format --sort-includes=0 -style=file -i $(wildcard test/unittest/*.hpp test/unittest/*.cpp)
 	@cmake-format -i CMakeLists.txt
@@ -46,4 +86,5 @@ format-all: format
 test-object-storage-s3:
 	bash test/object_storage/run_single_writer_reader_e2e.sh
 
-.PHONY: format-all test-object-storage-s3  test_duckherder_release test_duckherder_debug test_duckherder_reldebug
+.PHONY: format-all test-object-storage-s3 test_duckherder_release test_duckherder_debug test_duckherder_reldebug \
+	$(DUCKDB_TEST_TARGETS)
