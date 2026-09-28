@@ -2,13 +2,13 @@
 
 #include "distributed.pb.h"
 #include "duckdb.hpp"
-#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/client_registration.hpp"
 #include "server/driver/distributed_executor.hpp"
+#include "server/driver/distributed_flight_server_test_state.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
 #include "server/driver/worker_manager.hpp"
 
@@ -98,14 +98,9 @@ public:
 	                    std::unique_ptr<arrow::flight::FlightMetadataWriter> writer) override;
 
 	DatabaseInstance &GetDatabaseInstance();
-	void SetClientLeaseTimeoutForTesting(std::chrono::milliseconds timeout);
-	void FailNextCommitResponseForTesting();
-	void FailCommitResponsesForTesting(uint32_t count);
-	void FailNextExecuteStatementResponseForTesting();
-	void FailExecuteStatementResponsesForTesting(uint32_t count);
-	void FailNextScanResponseForTesting();
-	void ReturnUnknownTransactionResponsesForTesting(uint32_t count);
-	uint64_t GetTransactionRequestCountForTesting() const;
+
+	// Test hooks.
+	DistributedFlightServerTestState &GetTestStateForTesting();
 
 private:
 	// Implementation methods for Flight RPC handlers, without exception handling.
@@ -171,8 +166,6 @@ private:
 	                         ClientRequestTransport transport, const string &signature,
 	                         const distributed::DistributedResponse &response);
 	void ClearRequestReplay(ClientRegistration &registration);
-	bool ShouldFailCommitResponseForTesting();
-	bool ShouldFailResponseForTesting(atomic<uint32_t> &remaining);
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
@@ -182,12 +175,7 @@ private:
 	mutable std::shared_mutex clients_mutex;
 	unordered_map<string, shared_ptr<ClientRegistration>> clients;
 	string writable_client_id;
-	std::chrono::milliseconds client_lease_timeout = std::chrono::seconds(30);
-	atomic<uint32_t> fail_commit_responses {0};
-	atomic<uint32_t> fail_execute_statement_responses {0};
-	atomic<uint32_t> fail_scan_responses {0};
-	atomic<uint32_t> unknown_transaction_responses {0};
-	atomic<uint64_t> transaction_request_count {0};
+	DistributedFlightServerTestState test_state;
 
 	// Query execution tracking.
 	mutable mutex query_history_mutex;

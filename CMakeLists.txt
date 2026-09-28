@@ -50,7 +50,8 @@ set(CLIENT_EXECUTION_SOURCES
     src/client/execution/logical_remote_create_index.cpp
     src/client/execution/remote_dml.cpp)
 
-set(CLIENT_TRANSPORT_SOURCES src/client/transport/distributed_flight_client.cpp)
+set(CLIENT_TRANSPORT_SOURCES src/client/transport/distributed_flight_client.cpp
+                             src/client/transport/transaction_state.cpp)
 
 set(CLIENT_SOURCES
     ${CLIENT_EXECUTION_SOURCES}

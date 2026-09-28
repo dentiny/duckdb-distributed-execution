@@ -183,48 +183,8 @@ void DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
 	worker_manager->StartLocalWorkers(num_workers);
 }
 
-void DistributedFlightServer::SetClientLeaseTimeoutForTesting(std::chrono::milliseconds timeout) {
-	const unique_lock<std::shared_mutex> lock(clients_mutex);
-	client_lease_timeout = timeout;
-}
-
-void DistributedFlightServer::FailNextCommitResponseForTesting() {
-	FailCommitResponsesForTesting(1);
-}
-
-void DistributedFlightServer::FailCommitResponsesForTesting(uint32_t count) {
-	fail_commit_responses = count;
-}
-
-bool DistributedFlightServer::ShouldFailCommitResponseForTesting() {
-	return ShouldFailResponseForTesting(fail_commit_responses);
-}
-
-void DistributedFlightServer::FailNextExecuteStatementResponseForTesting() {
-	FailExecuteStatementResponsesForTesting(1);
-}
-
-void DistributedFlightServer::FailExecuteStatementResponsesForTesting(uint32_t count) {
-	fail_execute_statement_responses = count;
-}
-
-void DistributedFlightServer::FailNextScanResponseForTesting() {
-	fail_scan_responses = 1;
-}
-
-void DistributedFlightServer::ReturnUnknownTransactionResponsesForTesting(uint32_t count) {
-	unknown_transaction_responses = count;
-}
-
-uint64_t DistributedFlightServer::GetTransactionRequestCountForTesting() const {
-	return transaction_request_count.load();
-}
-
-bool DistributedFlightServer::ShouldFailResponseForTesting(atomic<uint32_t> &response_count) {
-	auto remaining = response_count.load();
-	while (remaining > 0 && !response_count.compare_exchange_weak(remaining, remaining - 1)) {
-	}
-	return remaining > 0;
+DistributedFlightServerTestState &DistributedFlightServer::GetTestStateForTesting() {
+	return test_state;
 }
 
 arrow::Status DistributedFlightServer::CheckRequestReplay(const distributed::DistributedRequest &request,
@@ -313,7 +273,7 @@ void DistributedFlightServer::TouchClient(const shared_ptr<ClientRegistration> &
 }
 
 void DistributedFlightServer::PruneExpiredClients() {
-	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - client_lease_timeout.count();
+	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - test_state.GetClientLeaseTimeout().count();
 	for (auto entry = clients.begin(); entry != clients.end();) {
 		if (entry->second->last_seen.load() >= expiration) {
 			++entry;
@@ -388,7 +348,7 @@ arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &clie
 arrow::Status DistributedFlightServer::HandleTransaction(const distributed::DistributedRequest &req,
                                                          ClientRegistration &registration,
                                                          distributed::DistributedResponse &resp) {
-	transaction_request_count++;
+	test_state.RecordTransactionRequest();
 	auto validation = ValidateRequest(req.transaction());
 	if (!validation.ok()) {
 		resp.set_success(false);
@@ -406,7 +366,7 @@ arrow::Status DistributedFlightServer::HandleTransaction(const distributed::Dist
 		return arrow::Status::OK();
 	}
 
-	if (ShouldFailResponseForTesting(unknown_transaction_responses)) {
+	if (test_state.ShouldReturnUnknownTransactionResponse()) {
 		SetUnknownTransactionResponse(resp, "Injected unknown transaction outcome");
 		return arrow::Status::OK();
 	}
@@ -485,7 +445,8 @@ arrow::Status DistributedFlightServer::HandleTransaction(const distributed::Dist
 		return arrow::Status::OK();
 	}
 	resp.set_success(true);
-	if (req.transaction().action() == distributed::TRANSACTION_ACTION_COMMIT && ShouldFailCommitResponseForTesting()) {
+	if (req.transaction().action() == distributed::TRANSACTION_ACTION_COMMIT &&
+	    test_state.ShouldFailCommitResponse()) {
 		return arrow::Status::IOError("Injected lost COMMIT response");
 	}
 	return arrow::Status::OK();
@@ -580,7 +541,7 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		return arrow::Status::Invalid("Unknown request type");
 	}
 	if (request.request_case() == distributed::DistributedRequest::kExecuteStatement &&
-	    ShouldFailResponseForTesting(fail_execute_statement_responses)) {
+	    test_state.ShouldFailExecuteStatementResponse()) {
 		return arrow::Status::IOError("Injected lost execute-statement response");
 	}
 
@@ -646,7 +607,7 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	ARROW_ASSIGN_OR_RAISE(
 	    auto reader, arrow::RecordBatchReader::Make(registration->last_query_batches, registration->last_query_schema));
 	auto data_stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
-	if (ShouldFailResponseForTesting(fail_scan_responses)) {
+	if (test_state.ShouldFailScanResponse()) {
 		return arrow::Status::IOError("Injected lost scan response");
 	}
 

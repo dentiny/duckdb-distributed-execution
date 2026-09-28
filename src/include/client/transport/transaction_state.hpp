@@ -22,6 +22,8 @@ struct DistributedTransactionState {
 	bool requires_rollback = false;
 	bool pending_autocommit_operation = false;
 	distributed::TransactionAction pending_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
+
+	void ResetExplicitTransaction();
 };
 
 } // namespace duckdb

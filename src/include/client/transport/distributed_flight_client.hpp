@@ -81,7 +81,6 @@ private:
 	                                  distributed::DistributedResponse &resp);
 	arrow::Status ResolvePendingTransaction(distributed::DistributedResponse &response);
 	void InitTransactionState();
-	void ResetExplicitTransaction();
 	// RPC implementation to send request and block wait response.
 	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);
 	// Assign the active transaction and one operation sequence, then replay that operation on transport failures.

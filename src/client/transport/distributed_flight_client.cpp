@@ -96,13 +96,6 @@ arrow::Status DistributedFlightClient::SendActionWithRetry(const distributed::Di
 	    retry_config);
 }
 
-void DistributedFlightClient::ResetExplicitTransaction() {
-	transaction_state.transaction_id = INVALID_TRANSACTION_ID;
-	transaction_state.next_request_sequence = INITIAL_REQUEST_SEQUENCE;
-	transaction_state.requires_rollback = false;
-	transaction_state.pending_action = distributed::TRANSACTION_ACTION_UNSPECIFIED;
-}
-
 void DistributedFlightClient::InitTransactionState() {
 	transaction_state = DistributedTransactionState();
 }
@@ -129,7 +122,7 @@ arrow::Status DistributedFlightClient::ResolvePendingTransaction(distributed::Di
 	}
 
 	transaction_state.next_transaction_id++;
-	ResetExplicitTransaction();
+	transaction_state.ResetExplicitTransaction();
 	return arrow::Status::OK();
 }
 
@@ -238,13 +231,13 @@ arrow::Status DistributedFlightClient::ManageTransaction(distributed::Transactio
 			if (action != distributed::TRANSACTION_ACTION_BEGIN) {
 				transaction_state.next_transaction_id++;
 			}
-			ResetExplicitTransaction();
+			transaction_state.ResetExplicitTransaction();
 		}
 		return status;
 	}
 	if (action == distributed::TRANSACTION_ACTION_COMMIT || action == distributed::TRANSACTION_ACTION_ROLLBACK) {
 		transaction_state.next_transaction_id++;
-		ResetExplicitTransaction();
+		transaction_state.ResetExplicitTransaction();
 	}
 	return status;
 }

@@ -80,12 +80,12 @@ TEST_CASE("Expired writer lease can be reclaimed", "[distributed_flight]") {
 		explicit LeaseTimeoutReset(DistributedFlightServer &server_p) : server(server_p) {
 		}
 		~LeaseTimeoutReset() {
-			server.SetClientLeaseTimeoutForTesting(std::chrono::seconds(30));
+			server.GetTestStateForTesting().SetClientLeaseTimeout(std::chrono::seconds(30));
 		}
 		DistributedFlightServer &server;
 	} timeout_reset(server);
 
-	server.SetClientLeaseTimeoutForTesting(std::chrono::milliseconds(1));
+	server.GetTestStateForTesting().SetClientLeaseTimeout(std::chrono::milliseconds(1));
 	DistributedFlightClient expired_writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(expired_writer.Connect().ok());
 	std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -114,11 +114,11 @@ TEST_CASE("Autocommit operations avoid transaction lifecycle RPCs", "[distribute
 	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
 	REQUIRE(client.Connect().ok());
 
-	auto transaction_request_count = server.GetTransactionRequestCountForTesting();
+	auto transaction_request_count = server.GetTestStateForTesting().GetTransactionRequestCount();
 	ExecuteAutocommit(client, "CREATE TABLE autocommit_single_rpc (id INTEGER)");
 	ExecuteAutocommit(client, "INSERT INTO autocommit_single_rpc VALUES (1)");
 	REQUIRE(CountRows(client, "autocommit_single_rpc") == 1);
-	REQUIRE(server.GetTransactionRequestCountForTesting() == transaction_request_count);
+	REQUIRE(server.GetTestStateForTesting().GetTransactionRequestCount() == transaction_request_count);
 }
 
 TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight]") {
@@ -160,7 +160,7 @@ TEST_CASE("Lost COMMIT response is recovered idempotently", "[distributed_flight
 	REQUIRE(client.ExecuteStatement("INSERT INTO lost_commit_response VALUES (1)", "", response).ok());
 	REQUIRE(response.success());
 
-	server.FailNextCommitResponseForTesting();
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::COMMIT_RESPONSE);
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
 	REQUIRE(response.success());
 	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_COMMITTED);
@@ -179,9 +179,9 @@ TEST_CASE("Persistent COMMIT response loss has a recoverable unknown outcome", "
 	REQUIRE(client.ExecuteStatement("INSERT INTO persistent_commit_response_loss VALUES (1)", "", response).ok());
 	REQUIRE(response.success());
 
-	server.FailCommitResponsesForTesting(100);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::COMMIT_RESPONSE, 100);
 	REQUIRE_FALSE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
-	server.FailCommitResponsesForTesting(0);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::COMMIT_RESPONSE, 0);
 	DistributedFlightClient reader(SERVER_URL, distributed::CLIENT_ROLE_READ_ONLY);
 	REQUIRE(reader.Connect().ok());
 	REQUIRE(CountRows(reader, "persistent_commit_response_loss") == 1);
@@ -202,7 +202,7 @@ TEST_CASE("Delivered UNKNOWN transaction responses are reconciled", "[distribute
 	ExecuteAutocommit(client, "CREATE TABLE delivered_unknown_response (id INTEGER)");
 
 	distributed::DistributedResponse response;
-	server.ReturnUnknownTransactionResponsesForTesting(1);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::UNKNOWN_TRANSACTION_RESPONSE);
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE_FALSE(response.success());
 	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN);
@@ -212,7 +212,7 @@ TEST_CASE("Delivered UNKNOWN transaction responses are reconciled", "[distribute
 	REQUIRE(client.ExecuteStatement("INSERT INTO delivered_unknown_response VALUES (1)", "", response).ok());
 	REQUIRE(response.success());
 
-	server.ReturnUnknownTransactionResponsesForTesting(1);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::UNKNOWN_TRANSACTION_RESPONSE);
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
 	REQUIRE_FALSE(response.success());
 	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN);
@@ -230,7 +230,7 @@ TEST_CASE("ROLLBACK resolves an UNKNOWN BEGIN outcome", "[distributed_flight]") 
 	REQUIRE(client.Connect().ok());
 
 	distributed::DistributedResponse response;
-	server.ReturnUnknownTransactionResponsesForTesting(1);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::UNKNOWN_TRANSACTION_RESPONSE);
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE_FALSE(response.success());
 	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN);
@@ -257,7 +257,7 @@ TEST_CASE("An operation resolves an UNKNOWN COMMIT outcome", "[distributed_fligh
 	REQUIRE(client.ExecuteStatement("INSERT INTO operation_after_unknown_commit VALUES (1)", "", response).ok());
 	REQUIRE(response.success());
 
-	server.ReturnUnknownTransactionResponsesForTesting(1);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::UNKNOWN_TRANSACTION_RESPONSE);
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
 	REQUIRE_FALSE(response.success());
 	REQUIRE(response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN);
@@ -279,7 +279,7 @@ TEST_CASE("Lost DML response replays one operation within its transaction", "[di
 	distributed::DistributedResponse response;
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE(response.success());
-	server.FailNextExecuteStatementResponseForTesting();
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::EXECUTE_STATEMENT_RESPONSE);
 	REQUIRE(client.ExecuteStatement("INSERT INTO lost_dml_response VALUES (1)", "", response).ok());
 	REQUIRE(response.success());
 	// Identical SQL with a new request sequence is a distinct operation and must still execute.
@@ -296,7 +296,7 @@ TEST_CASE("Lost autocommit DML response replays without lifecycle RPCs", "[distr
 	REQUIRE(client.Connect().ok());
 	ExecuteAutocommit(client, "CREATE TABLE lost_autocommit_response (id INTEGER)");
 
-	server.FailNextExecuteStatementResponseForTesting();
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::EXECUTE_STATEMENT_RESPONSE);
 	ExecuteAutocommit(client, "INSERT INTO lost_autocommit_response VALUES (1)");
 	REQUIRE(CountRows(client, "lost_autocommit_response") == 1);
 }
@@ -310,9 +310,9 @@ TEST_CASE("Exhausted DML response loss requires transaction rollback", "[distrib
 	distributed::DistributedResponse response;
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
 	REQUIRE(response.success());
-	server.FailExecuteStatementResponsesForTesting(100);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::EXECUTE_STATEMENT_RESPONSE, 100);
 	REQUIRE_FALSE(client.ExecuteStatement("INSERT INTO exhausted_dml_response VALUES (1)", "", response).ok());
-	server.FailExecuteStatementResponsesForTesting(0);
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::EXECUTE_STATEMENT_RESPONSE, 0);
 	REQUIRE_FALSE(client.ManageTransaction(distributed::TRANSACTION_ACTION_COMMIT, response).ok());
 	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, response).ok());
 	REQUIRE(response.success());
@@ -327,7 +327,7 @@ TEST_CASE("Lost query response replays the materialized result", "[distributed_f
 	ExecuteAutocommit(client, "INSERT INTO lost_query_response VALUES (1)");
 
 	auto query_count = server.GetQueryExecutions().size();
-	server.FailNextScanResponseForTesting();
+	server.GetTestStateForTesting().InjectFault(DistributedFlightServerTestFault::SCAN_RESPONSE);
 	REQUIRE(CountRows(client, "lost_query_response") == 1);
 	REQUIRE(server.GetQueryExecutions().size() == query_count + 1);
 }
