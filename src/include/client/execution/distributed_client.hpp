@@ -36,7 +36,8 @@ public:
 	~DistributedClient() = default;
 
 	void Close();
-	void SetTransactionContext(optional_ptr<ClientContext> context);
+	void SetTransactionContext(ClientContext &context);
+	void ClearTransactionContext();
 	bool HasActiveRemoteTransaction();
 
 	// Execute one complete non-query statement on the control node.

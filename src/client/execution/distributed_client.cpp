@@ -105,15 +105,16 @@ void DistributedClient::Close() {
 	closed = true;
 }
 
-void DistributedClient::SetTransactionContext(optional_ptr<ClientContext> context) {
+void DistributedClient::SetTransactionContext(ClientContext &context) {
+	DistributedClientLock lock(*this);
+	GetClient(lock).SetTransactionContext(context);
+}
+
+void DistributedClient::ClearTransactionContext() {
 	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
-	if (closed) {
-		if (context) {
-			throw IOException("Duckherder client is closed");
-		}
-		return;
+	if (!closed) {
+		client->SetTransactionContext(nullptr);
 	}
-	client->SetTransactionContext(context);
 }
 
 bool DistributedClient::HasActiveRemoteTransaction() {

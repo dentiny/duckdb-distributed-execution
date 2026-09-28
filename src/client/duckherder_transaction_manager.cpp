@@ -40,7 +40,7 @@ ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context
 			auto result = client->CommitTransaction();
 			if (result->HasError()) {
 				duckdb_transaction_manager->RollbackTransaction(transaction);
-				client->SetTransactionContext(nullptr);
+				client->ClearTransactionContext();
 				return ErrorData(result->GetError());
 			}
 		}
@@ -49,7 +49,7 @@ ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context
 		return ErrorData(ex);
 	}
 	auto error = duckdb_transaction_manager->CommitTransaction(context, transaction);
-	client->SetTransactionContext(nullptr);
+	client->ClearTransactionContext();
 	return error;
 }
 
@@ -73,11 +73,11 @@ void DuckherderTransactionManager::RollbackTransaction(Transaction &transaction)
 		}
 	} catch (...) {
 		duckdb_transaction_manager->RollbackTransaction(transaction);
-		client->SetTransactionContext(nullptr);
+		client->ClearTransactionContext();
 		throw;
 	}
 	duckdb_transaction_manager->RollbackTransaction(transaction);
-	client->SetTransactionContext(nullptr);
+	client->ClearTransactionContext();
 	if (result && result->HasError()) {
 		throw Exception(ExceptionType::TRANSACTION, result->GetError());
 	}
