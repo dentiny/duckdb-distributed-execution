@@ -27,11 +27,11 @@ ATTACH ':memory:' AS rejected_writer
 # Multiple read-only attachments can coexist with the writer.
 statement ok con1
 ATTACH ':memory:' AS reader_one
-  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8837);
+  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8837);
 
 statement ok con2
 ATTACH ':memory:' AS reader_two
-  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8837);
+  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8837);
 
 # DETACH releases the writer slot while readers remain attached.
 statement ok
@@ -39,7 +39,7 @@ DETACH dh;
 
 statement ok con3
 ATTACH ':memory:' AS dh
-  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8837);
+  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8837);
 
 statement ok con3
 PRAGMA duckherder_register_remote_table('forbidden_reader_write', 'forbidden_reader_write');

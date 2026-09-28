@@ -52,6 +52,11 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 	options.options.erase("server_port");
 	options.options.erase("client_role");
 
+	// DuckCatalog is only the client-side metadata cache. Never persist its entries or table storage to the ATTACH
+	// path. Its backing storage must remain writable even when the remote attachment itself is READ_ONLY.
+	info.path = ":memory:";
+	options.access_mode = AccessMode::READ_WRITE;
+
 	auto catalog =
 	    make_uniq<DuckherderCatalog>(db, std::move(server_host), server_port, role, context.GetConnectionId());
 	catalog->GetClient(context);

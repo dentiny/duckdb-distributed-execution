@@ -310,8 +310,11 @@ ATTACH DATABASE ':memory:' AS dh
 
 -- READ_ONLY must be explicit.
 ATTACH DATABASE ':memory:' AS dh
-  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8815);
+  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8815);
 ```
+
+The ATTACH path does not store Duckherder data. Duckherder always backs its local `DuckCatalog` metadata cache with an
+in-memory database; the control node remains authoritative and no local catalog or table file is persisted.
 
 #### Connection and Access Model
 
@@ -343,7 +346,7 @@ rejected:
 ```sql
 -- Connection 1: creates a READ_ONLY attachment.
 ATTACH DATABASE ':memory:' AS dh
-  (TYPE duckherder, client_role 'read_only', server_host 'localhost', server_port 8815);
+  (TYPE duckherder, READ_ONLY, server_host 'localhost', server_port 8815);
 
 -- Connection 1 and Connection 2: both allowed, using different Flight clients.
 SELECT * FROM duckherder_get_query_execution_stats();
