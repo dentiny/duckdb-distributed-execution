@@ -1,4 +1,9 @@
-## Unreleased
+## 0.10.0
+
+### Added
+
+- Add descriptions, examples, categories, and argument names for all Duckherder SQL and pragma functions in
+  `duckdb_functions()`.
 
 ### Changed
 
@@ -9,12 +14,6 @@
 
 - Remove the public `duckherder_register_remote_table` pragma; remote tables are registered automatically during
   discovery and creation.
-
-## 0.0.10
-
-### Added
-
-- Add descriptions, examples, categories, and argument names for all Duckherder SQL and pragma functions in `duckdb_functions()`.
 
 ### Fixed
 
