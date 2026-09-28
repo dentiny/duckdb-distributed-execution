@@ -75,7 +75,6 @@ private:
 		~DistributedClientLock() DUCKDB_RELEASE();
 
 	private:
-		DistributedClient &owner;
 		concurrency::lock_guard<concurrency::mutex> guard;
 	};
 

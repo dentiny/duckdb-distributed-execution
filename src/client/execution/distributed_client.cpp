@@ -72,16 +72,13 @@ string GetTransactionError(const arrow::Status &status, const distributed::Distr
 } // namespace
 
 DistributedClient::DistributedClientLock::DistributedClientLock(DistributedClient &owner_p)
-    : owner(owner_p), guard(owner.lifecycle_mutex) {
-	if (owner.closed) {
-		throw IOException("Duckherder client is closed");
-	}
+    : guard(owner_p.lifecycle_mutex) {
 }
 
 DistributedClient::DistributedClientLock::~DistributedClientLock() = default;
 
 DistributedFlightClient &DistributedClient::GetClient(DistributedClientLock &) {
-	if (!client) {
+	if (closed || !client) {
 		throw IOException("Duckherder client is closed");
 	}
 	return *client;
@@ -97,7 +94,7 @@ DistributedClient::DistributedClient(string server_url_p, distributed::ClientRol
 }
 
 void DistributedClient::Close() {
-	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	DistributedClientLock lock(*this);
 	if (closed) {
 		return;
 	}
@@ -111,7 +108,7 @@ void DistributedClient::SetTransactionContext(ClientContext &context) {
 }
 
 void DistributedClient::ClearTransactionContext() {
-	const concurrency::lock_guard<concurrency::mutex> lock(lifecycle_mutex);
+	DistributedClientLock lock(*this);
 	if (!closed) {
 		client->SetTransactionContext(nullptr);
 	}
