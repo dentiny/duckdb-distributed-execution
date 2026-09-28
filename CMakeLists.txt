@@ -65,6 +65,7 @@ set(CLIENT_SOURCES
     src/client/duckherder_connection_state.cpp
     src/client/duckherder_index_catalog_entry.cpp
     src/client/duckherder_pragmas.cpp
+    src/client/duckherder_remote_endpoint.cpp
     src/client/duckherder_remote_table_config.cpp
     src/client/duckherder_storage.cpp
     src/client/duckherder_schema_catalog_entry.cpp
