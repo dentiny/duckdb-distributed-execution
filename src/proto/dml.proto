@@ -10,4 +10,5 @@ message ExecuteStatementRequest {
 
 message ExecuteStatementResponse {
   uint64 rows_affected = 1;
+  bytes arrow_ipc_result = 2;
 }

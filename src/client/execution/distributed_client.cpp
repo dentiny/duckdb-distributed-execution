@@ -9,6 +9,8 @@
 #include "duckdb/main/query_result.hpp"
 
 #include <arrow/array.h>
+#include <arrow/io/memory.h>
+#include <arrow/ipc/reader.h>
 #include <arrow/type.h>
 
 namespace duckdb {
@@ -43,6 +45,41 @@ unique_ptr<QueryResult> MakeStatementResult(StatementType statement_type) {
 	default:
 		throw InternalException("Unsupported remote statement result type");
 	}
+}
+
+unique_ptr<QueryResult> MakeArrowResult(StatementType statement_type,
+                                        const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
+                                        const std::shared_ptr<arrow::Schema> &schema,
+                                        const vector<LogicalType> *expected_types) {
+	vector<string> names;
+	vector<LogicalType> types;
+	if (expected_types) {
+		types = *expected_types;
+	}
+	if (schema) {
+		for (const auto &field : schema->fields()) {
+			names.emplace_back(field->name());
+			if (!expected_types) {
+				types.emplace_back(ArrowTypeToDuckDBType(field->type()));
+			}
+		}
+	} else if (expected_types) {
+		names.resize(types.size());
+	}
+
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	for (const auto &batch : batches) {
+		DataChunk chunk;
+		chunk.Initialize(Allocator::DefaultAllocator(), types);
+		for (int col_idx = 0; col_idx < batch->num_columns(); ++col_idx) {
+			ConvertArrowArrayToDuckDBVector(batch->column(col_idx), chunk.data[col_idx], types[col_idx],
+			                                batch->num_rows());
+		}
+		chunk.SetCardinality(batch->num_rows());
+		collection->Append(chunk);
+	}
+	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
+	                                          ClientProperties());
 }
 
 string GetResponseError(const arrow::Status &status, const distributed::DistributedResponse &response) {
@@ -146,65 +183,8 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	if (!status.ok()) {
 		return MakeErrorResult(status.ToString());
 	}
-
-	// Read all Arrow RecordBatches and convert to DuckDB
-	// TODO: Use DuckDB's built-in Arrow converter for better type support.
-	vector<string> names;
-	vector<LogicalType> types;
-	unique_ptr<ColumnDataCollection> collection;
-	bool first_batch = true;
-
-	for (auto &arrow_batch : batches) {
-		// On first batch, extract schema and create collection.
-		if (first_batch) {
-			auto schema = arrow_batch->schema();
-
-			// If expected_types are provided, use them instead of deriving from Arrow schema.
-			// This is useful to handle types like ENUM that need proper type information.
-			if (expected_types != nullptr) {
-				types = *expected_types;
-			}
-
-			// Convert Arrow schema to DuckDB types and names.
-			for (int idx = 0; idx < schema->num_fields(); ++idx) {
-				auto field = schema->field(idx);
-				names.emplace_back(field->name());
-				if (expected_types == nullptr) {
-					types.emplace_back(ArrowTypeToDuckDBType(field->type()));
-				}
-			}
-
-			collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-			first_batch = false;
-		}
-
-		// Convert Arrow RecordBatch to DuckDB DataChunk.
-		DataChunk chunk;
-		chunk.Initialize(Allocator::DefaultAllocator(), types);
-
-		for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
-			auto arrow_array = arrow_batch->column(col_idx);
-			auto &duckdb_vector = chunk.data[col_idx];
-			ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, types[col_idx], arrow_batch->num_rows());
-		}
-
-		chunk.SetCardinality(arrow_batch->num_rows());
-		collection->Append(chunk);
-	}
-
-	if (collection == nullptr) {
-		// DuckDB initializes an empty result from the bound schema before execution. Flight can return no batches for
-		// an empty relation, so retain the caller's bound types instead of constructing an invalid zero-column result.
-		if (expected_types != nullptr) {
-			types = *expected_types;
-			// The table scan's output names come from its binding; placeholders keep this internal result schema
-			// aligned.
-			names.resize(types.size());
-		}
-		collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	}
-	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), names,
-	                                          std::move(collection), ClientProperties());
+	auto schema = batches.empty() ? nullptr : batches[0]->schema();
+	return MakeArrowResult(StatementType::SELECT_STATEMENT, batches, schema, expected_types);
 }
 
 bool DistributedClient::TableExists(const string &table_name) {
@@ -218,7 +198,8 @@ bool DistributedClient::TableExists(const string &table_name) {
 }
 
 unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, StatementType statement_type,
-                                                            const string &client_catalog) {
+                                                            const string &client_catalog,
+                                                            const vector<LogicalType> *expected_types) {
 	DistributedClientLock lock(*this);
 	distributed::DistributedResponse response;
 	auto status = GetClient(lock).ExecuteStatement(sql, client_catalog, response);
@@ -226,7 +207,32 @@ unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, S
 	if (!error.empty()) {
 		return MakeErrorResult(error);
 	}
-	return MakeStatementResult(statement_type);
+	const auto &ipc_result = response.execute_statement().arrow_ipc_result();
+	if (ipc_result.empty()) {
+		return MakeStatementResult(statement_type);
+	}
+
+	auto buffer =
+	    std::make_shared<arrow::Buffer>(reinterpret_cast<const uint8_t *>(ipc_result.data()), ipc_result.size());
+	auto input = std::make_shared<arrow::io::BufferReader>(buffer);
+	auto reader_result = arrow::ipc::RecordBatchStreamReader::Open(input);
+	if (!reader_result.ok()) {
+		return MakeErrorResult(reader_result.status().ToString());
+	}
+	auto reader = reader_result.ValueOrDie();
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	while (true) {
+		auto batch_result = reader->Next();
+		if (!batch_result.ok()) {
+			return MakeErrorResult(batch_result.status().ToString());
+		}
+		auto batch = batch_result.ValueOrDie();
+		if (!batch) {
+			break;
+		}
+		batches.emplace_back(std::move(batch));
+	}
+	return MakeArrowResult(statement_type, batches, reader->schema(), expected_types);
 }
 
 unique_ptr<QueryResult> DistributedClient::CommitTransaction() {

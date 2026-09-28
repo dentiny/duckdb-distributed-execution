@@ -5,9 +5,13 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/uuid.hpp"
+#include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/statement/delete_statement.hpp"
 #include "duckdb/parser/statement/execute_statement.hpp"
+#include "duckdb/parser/statement/insert_statement.hpp"
+#include "duckdb/parser/statement/update_statement.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -16,6 +20,7 @@ namespace {
 
 struct RemoteDMLSourceState : public GlobalSourceState {
 	bool executed = false;
+	unique_ptr<QueryResult> result;
 };
 
 StatementType GetDMLStatementType(PhysicalOperatorType type) {
@@ -29,6 +34,36 @@ StatementType GetDMLStatementType(PhysicalOperatorType type) {
 	default:
 		throw InternalException("Unsupported remote DML operator");
 	}
+}
+
+string ReturnCompleteRows(const string &sql) {
+	Parser parser;
+	parser.ParseQuery(sql);
+	if (parser.statements.size() != 1) {
+		return sql;
+	}
+
+	auto &statement = *parser.statements[0];
+	vector<unique_ptr<ParsedExpression>> *returning_list = nullptr;
+	switch (statement.type) {
+	case StatementType::INSERT_STATEMENT:
+		returning_list = &statement.Cast<InsertStatement>().returning_list;
+		break;
+	case StatementType::UPDATE_STATEMENT:
+		returning_list = &statement.Cast<UpdateStatement>().returning_list;
+		break;
+	case StatementType::DELETE_STATEMENT:
+		returning_list = &statement.Cast<DeleteStatement>().returning_list;
+		break;
+	default:
+		return sql;
+	}
+	if (returning_list->empty()) {
+		return sql;
+	}
+	returning_list->clear();
+	returning_list->push_back(make_uniq<StarExpression>());
+	return statement.ToString();
 }
 
 string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
@@ -79,20 +114,24 @@ unique_ptr<GlobalSourceState> PhysicalRemoteDML::GetGlobalSourceState(ClientCont
 SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                     OperatorSourceInput &input) const {
 	auto &state = input.global_state.Cast<RemoteDMLSourceState>();
-	if (state.executed) {
+	if (!state.executed) {
+		state.executed = true;
+		auto executable_sql = BuildRemotePreparedDMLSQL(context.client, ReturnCompleteRows(sql));
+		state.result =
+		    GetDistributedClient(context.client, table)
+		        .ExecuteStatement(executable_sql, GetDMLStatementType(type), table.catalog.GetName(), &types);
+		if (state.result->HasError()) {
+			throw Exception(ExceptionType::IO,
+			                StringUtil::Format("Failed to execute DML on control node: %s", state.result->GetError()));
+		}
+	}
+
+	auto result_chunk = state.result->Fetch();
+	if (!result_chunk || result_chunk->size() == 0) {
 		return SourceResultType::FINISHED;
 	}
-	state.executed = true;
-
-	auto executable_sql = BuildRemotePreparedDMLSQL(context.client, sql);
-	auto result = GetDistributedClient(context.client, table)
-	                  .ExecuteStatement(executable_sql, GetDMLStatementType(type), table.catalog.GetName());
-	if (result->HasError()) {
-		throw Exception(ExceptionType::IO,
-		                StringUtil::Format("Failed to execute DML on control node: %s", result->GetError()));
-	}
-	chunk.SetCardinality(0);
-	return SourceResultType::FINISHED;
+	chunk.Move(*result_chunk);
+	return SourceResultType::HAVE_MORE_OUTPUT;
 }
 
 } // namespace duckdb

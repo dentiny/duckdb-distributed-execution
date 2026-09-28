@@ -42,7 +42,8 @@ public:
 
 	// Execute one complete non-query statement on the control node.
 	unique_ptr<QueryResult> ExecuteStatement(const string &sql, StatementType statement_type,
-	                                         const string &client_catalog = "");
+	                                         const string &client_catalog = "",
+	                                         const vector<LogicalType> *expected_types = nullptr);
 
 	unique_ptr<QueryResult> CommitTransaction();
 	unique_ptr<QueryResult> RollbackTransaction();

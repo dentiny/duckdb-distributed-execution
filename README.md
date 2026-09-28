@@ -557,8 +557,6 @@ through local execution on the Driver/Control Node.
 - `ALTER SCHEMA`.
 - `ALTER TABLE` variants other than add/drop/rename column, rename table, change column type, set a default, and
   set/drop `NOT NULL`. For example, adding or dropping constraints is not implemented by the remote ALTER path.
-- Returning result rows from `INSERT ... RETURNING`, `UPDATE ... RETURNING`, or `DELETE ... RETURNING`. The mutation
-  can run, but the current protocol returns only status and affected-row metadata.
 - Full Arrow transport for `STRUCT`, `MAP`, `UNION`, nested `LIST`, `BIT`, `BIGNUM`, and non-string dictionary types.
   Unsupported values may be converted to `VARCHAR` or rejected.
 - A persistent default Duckling database and server restart recovery. The default server database is in memory.
@@ -588,6 +586,8 @@ Worker execution currently accepts only a single table scan with projections, fi
   other catalog entries are not restored into the client metadata cache after a new `ATTACH`.
 - Basic `BEGIN`, `COMMIT`, and `ROLLBACK` forwarding is supported, but transaction outcomes are not durable across
   server restarts. Object-storage snapshot coordination and propagation are still work in progress.
+- DML `RETURNING` results are materialized and serialized into one protobuf response, so large result sets can use
+  substantial memory.
 - A failed worker task is not retried or reassigned automatically. Replacing a driver also does not synchronize the
   workers registered with the previous driver.
 - Query execution statistics are held in memory and are not persisted.

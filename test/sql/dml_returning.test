@@ -1,10 +1,6 @@
 # name: test/sql/dml_returning.test
-# description: Remote DML returns rows produced by a RETURNING clause
+# description: Remote INSERT, UPDATE, and DELETE return rows produced by a RETURNING clause
 # group: [sql]
-
-# FIXME: ExecuteSQLResponse currently carries only status and affected-row metadata.
-# Enable this regression after DML result rows are streamed back from the Control Node.
-mode skip
 
 require duckherder
 
@@ -21,3 +17,52 @@ query II
 INSERT INTO dh.dml_returning VALUES (1, 'one') RETURNING id, value;
 ----
 1	one
+
+query II rowsort
+INSERT INTO dh.dml_returning VALUES (2, 'two'), (3, 'three') RETURNING id, value;
+----
+2	two
+3	three
+
+query II
+UPDATE dh.dml_returning SET value = upper(value) WHERE id = 2 RETURNING id, value;
+----
+2	TWO
+
+query II
+DELETE FROM dh.dml_returning WHERE id = 3 RETURNING id, value;
+----
+3	three
+
+query II
+UPDATE dh.dml_returning SET value = 'missing' WHERE id = 99 RETURNING id, value;
+----
+
+query II
+DELETE FROM dh.dml_returning WHERE id = 99 RETURNING id, value;
+----
+
+# Expressions and NULL values use the bound RETURNING result schema.
+query IT
+INSERT INTO dh.dml_returning VALUES (4, NULL) RETURNING id + 10, value;
+----
+14	NULL
+
+# RETURNING participates in the same remote transaction as the mutation.
+statement ok
+BEGIN;
+
+query II
+UPDATE dh.dml_returning SET value = 'rolled back' WHERE id = 1 RETURNING id, value;
+----
+1	rolled back
+
+statement ok
+ROLLBACK;
+
+query II rowsort
+SELECT id, value FROM dh.dml_returning;
+----
+1	one
+2	TWO
+4	NULL

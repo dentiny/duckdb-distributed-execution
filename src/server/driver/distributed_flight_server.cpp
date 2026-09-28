@@ -755,9 +755,40 @@ arrow::Status DistributedFlightServer::HandleExecuteStatement(const distributed:
 		resp.set_error_message(result->GetError());
 		return arrow::Status::OK();
 	}
-	resp.set_success(true);
-	resp.mutable_execute_statement();
-	return arrow::Status::OK();
+	if (!result->client_properties.client_context) {
+		result->client_properties.client_context = registration.connection->context.get();
+	}
+
+	auto serialization_error = [&](const string &error) {
+		resp.set_success(false);
+		resp.set_error_message("Remote statement succeeded but its result could not be serialized: " + error);
+		return arrow::Status::OK();
+	};
+	try {
+		auto ipc_result = [&]() -> arrow::Result<std::shared_ptr<arrow::Buffer>> {
+			std::shared_ptr<arrow::Schema> schema;
+			vector<std::shared_ptr<arrow::RecordBatch>> batches;
+			ARROW_RETURN_NOT_OK(QueryResultToArrow(*result, schema, batches));
+
+			ARROW_ASSIGN_OR_RAISE(auto output, arrow::io::BufferOutputStream::Create());
+			ARROW_ASSIGN_OR_RAISE(auto writer, arrow::ipc::MakeStreamWriter(output, schema));
+			for (const auto &batch : batches) {
+				ARROW_RETURN_NOT_OK(writer->WriteRecordBatch(*batch));
+			}
+			ARROW_RETURN_NOT_OK(writer->Close());
+			return output->Finish();
+		}();
+		if (!ipc_result.ok()) {
+			return serialization_error(ipc_result.status().ToString());
+		}
+
+		resp.set_success(true);
+		auto buffer = ipc_result.ValueOrDie();
+		resp.mutable_execute_statement()->set_arrow_ipc_result(buffer->data(), buffer->size());
+		return arrow::Status::OK();
+	} catch (const std::exception &e) {
+		return serialization_error(e.what());
+	}
 }
 
 arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::LoadExtensionRequest &req,
