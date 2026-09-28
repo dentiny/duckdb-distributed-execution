@@ -120,6 +120,8 @@ private:
 	arrow::Status HandleUnregisterClient(const string &client_id, distributed::DistributedResponse &resp);
 	arrow::Status HandleTransaction(const distributed::DistributedRequest &req, ClientRegistration &registration,
 	                                distributed::DistributedResponse &resp);
+	void ExecuteTransactionAction(const distributed::DistributedRequest &req, ClientRegistration &registration,
+	                              distributed::DistributedResponse &resp);
 	arrow::Status HandleExecuteStatement(const distributed::ExecuteStatementRequest &req,
 	                                     ClientRegistration &registration, distributed::DistributedResponse &resp);
 

@@ -7,6 +7,8 @@
 
 namespace duckdb {
 
+inline constexpr int64_t DEFAULT_CLIENT_LEASE_TIMEOUT_MS = 30000;
+
 enum class DistributedFlightServerTestFault : uint8_t {
 	COMMIT_RESPONSE,
 	EXECUTE_STATEMENT_RESPONSE,
@@ -31,7 +33,7 @@ struct DistributedFlightServerTestState {
 private:
 	bool ConsumeFault(atomic<uint32_t> &remaining);
 
-	atomic<int64_t> client_lease_timeout_ms {30000};
+	atomic<int64_t> client_lease_timeout_ms {DEFAULT_CLIENT_LEASE_TIMEOUT_MS};
 	atomic<uint32_t> fail_commit_responses {0};
 	atomic<uint32_t> fail_execute_statement_responses {0};
 	atomic<uint32_t> fail_scan_responses {0};

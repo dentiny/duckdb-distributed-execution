@@ -2,16 +2,11 @@
 
 #include "duckdb/common/optional_ptr.hpp"
 #include "transaction.pb.h"
-
-#include <cstdint>
+#include "transaction_constants.hpp"
 
 namespace duckdb {
 
 class ClientContext;
-
-inline constexpr uint64_t INVALID_TRANSACTION_ID = 0;
-inline constexpr uint64_t INITIAL_TRANSACTION_ID = 1;
-inline constexpr uint64_t INITIAL_REQUEST_SEQUENCE = 1;
 
 // Client-side state shared by explicit transactions and single-RPC autocommit operations.
 struct DistributedTransactionState {

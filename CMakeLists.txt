@@ -72,6 +72,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/client_registration.cpp
     src/server/driver/distributed_executor.cpp
     src/server/driver/distributed_flight_server.cpp
+    src/server/driver/distributed_flight_server_test_state.cpp
     src/server/driver/distributed_server_function.cpp
     src/server/driver/distributed_server_main.cpp
     src/server/driver/duckling_catalog.cpp

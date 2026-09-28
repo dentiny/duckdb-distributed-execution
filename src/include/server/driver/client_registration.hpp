@@ -7,6 +7,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
+#include "transaction_constants.hpp"
 
 #include <memory>
 
@@ -41,12 +42,12 @@ struct ClientRegistration {
 	// One connection has at most one active transaction. The finished watermark and its outcome make retries
 	// idempotent with constant memory; older outcomes no longer need to be replayed after a newer transaction
 	// starts.
-	uint64_t active_transaction_id = 0;
-	uint64_t finished_transaction_id = 0;
+	uint64_t active_transaction_id = INVALID_TRANSACTION_ID;
+	uint64_t finished_transaction_id = INVALID_TRANSACTION_ID;
 	distributed::TransactionStatus finished_transaction_status = distributed::TRANSACTION_STATUS_UNKNOWN;
 	// Only the latest request in an active transaction is retained. A retry with the same sequence replays this
 	// result, while a newer sequence replaces it, keeping replay memory bounded apart from the latest query result.
-	uint64_t last_request_sequence = 0;
+	uint64_t last_request_sequence = INVALID_REQUEST_SEQUENCE;
 	ClientRequestTransport last_request_transport = ClientRequestTransport::NONE;
 	string last_request_signature;
 	string last_action_response;
