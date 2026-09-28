@@ -66,8 +66,8 @@ public:
 	void DropEntry(ClientContext &context, DropInfo &info) override;
 
 private:
-	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(string key, CatalogEntry *catalog_entry);
-	CatalogEntry *WrapAndCacheIndexCatalogEntryWithLock(string key, CatalogEntry *catalog_entry);
+	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(string key, CatalogEntry *catalog_entry) DUCKDB_REQUIRES(mu);
+	CatalogEntry *WrapAndCacheIndexCatalogEntryWithLock(string key, CatalogEntry *catalog_entry) DUCKDB_REQUIRES(mu);
 
 	DatabaseInstance &db_instance;
 	unique_ptr<CreateSchemaInfo> create_schema_info;
@@ -75,7 +75,7 @@ private:
 	Catalog &duckling_catalog_ref;
 
 	concurrency::mutex mu;
-	unordered_map<string, unique_ptr<CatalogEntry>> catalog_entries;
+	unordered_map<string, unique_ptr<CatalogEntry>> catalog_entries DUCKDB_GUARDED_BY(mu);
 };
 
 } // namespace duckdb

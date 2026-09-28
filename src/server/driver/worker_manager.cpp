@@ -54,9 +54,8 @@ void WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const strin
 
 vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {
 	vector<WorkerInfo *> available;
-	available.reserve(workers.size());
-
 	concurrency::lock_guard<concurrency::mutex> lock(mu);
+	available.reserve(workers.size());
 	for (auto &worker : workers) {
 		available.emplace_back(worker.get());
 	}
@@ -64,6 +63,7 @@ vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {
 }
 
 idx_t WorkerManager::GetWorkerCount() const {
+	concurrency::lock_guard<concurrency::mutex> lock(mu);
 	return workers.size();
 }
 

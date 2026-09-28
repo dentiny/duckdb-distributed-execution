@@ -36,23 +36,24 @@ struct ClientRegistration {
 	// DuckDB connections are session-scoped and must not execute concurrent requests.
 	concurrency::mutex connection_mutex;
 	// Dedicated DuckDB session for this registered client.
-	unique_ptr<Connection> connection;
+	unique_ptr<Connection> connection DUCKDB_GUARDED_BY(connection_mutex);
 	// Distributed execution components bound to this client's DuckDB session.
-	unique_ptr<DistributedExecutor> distributed_executor;
+	unique_ptr<DistributedExecutor> distributed_executor DUCKDB_GUARDED_BY(connection_mutex);
 	// One connection has at most one active transaction. The finished watermark and its outcome make retries
 	// idempotent with constant memory; older outcomes no longer need to be replayed after a newer transaction
 	// starts.
-	uint64_t active_transaction_id = INVALID_TRANSACTION_ID;
-	uint64_t finished_transaction_id = INVALID_TRANSACTION_ID;
-	distributed::TransactionStatus finished_transaction_status = distributed::TRANSACTION_STATUS_UNKNOWN;
+	uint64_t active_transaction_id DUCKDB_GUARDED_BY(connection_mutex) = INVALID_TRANSACTION_ID;
+	uint64_t finished_transaction_id DUCKDB_GUARDED_BY(connection_mutex) = INVALID_TRANSACTION_ID;
+	distributed::TransactionStatus
+	    finished_transaction_status DUCKDB_GUARDED_BY(connection_mutex) = distributed::TRANSACTION_STATUS_UNKNOWN;
 	// Only the latest request in an active transaction is retained. A retry with the same sequence replays this
 	// result, while a newer sequence replaces it, keeping replay memory bounded apart from the latest query result.
-	uint64_t last_request_sequence = INVALID_REQUEST_SEQUENCE;
-	ClientRequestTransport last_request_transport = ClientRequestTransport::NONE;
-	string last_request_signature;
-	string last_action_response;
-	std::shared_ptr<arrow::Schema> last_query_schema;
-	vector<std::shared_ptr<arrow::RecordBatch>> last_query_batches;
+	uint64_t last_request_sequence DUCKDB_GUARDED_BY(connection_mutex) = INVALID_REQUEST_SEQUENCE;
+	ClientRequestTransport last_request_transport DUCKDB_GUARDED_BY(connection_mutex) = ClientRequestTransport::NONE;
+	string last_request_signature DUCKDB_GUARDED_BY(connection_mutex);
+	string last_action_response DUCKDB_GUARDED_BY(connection_mutex);
+	std::shared_ptr<arrow::Schema> last_query_schema DUCKDB_GUARDED_BY(connection_mutex);
+	vector<std::shared_ptr<arrow::RecordBatch>> last_query_batches DUCKDB_GUARDED_BY(connection_mutex);
 	// TODO(hjiang): Bound the in-memory query replay cache and explicitly reject replay when a result exceeds the
 	// limit; consider spilling oversized replay results to object storage.
 	// TODO: Persist the finished transaction watermark and outcome with authoritative data across server restarts.

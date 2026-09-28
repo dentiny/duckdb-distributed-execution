@@ -118,16 +118,20 @@ private:
 	                                   distributed::DistributedResponse &resp);
 	arrow::Status HandleUnregisterClient(const string &client_id, distributed::DistributedResponse &resp);
 	arrow::Status HandleTransaction(const distributed::DistributedRequest &req, ClientRegistration &registration,
-	                                distributed::DistributedResponse &resp);
+	                                distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 	void ExecuteTransactionAction(const distributed::DistributedRequest &req, ClientRegistration &registration,
-	                              distributed::DistributedResponse &resp);
+	                              distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 	arrow::Status HandleExecuteStatement(const distributed::ExecuteStatementRequest &req,
-	                                     ClientRegistration &registration, distributed::DistributedResponse &resp);
+	                                     ClientRegistration &registration, distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 
 	// Handle LOAD EXTENSION request.
 	// Return error status if the extension fails to load.
 	arrow::Status HandleLoadExtension(const distributed::LoadExtensionRequest &req, ClientRegistration &registration,
-	                                  distributed::DistributedResponse &resp);
+	                                  distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 
 	// Handle GET QUERY EXECUTION STATS request.
 	// Return query execution statistics from the server.
@@ -135,12 +139,15 @@ private:
 	                                           distributed::DistributedResponse &resp);
 
 	arrow::Status HandleTableExists(const distributed::TableExistsRequest &req, ClientRegistration &registration,
-	                                distributed::DistributedResponse &resp);
+	                                distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 	arrow::Status HandleScanTable(const distributed::ScanTableRequest &req, ClientRegistration &registration,
 	                              std::shared_ptr<arrow::Schema> &schema,
-	                              vector<std::shared_ptr<arrow::RecordBatch>> &batches);
+	                              vector<std::shared_ptr<arrow::RecordBatch>> &batches)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 	arrow::Status HandleInsertData(const std::string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
-	                               ClientRegistration &registration, distributed::DistributedResponse &resp);
+	                               ClientRegistration &registration, distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 
 	// Convert DuckDB result to Arrow RecordBatch.
 	arrow::Status QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::Schema> &schema,
@@ -150,23 +157,27 @@ private:
 	void Initialize();
 
 	// Look up a registration while the caller holds clients_mutex.
-	bool LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration);
+	bool LookupClient(const string &client_id, shared_ptr<ClientRegistration> &registration)
+	    DUCKDB_REQUIRES_SHARED(clients_mutex);
 	// Renew a client's lease after an authorized request.
 	void TouchClient(const shared_ptr<ClientRegistration> &registration);
 	// Remove expired registrations while the caller holds clients_mutex exclusively.
-	void PruneExpiredClients();
+	void PruneExpiredClients() DUCKDB_REQUIRES(clients_mutex);
 	// Validate registration against the minimum role while holding clients_mutex, renewing the lease on success.
 	bool AuthorizeClient(const string &client_id, distributed::ClientRole required_role,
-	                     shared_ptr<ClientRegistration> &registration, distributed::DistributedResponse &resp);
+	                     shared_ptr<ClientRegistration> &registration, distributed::DistributedResponse &resp)
+	    DUCKDB_REQUIRES_SHARED(clients_mutex);
 	// Validate a transaction-scoped request and indicate whether its latest result can be replayed.
 	arrow::Status CheckRequestReplay(const distributed::DistributedRequest &request,
 	                                 const ClientRegistration &registration, ClientRequestTransport transport,
-	                                 const string &signature, bool &replay);
+	                                 const string &signature, bool &replay)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
 	// Replace the bounded per-client replay entry after an operation has completed.
 	void CacheActionResponse(const distributed::DistributedRequest &request, ClientRegistration &registration,
 	                         ClientRequestTransport transport, const string &signature,
-	                         const distributed::DistributedResponse &response);
-	void ClearRequestReplay(ClientRegistration &registration);
+	                         const distributed::DistributedResponse &response)
+	    DUCKDB_REQUIRES(registration.connection_mutex);
+	void ClearRequestReplay(ClientRegistration &registration) DUCKDB_REQUIRES(registration.connection_mutex);
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
@@ -174,13 +185,13 @@ private:
 
 	// Client admission: at most one writable attachment, with any number of readers.
 	mutable concurrency::shared_mutex clients_mutex;
-	unordered_map<string, shared_ptr<ClientRegistration>> clients;
-	string writable_client_id;
+	unordered_map<string, shared_ptr<ClientRegistration>> clients DUCKDB_GUARDED_BY(clients_mutex);
+	string writable_client_id DUCKDB_GUARDED_BY(clients_mutex);
 	DistributedFlightServerTestState test_state;
 
 	// Query execution tracking.
 	mutable concurrency::mutex query_history_mutex;
-	vector<QueryExecutionInfo> query_history;
+	vector<QueryExecutionInfo> query_history DUCKDB_GUARDED_BY(query_history_mutex);
 };
 
 } // namespace duckdb

@@ -473,82 +473,109 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 
 	distributed::DistributedResponse response;
 	response.set_success(true);
-	auto execute_idempotent_action = [&](ClientRegistration &registration, auto &&operation) -> arrow::Status {
-		auto signature = request.SerializeAsString();
-		bool replay = false;
-		ARROW_RETURN_NOT_OK(
-		    CheckRequestReplay(request, registration, ClientRequestTransport::ACTION, signature, replay));
-		if (replay) {
-			if (!response.ParseFromString(registration.last_action_response)) {
-				return arrow::Status::Invalid("Failed to parse cached operation response");
-			}
-			return arrow::Status::OK();
-		}
-		ARROW_RETURN_NOT_OK(operation());
-		CacheActionResponse(request, registration, ClientRequestTransport::ACTION, signature, response);
-		return arrow::Status::OK();
-	};
 
-	concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients_mutex, std::defer_lock);
-	if (request.request_case() != distributed::DistributedRequest::kRegisterClient &&
-	    request.request_case() != distributed::DistributedRequest::kUnregisterClient) {
-		client_lock.lock();
-	}
 	shared_ptr<ClientRegistration> registration;
-
-	switch (request.request_case()) {
-	case distributed::DistributedRequest::kRegisterClient:
+	if (request.request_case() == distributed::DistributedRequest::kRegisterClient) {
 		ARROW_RETURN_NOT_OK(HandleRegisterClient(request.register_client(), response));
-		break;
-	case distributed::DistributedRequest::kUnregisterClient:
+	} else if (request.request_case() == distributed::DistributedRequest::kUnregisterClient) {
 		ARROW_RETURN_NOT_OK(HandleUnregisterClient(request.client_id(), response));
-		break;
-	case distributed::DistributedRequest::kTransaction:
-		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
-			const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(HandleTransaction(request, *registration, response));
-		}
-		break;
-	case distributed::DistributedRequest::kExecuteStatement:
-		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
-			const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(execute_idempotent_action(*registration, [&] {
-				return HandleExecuteStatement(request.execute_statement(), *registration, response);
-			}));
-		}
-		break;
-	case distributed::DistributedRequest::kTableExists:
-		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
-			const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(execute_idempotent_action(
-			    *registration, [&] { return HandleTableExists(request.table_exists(), *registration, response); }));
-		}
-		break;
-	case distributed::DistributedRequest::kLoadExtension:
-		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
-			const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(execute_idempotent_action(
-			    *registration, [&] { return HandleLoadExtension(request.load_extension(), *registration, response); }));
-		}
-		break;
+	} else {
+		const concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients_mutex);
+		switch (request.request_case()) {
+		case distributed::DistributedRequest::kTransaction:
+			if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
+				const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
+				ARROW_RETURN_NOT_OK(HandleTransaction(request, *registration, response));
+			}
+			break;
+		case distributed::DistributedRequest::kExecuteStatement:
+			if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+				auto &registered_client = *registration;
+				const concurrency::lock_guard<concurrency::mutex> lock(registered_client.connection_mutex);
+				auto signature = request.SerializeAsString();
+				bool replay = false;
+				ARROW_RETURN_NOT_OK(
+				    CheckRequestReplay(request, registered_client, ClientRequestTransport::ACTION, signature, replay));
+				if (replay) {
+					if (!response.ParseFromString(registered_client.last_action_response)) {
+						return arrow::Status::Invalid("Failed to parse cached operation response");
+					}
+				} else {
+					ARROW_RETURN_NOT_OK(
+					    HandleExecuteStatement(request.execute_statement(), registered_client, response));
+					CacheActionResponse(request, registered_client, ClientRequestTransport::ACTION, signature,
+					                    response);
+				}
+			}
+			break;
+		case distributed::DistributedRequest::kTableExists:
+			if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
+				auto &registered_client = *registration;
+				const concurrency::lock_guard<concurrency::mutex> lock(registered_client.connection_mutex);
+				auto signature = request.SerializeAsString();
+				bool replay = false;
+				ARROW_RETURN_NOT_OK(
+				    CheckRequestReplay(request, registered_client, ClientRequestTransport::ACTION, signature, replay));
+				if (replay) {
+					if (!response.ParseFromString(registered_client.last_action_response)) {
+						return arrow::Status::Invalid("Failed to parse cached operation response");
+					}
+				} else {
+					ARROW_RETURN_NOT_OK(HandleTableExists(request.table_exists(), registered_client, response));
+					CacheActionResponse(request, registered_client, ClientRequestTransport::ACTION, signature,
+					                    response);
+				}
+			}
+			break;
+		case distributed::DistributedRequest::kLoadExtension:
+			if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_WRITE, registration, response)) {
+				auto &registered_client = *registration;
+				const concurrency::lock_guard<concurrency::mutex> lock(registered_client.connection_mutex);
+				auto signature = request.SerializeAsString();
+				bool replay = false;
+				ARROW_RETURN_NOT_OK(
+				    CheckRequestReplay(request, registered_client, ClientRequestTransport::ACTION, signature, replay));
+				if (replay) {
+					if (!response.ParseFromString(registered_client.last_action_response)) {
+						return arrow::Status::Invalid("Failed to parse cached operation response");
+					}
+				} else {
+					ARROW_RETURN_NOT_OK(HandleLoadExtension(request.load_extension(), registered_client, response));
+					CacheActionResponse(request, registered_client, ClientRequestTransport::ACTION, signature,
+					                    response);
+				}
+			}
+			break;
 
-	// ========== Stats & Monitoring Operations ==========
-	case distributed::DistributedRequest::kGetQueryExecutionStats:
-		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
-			const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
-			ARROW_RETURN_NOT_OK(execute_idempotent_action(*registration, [&] {
-				return HandleGetQueryExecutionStats(request.get_query_execution_stats(), response);
-			}));
-		}
-		break;
-	case distributed::DistributedRequest::kClientHeartbeat:
-		if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
-			response.mutable_client_heartbeat();
-		}
-		break;
+		// ========== Stats & Monitoring Operations ==========
+		case distributed::DistributedRequest::kGetQueryExecutionStats:
+			if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
+				auto &registered_client = *registration;
+				const concurrency::lock_guard<concurrency::mutex> lock(registered_client.connection_mutex);
+				auto signature = request.SerializeAsString();
+				bool replay = false;
+				ARROW_RETURN_NOT_OK(
+				    CheckRequestReplay(request, registered_client, ClientRequestTransport::ACTION, signature, replay));
+				if (replay) {
+					if (!response.ParseFromString(registered_client.last_action_response)) {
+						return arrow::Status::Invalid("Failed to parse cached operation response");
+					}
+				} else {
+					ARROW_RETURN_NOT_OK(HandleGetQueryExecutionStats(request.get_query_execution_stats(), response));
+					CacheActionResponse(request, registered_client, ClientRequestTransport::ACTION, signature,
+					                    response);
+				}
+			}
+			break;
+		case distributed::DistributedRequest::kClientHeartbeat:
+			if (AuthorizeClient(request.client_id(), distributed::CLIENT_ROLE_READ_ONLY, registration, response)) {
+				response.mutable_client_heartbeat();
+			}
+			break;
 
-	default:
-		return arrow::Status::Invalid("Unknown request type");
+		default:
+			return arrow::Status::Invalid("Unknown request type");
+		}
 	}
 	if (request.request_case() == distributed::DistributedRequest::kExecuteStatement &&
 	    test_state.ShouldFailExecuteStatementResponse()) {

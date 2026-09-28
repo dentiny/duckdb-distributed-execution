@@ -26,7 +26,7 @@ private:
 	mutable concurrency::mutex mu;
 	// Maps from query to their duration in milliseconds.
 	// TODO(hjiang): Add other metrics.
-	unordered_map<string, vector<int64_t>> query_timing;
+	unordered_map<string, vector<int64_t>> query_timing DUCKDB_GUARDED_BY(mu);
 };
 
 } // namespace duckdb

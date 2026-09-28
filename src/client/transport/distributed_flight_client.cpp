@@ -12,7 +12,6 @@ namespace duckdb {
 DistributedFlightClient::DistributedFlightClient(string server_url_p, distributed::ClientRole role_p,
                                                  optional_ptr<DatabaseInstance> db_instance_p)
     : server_url(std::move(server_url_p)), role(role_p), db_instance(db_instance_p) {
-	InitTransactionState();
 }
 
 DistributedFlightClient::~DistributedFlightClient() {
@@ -48,6 +47,7 @@ void DistributedFlightClient::Close() {
 }
 
 void DistributedFlightClient::SetTransactionContext(optional_ptr<ClientContext> context) {
+	const concurrency::lock_guard<concurrency::mutex> lock(transaction_mutex);
 	transaction_state.context = context;
 }
 
@@ -63,9 +63,10 @@ arrow::Status DistributedFlightClient::EnsureExplicitTransaction() {
 			distributed::DistributedResponse response;
 			ARROW_RETURN_NOT_OK(ResolvePendingTransaction(response));
 		}
-	}
-	if (!transaction_state.context || transaction_state.context->transaction.IsAutoCommit() || HasActiveTransaction()) {
-		return arrow::Status::OK();
+		if (!transaction_state.context || transaction_state.context->transaction.IsAutoCommit() ||
+		    transaction_state.transaction_id != INVALID_TRANSACTION_ID) {
+			return arrow::Status::OK();
+		}
 	}
 	distributed::DistributedResponse response;
 	ARROW_RETURN_NOT_OK(ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response));

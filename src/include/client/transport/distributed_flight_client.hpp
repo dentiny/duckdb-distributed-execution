@@ -72,15 +72,17 @@ private:
 	void UnregisterClientNoThrow();
 	void HeartbeatLoop();
 
-	RequestIdentity AssignRequestIdentity(distributed::DistributedRequest &req);
-	void FinishRequest(const RequestIdentity &identity, const arrow::Status &status);
+	RequestIdentity AssignRequestIdentity(distributed::DistributedRequest &req) DUCKDB_REQUIRES(transaction_mutex);
+	void FinishRequest(const RequestIdentity &identity, const arrow::Status &status) DUCKDB_REQUIRES(transaction_mutex);
 	arrow::Status EnsureExplicitTransaction();
 	distributed::DistributedRequest CreateTransactionRequest(distributed::TransactionAction action,
-	                                                         uint64_t request_sequence) const;
+	                                                         uint64_t request_sequence) const
+	    DUCKDB_REQUIRES(transaction_mutex);
 	arrow::Status SendActionWithRetry(const distributed::DistributedRequest &req,
 	                                  distributed::DistributedResponse &resp);
-	arrow::Status ResolvePendingTransaction(distributed::DistributedResponse &response);
-	void InitTransactionState();
+	arrow::Status ResolvePendingTransaction(distributed::DistributedResponse &response)
+	    DUCKDB_REQUIRES(transaction_mutex);
+	void InitTransactionState() DUCKDB_REQUIRES(transaction_mutex);
 	// RPC implementation to send request and block wait response.
 	arrow::Status SendAction(const distributed::DistributedRequest &req, distributed::DistributedResponse &resp);
 	// Assign the active transaction and one operation sequence, then replay that operation on transport failures.
@@ -99,7 +101,7 @@ private:
 	std::thread heartbeat_thread;
 	// Serializes all transaction RPCs and retains stable identifiers needed to retry an ambiguous operation.
 	concurrency::mutex transaction_mutex;
-	DistributedTransactionState transaction_state;
+	DistributedTransactionState transaction_state DUCKDB_GUARDED_BY(transaction_mutex);
 };
 
 } // namespace duckdb

@@ -21,8 +21,8 @@ public:
 	RemoteCreateIndexGlobalState() : executed(false) {
 	}
 
-	bool executed;
 	concurrency::mutex lock;
+	bool executed DUCKDB_GUARDED_BY(lock);
 
 	idx_t MaxThreads() override {
 		return 1; // Single-threaded execution

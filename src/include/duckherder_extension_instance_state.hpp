@@ -43,7 +43,7 @@ struct DuckherderInstanceState : public ObjectCacheEntry {
 
 private:
 	mutable concurrency::mutex mu;
-	shared_ptr<BaseQueryRecorder> query_recorder;
+	shared_ptr<BaseQueryRecorder> query_recorder DUCKDB_GUARDED_BY(mu);
 };
 
 //===--------------------------------------------------------------------===//

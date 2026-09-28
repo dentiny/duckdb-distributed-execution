@@ -70,7 +70,7 @@ public:
 
 private:
 	concurrency::mutex mu;
-	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries;
+	unordered_map<string, unique_ptr<SchemaCatalogEntry>> schema_catalog_entries DUCKDB_GUARDED_BY(mu);
 
 	unique_ptr<DuckCatalog> duckdb_catalog;
 	DatabaseInstance &db_instance;
