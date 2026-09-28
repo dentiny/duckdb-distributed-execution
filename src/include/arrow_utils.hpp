@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/types.hpp"
 
@@ -7,7 +8,14 @@
 #include <arrow/type.h>
 #include <memory>
 
+namespace arrow {
+class RecordBatch;
+class Schema;
+} // namespace arrow
+
 namespace duckdb {
+
+class QueryResult;
 
 // Convert Arrow type to DuckDB LogicalType.
 // Returns VARCHAR for unsupported types as a fallback.
@@ -16,5 +24,12 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 // Convert Arrow array data to DuckDB vector.
 void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_array, Vector &duckdb_vector,
                                      const LogicalType &type, idx_t num_rows);
+
+// Convert Arrow record batches into a materialized DuckDB query result.
+// Uses expected_types when provided to preserve logical types that cannot be inferred from Arrow alone.
+unique_ptr<QueryResult> MakeArrowResult(StatementType statement_type,
+                                        const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
+                                        const std::shared_ptr<arrow::Schema> &schema,
+                                        const vector<LogicalType> *expected_types);
 
 } // namespace duckdb

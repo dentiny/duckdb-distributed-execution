@@ -3,7 +3,6 @@
 #include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
-#include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/main/query_result.hpp"
@@ -45,41 +44,6 @@ unique_ptr<QueryResult> MakeStatementResult(StatementType statement_type) {
 	default:
 		throw InternalException("Unsupported remote statement result type");
 	}
-}
-
-unique_ptr<QueryResult> MakeArrowResult(StatementType statement_type,
-                                        const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
-                                        const std::shared_ptr<arrow::Schema> &schema,
-                                        const vector<LogicalType> *expected_types) {
-	vector<string> names;
-	vector<LogicalType> types;
-	if (expected_types) {
-		types = *expected_types;
-	}
-	if (schema) {
-		for (const auto &field : schema->fields()) {
-			names.emplace_back(field->name());
-			if (!expected_types) {
-				types.emplace_back(ArrowTypeToDuckDBType(field->type()));
-			}
-		}
-	} else if (expected_types) {
-		names.resize(types.size());
-	}
-
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	for (const auto &batch : batches) {
-		DataChunk chunk;
-		chunk.Initialize(Allocator::DefaultAllocator(), types);
-		for (int col_idx = 0; col_idx < batch->num_columns(); ++col_idx) {
-			ConvertArrowArrayToDuckDBVector(batch->column(col_idx), chunk.data[col_idx], types[col_idx],
-			                                batch->num_rows());
-		}
-		chunk.SetCardinality(batch->num_rows());
-		collection->Append(chunk);
-	}
-	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
-	                                          ClientProperties());
 }
 
 string GetResponseError(const arrow::Status &status, const distributed::DistributedResponse &response) {
