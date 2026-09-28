@@ -87,7 +87,7 @@ distributed::DistributedRequest DistributedFlightClient::CreateTransactionReques
 
 arrow::Status DistributedFlightClient::SendActionWithRetry(const distributed::DistributedRequest &request,
                                                            distributed::DistributedResponse &response) {
-	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : RetryConfig();
 	return RetryWithExponentialBackoff(
 	    [&]() {
 		    response.Clear();
@@ -278,7 +278,7 @@ arrow::Status DistributedFlightClient::InsertData(const string &table_name, std:
 	const lock_guard<mutex> lock(transaction_mutex);
 	distributed::DistributedRequest identity_request;
 	auto identity = AssignRequestIdentity(identity_request);
-	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : RetryConfig();
 	auto status = RetryWithExponentialBackoff(
 	    [&]() {
 		    response.Clear();
@@ -320,7 +320,7 @@ arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint6
 	std::string req_data = req.SerializeAsString();
 	arrow::flight::Ticket ticket;
 	ticket.ticket = req_data;
-	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : GetDefaultRetryConfig();
+	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : RetryConfig();
 	auto status = RetryWithExponentialBackoff(
 	    [&]() {
 		    vector<std::shared_ptr<arrow::RecordBatch>> attempt_batches;

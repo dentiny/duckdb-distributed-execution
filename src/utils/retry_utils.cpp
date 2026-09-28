@@ -27,17 +27,13 @@ bool IsRetryableTransportError(const arrow::Status &status) {
 
 } // namespace
 
-RetryConfig GetDefaultRetryConfig() {
-	return RetryConfig {DEFAULT_RETRY_MAX_ATTEMPTS, std::chrono::milliseconds(DEFAULT_RETRY_INITIAL_BACKOFF_MS),
-	                    std::chrono::milliseconds(DEFAULT_RETRY_MAX_BACKOFF_MS), DEFAULT_RETRY_JITTER_RATIO};
-}
-
 RetryConfig GetRetryConfig(DatabaseInstance &db) {
-	return RetryConfig {
-	    GetRetrySetting(db, RETRY_MAX_ATTEMPTS_SETTING).GetValue<idx_t>(),
-	    std::chrono::milliseconds(GetRetrySetting(db, RETRY_INITIAL_BACKOFF_MS_SETTING).GetValue<int64_t>()),
-	    std::chrono::milliseconds(GetRetrySetting(db, RETRY_MAX_BACKOFF_MS_SETTING).GetValue<int64_t>()),
-	    GetRetrySetting(db, RETRY_JITTER_RATIO_SETTING).GetValue<double>()};
+	auto max_attempts = GetRetrySetting(db, RETRY_MAX_ATTEMPTS_SETTING).GetValue<idx_t>();
+	auto initial_backoff_ms = GetRetrySetting(db, RETRY_INITIAL_BACKOFF_MS_SETTING).GetValue<int64_t>();
+	auto max_backoff_ms = GetRetrySetting(db, RETRY_MAX_BACKOFF_MS_SETTING).GetValue<int64_t>();
+	auto jitter_ratio = GetRetrySetting(db, RETRY_JITTER_RATIO_SETTING).GetValue<double>();
+	return RetryConfig {max_attempts, std::chrono::milliseconds(initial_backoff_ms),
+	                    std::chrono::milliseconds(max_backoff_ms), jitter_ratio};
 }
 
 arrow::Status RetryWithExponentialBackoff(const std::function<arrow::Status()> &operation, const RetryConfig &config) {

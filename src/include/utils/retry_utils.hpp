@@ -21,14 +21,11 @@ inline constexpr int64_t DEFAULT_RETRY_MAX_BACKOFF_MS = 250;
 inline constexpr double DEFAULT_RETRY_JITTER_RATIO = 0.2;
 
 struct RetryConfig {
-	idx_t max_attempts;
-	std::chrono::milliseconds initial_delay;
-	std::chrono::milliseconds max_delay;
-	double jitter_ratio;
+	idx_t max_attempts = DEFAULT_RETRY_MAX_ATTEMPTS;
+	std::chrono::milliseconds initial_delay {DEFAULT_RETRY_INITIAL_BACKOFF_MS};
+	std::chrono::milliseconds max_delay {DEFAULT_RETRY_MAX_BACKOFF_MS};
+	double jitter_ratio = DEFAULT_RETRY_JITTER_RATIO;
 };
-
-// Return the compile-time defaults used when no database settings are available.
-RetryConfig GetDefaultRetryConfig();
 
 // Read the current global retry extension settings from a database instance.
 RetryConfig GetRetryConfig(DatabaseInstance &db);
