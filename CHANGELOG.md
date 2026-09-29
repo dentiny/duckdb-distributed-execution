@@ -8,6 +8,7 @@
 ### Changed
 
 - Update DuckDB and extension-ci-tools to `v1.5.6`.
+- Update embedded duckdb-object-storage to its DuckDB `v1.5.6` revision.
 
 - Use the Duckherder `ATTACH` path as the remote `host:port` endpoint instead of `server_host` and `server_port`
   options.
