@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- Enable the Rust toolchain required by the bundled object-storage filesystem in Duckherder CI.
+
 - Fix extension version ([#122])
 
 [#122]: https://github.com/dentiny/duckdb-distributed-execution/pull/122

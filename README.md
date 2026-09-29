@@ -232,7 +232,10 @@ git clone https://github.com/Microsoft/vcpkg.git
 export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
-2. Build the extension:
+2. Install the Rust toolchain (`cargo` and `rustc`) and make it available on `PATH`;
+   the bundled `duckdb-object-storage` extension uses Rust for its SlateDB filesystem.
+
+3. Build the extension:
 ```bash
 # Clone the repo.
 git clone --recurse-submodules https://github.com/dentiny/duckdb-distributed-execution.git
