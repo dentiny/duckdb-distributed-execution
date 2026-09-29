@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- Keep Duckling and Duckherder transaction state in their registered managers so unique indexes include existing rows.
+
 - Fix static linking of the distributed server, worker, and unit tests against DuckDB and its extension loader.
 
 - Fix extension version ([#122])

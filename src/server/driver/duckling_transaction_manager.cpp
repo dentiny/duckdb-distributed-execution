@@ -6,25 +6,25 @@
 namespace duckdb {
 
 DucklingTransactionManager::DucklingTransactionManager(AttachedDatabase &db)
-    : DuckTransactionManager(db), duckdb_transaction_manager(make_uniq<DuckTransactionManager>(db)) {
+    : DuckTransactionManager(db) {
 }
 
 DucklingTransactionManager::~DucklingTransactionManager() = default;
 
 Transaction &DucklingTransactionManager::StartTransaction(ClientContext &context) {
-	return duckdb_transaction_manager->StartTransaction(context);
+	return DuckTransactionManager::StartTransaction(context);
 }
 
 ErrorData DucklingTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction) {
-	return duckdb_transaction_manager->CommitTransaction(context, transaction);
+	return DuckTransactionManager::CommitTransaction(context, transaction);
 }
 
 void DucklingTransactionManager::RollbackTransaction(Transaction &transaction) {
-	duckdb_transaction_manager->RollbackTransaction(transaction);
+	DuckTransactionManager::RollbackTransaction(transaction);
 }
 
 void DucklingTransactionManager::Checkpoint(ClientContext &context, bool force) {
-	duckdb_transaction_manager->Checkpoint(context, force);
+	DuckTransactionManager::Checkpoint(context, force);
 }
 
 } // namespace duckdb

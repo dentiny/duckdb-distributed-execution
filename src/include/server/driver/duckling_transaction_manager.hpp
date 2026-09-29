@@ -7,6 +7,8 @@
 
 namespace duckdb {
 
+// Keep all transaction state in the manager registered with the attached database.
+// DuckDB storage scans read its visibility timestamps directly.
 class DucklingTransactionManager : public DuckTransactionManager {
 public:
 	explicit DucklingTransactionManager(AttachedDatabase &db);
@@ -24,9 +26,6 @@ public:
 	bool IsDuckTransactionManager() override {
 		return true;
 	}
-
-private:
-	unique_ptr<DuckTransactionManager> duckdb_transaction_manager;
 };
 
 } // namespace duckdb

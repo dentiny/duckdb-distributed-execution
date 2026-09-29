@@ -9,6 +9,8 @@ namespace duckdb {
 
 class DistributedClient;
 
+// Remote transaction coordination wraps the registered DuckDB manager itself so
+// catalog and storage lookups observe the same transaction state.
 class DuckherderTransactionManager : public DuckTransactionManager {
 public:
 	explicit DuckherderTransactionManager(AttachedDatabase &db);
@@ -32,7 +34,6 @@ private:
 	DistributedClient &GetClient(ClientContext &context);
 
 	AttachedDatabase &attached_database;
-	unique_ptr<DuckTransactionManager> duckdb_transaction_manager;
 };
 
 } // namespace duckdb

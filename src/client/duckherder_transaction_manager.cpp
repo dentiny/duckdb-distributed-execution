@@ -10,8 +10,7 @@
 namespace duckdb {
 
 DuckherderTransactionManager::DuckherderTransactionManager(AttachedDatabase &db)
-    : DuckTransactionManager(db), attached_database(db),
-      duckdb_transaction_manager(make_uniq<DuckTransactionManager>(db)) {
+    : DuckTransactionManager(db), attached_database(db) {
 }
 
 DuckherderTransactionManager::~DuckherderTransactionManager() = default;
@@ -22,11 +21,11 @@ DistributedClient &DuckherderTransactionManager::GetClient(ClientContext &contex
 
 Transaction &DuckherderTransactionManager::StartTransaction(ClientContext &context) {
 	auto &client = GetClient(context);
-	auto &transaction = duckdb_transaction_manager->StartTransaction(context);
+	auto &transaction = DuckTransactionManager::StartTransaction(context);
 	try {
 		client.SetTransactionContext(context);
 	} catch (...) {
-		duckdb_transaction_manager->RollbackTransaction(transaction);
+		DuckTransactionManager::RollbackTransaction(transaction);
 		throw;
 	}
 	return transaction;
@@ -39,16 +38,16 @@ ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context
 		if (client->HasActiveRemoteTransaction()) {
 			auto result = client->CommitTransaction();
 			if (result->HasError()) {
-				duckdb_transaction_manager->RollbackTransaction(transaction);
+				DuckTransactionManager::RollbackTransaction(transaction);
 				client->ClearTransactionContext();
 				return ErrorData(result->GetError());
 			}
 		}
 	} catch (std::exception &ex) {
-		duckdb_transaction_manager->RollbackTransaction(transaction);
+		DuckTransactionManager::RollbackTransaction(transaction);
 		return ErrorData(ex);
 	}
-	auto error = duckdb_transaction_manager->CommitTransaction(context, transaction);
+	auto error = DuckTransactionManager::CommitTransaction(context, transaction);
 	client->ClearTransactionContext();
 	return error;
 }
@@ -56,14 +55,14 @@ ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context
 void DuckherderTransactionManager::RollbackTransaction(Transaction &transaction) {
 	auto context = transaction.context.lock();
 	if (!context) {
-		duckdb_transaction_manager->RollbackTransaction(transaction);
+		DuckTransactionManager::RollbackTransaction(transaction);
 		return;
 	}
 	DistributedClient *client;
 	try {
 		client = &GetClient(*context);
 	} catch (...) {
-		duckdb_transaction_manager->RollbackTransaction(transaction);
+		DuckTransactionManager::RollbackTransaction(transaction);
 		throw;
 	}
 	unique_ptr<QueryResult> result;
@@ -72,11 +71,11 @@ void DuckherderTransactionManager::RollbackTransaction(Transaction &transaction)
 			result = client->RollbackTransaction();
 		}
 	} catch (...) {
-		duckdb_transaction_manager->RollbackTransaction(transaction);
+		DuckTransactionManager::RollbackTransaction(transaction);
 		client->ClearTransactionContext();
 		throw;
 	}
-	duckdb_transaction_manager->RollbackTransaction(transaction);
+	DuckTransactionManager::RollbackTransaction(transaction);
 	client->ClearTransactionContext();
 	if (result && result->HasError()) {
 		throw Exception(ExceptionType::TRANSACTION, result->GetError());
@@ -84,7 +83,7 @@ void DuckherderTransactionManager::RollbackTransaction(Transaction &transaction)
 }
 
 void DuckherderTransactionManager::Checkpoint(ClientContext &context, bool force) {
-	duckdb_transaction_manager->Checkpoint(context, force);
+	DuckTransactionManager::Checkpoint(context, force);
 }
 
 } // namespace duckdb

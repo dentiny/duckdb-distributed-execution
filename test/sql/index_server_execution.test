@@ -44,3 +44,24 @@ query I
 SELECT COUNT(*) FROM dh.index_server_target;
 ----
 2
+
+# Building a unique index must also detect duplicates that already exist.
+statement ok
+CREATE TABLE dh.index_existing_duplicates (id INTEGER);
+
+statement ok
+INSERT INTO dh.index_existing_duplicates VALUES (1), (1);
+
+statement error
+CREATE UNIQUE INDEX reject_existing_duplicates ON dh.index_existing_duplicates(id);
+----
+Data contains duplicates
+
+# Creating an ordinary index must leave existing duplicate rows queryable.
+statement ok
+CREATE INDEX allow_existing_duplicates ON dh.index_existing_duplicates(id);
+
+query I
+SELECT COUNT(*) FROM dh.index_existing_duplicates WHERE id = 1;
+----
+2
