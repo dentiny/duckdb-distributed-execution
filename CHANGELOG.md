@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- Load core functions in embedded server and worker databases so the loadable extension can attach and execute queries.
+
 - Keep Duckling and Duckherder transaction state in their registered managers so unique indexes include existing rows.
 
 - Fix static linking of the distributed server, worker, and unit tests against DuckDB and its extension loader.

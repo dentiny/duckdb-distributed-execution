@@ -1,3 +1,4 @@
+#include "core_functions_extension.hpp"
 #include "server/driver/distributed_flight_server.hpp"
 
 #include "duckdb/common/arrow/arrow_appender.hpp"
@@ -140,6 +141,8 @@ void DistributedFlightServer::Initialize() {
 	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
 
 	db = make_uniq<DuckDB>(nullptr, &config);
+	// Loadable extensions use DuckDB's dummy loader, so initialize core functions explicitly.
+	db->LoadStaticExtension<CoreFunctionsExtension>();
 	Connection bootstrap_conn(*db);
 
 	// Attach duckling storage extension.

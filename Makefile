@@ -24,9 +24,9 @@ DUCKHERDER_UNITTEST_RELEASE := ./build/release/extension/$(EXT_NAME)/test/unitte
 DUCKHERDER_UNITTEST_DEBUG := ./build/debug/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
 DUCKHERDER_UNITTEST_RELDEBUG := ./build/reldebug/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
 
-test_release_internal: test_duckherder_release
-test_debug_internal: test_duckherder_debug
-test_reldebug_internal: test_duckherder_reldebug
+test_release_internal: test_duckherder_release test_duckherder_loadable_release
+test_debug_internal: test_duckherder_debug test_duckherder_loadable_debug
+test_reldebug_internal: test_duckherder_reldebug test_duckherder_loadable_reldebug
 
 test_duckherder_release:
 	$(DUCKHERDER_UNITTEST_RELEASE)
@@ -36,6 +36,11 @@ test_duckherder_debug:
 
 test_duckherder_reldebug:
 	$(DUCKHERDER_UNITTEST_RELDEBUG)
+
+# Exercise the distributable artifact as well as the statically linked test runner.
+.PHONY: test_duckherder_loadable_release test_duckherder_loadable_debug test_duckherder_loadable_reldebug
+test_duckherder_loadable_release test_duckherder_loadable_debug test_duckherder_loadable_reldebug:
+	./build/$(patsubst test_duckherder_loadable_%,%,$@)/test/unittest --test-config test/configs/loadable.json "test/*"
 
 DUCKDB_TEST_TARGETS := test_debug_duckdb test_reldebug_duckdb test_release_duckdb
 DUCKDB_TEST_ARGUMENTS := $(filter-out $(DUCKDB_TEST_TARGETS),$(MAKECMDGOALS))

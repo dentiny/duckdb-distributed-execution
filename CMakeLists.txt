@@ -20,6 +20,7 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 project(${TARGET_NAME})
 
 include_directories(src/include)
+include_directories(${DuckDB_SOURCE_DIR}/extension/core_functions/include)
 include_directories(src/include/client)
 include_directories(src/include/server)
 include_directories(${ARROW_INCLUDE_DIR})
@@ -124,17 +125,17 @@ set_target_properties(
 
 # Note: gRPC and Protobuf are transitive dependencies of ArrowFlight.
 target_link_libraries(
-  ${EXTENSION_NAME} Arrow::arrow_static ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf gRPC::grpc++)
+  ${EXTENSION_NAME} core_functions_extension Arrow::arrow_static
+  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
 set_property(
   TARGET ${EXTENSION_NAME}
   PROPERTY
     INTERFACE_LINK_LIBRARIES
-    "duckdb_static;$<LINK_ONLY:Arrow::arrow_static>;$<LINK_ONLY:ArrowFlight::arrow_flight_static>;$<LINK_ONLY:protobuf::libprotobuf>;$<LINK_ONLY:gRPC::grpc++>"
+    "duckdb_static;$<LINK_ONLY:core_functions_extension>;$<LINK_ONLY:Arrow::arrow_static>;$<LINK_ONLY:ArrowFlight::arrow_flight_static>;$<LINK_ONLY:protobuf::libprotobuf>;$<LINK_ONLY:gRPC::grpc++>"
 )
 
 target_link_libraries(
-  ${LOADABLE_EXTENSION_NAME} Arrow::arrow_static
+  ${LOADABLE_EXTENSION_NAME} core_functions_extension Arrow::arrow_static
   ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
 
 install(

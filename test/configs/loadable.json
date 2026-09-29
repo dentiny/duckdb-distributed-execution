@@ -1,0 +1,7 @@
+{
+  "description": "Run Duckherder SQL tests against the loadable extension, including its embedded server and worker databases.",
+  "statically_loaded_extensions": [
+    "core_functions"
+  ],
+  "on_init": "LOAD '__BUILD_DIRECTORY__/extension/duckherder/duckherder.duckdb_extension';"
+}

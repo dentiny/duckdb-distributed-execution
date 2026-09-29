@@ -1,3 +1,4 @@
+#include "core_functions_extension.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
@@ -28,6 +29,8 @@ WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, DuckDB *sh
 		owned_db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
 		db = owned_db.get();
 	}
+	// Standalone workers also need core functions when created from a loadable extension.
+	db->LoadStaticExtension<CoreFunctionsExtension>();
 	conn = make_uniq<Connection>(*db);
 
 	// If using shared DB, set the default catalog to "duckling" to match the server.
