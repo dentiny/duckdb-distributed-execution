@@ -143,16 +143,18 @@ install(
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
 
+# Link DuckDB before its generated extension loader, as the DuckDB shell does;
+# static linkers need the core references before scanning the loader archive.
 # Add distributed server executable.
 add_executable(distributed_server src/server/driver/distributed_server_main.cpp)
 target_link_libraries(
-  distributed_server Arrow::arrow_static ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf gRPC::grpc++)
+  distributed_server duckdb_static Arrow::arrow_static
+  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
 link_extension_libraries(distributed_server "")
 
 # Add distributed worker executable.
 add_executable(distributed_worker src/server/worker/distributed_worker_main.cpp)
 target_link_libraries(
-  distributed_worker Arrow::arrow_static ArrowFlight::arrow_flight_static
-  protobuf::libprotobuf gRPC::grpc++)
+  distributed_worker duckdb_static Arrow::arrow_static
+  ArrowFlight::arrow_flight_static protobuf::libprotobuf gRPC::grpc++)
 link_extension_libraries(distributed_worker "")

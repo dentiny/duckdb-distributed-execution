@@ -11,13 +11,10 @@ set(DUCKHERDER_UNITTEST_SOURCES
 
 add_executable(unittest_duckherder ${DUCKHERDER_UNITTEST_SOURCES})
 
-if(NOT WIN32
-   AND NOT SUN
-   AND NOT ZOS)
-  target_link_libraries(unittest_duckherder test_helpers duckdb)
-else()
-  target_link_libraries(unittest_duckherder test_helpers duckdb_static)
-endif()
+# Match DuckDB's test runner: link the core before the generated loader and
+# include the extension archives that provide Duckherder's internal symbols.
+target_link_libraries(unittest_duckherder duckdb_static test_helpers)
+link_extension_libraries(unittest_duckherder "")
 
 target_link_libraries(
   unittest_duckherder Arrow::arrow_static ArrowFlight::arrow_flight_static

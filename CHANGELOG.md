@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- Fix static linking of the distributed server, worker, and unit tests against DuckDB and its extension loader.
+
 - Fix extension version ([#122])
 
 [#122]: https://github.com/dentiny/duckdb-distributed-execution/pull/122
