@@ -7,6 +7,8 @@
 
 ### Changed
 
+- Update DuckDB and extension-ci-tools to `v1.5.6`.
+
 - Use the Duckherder `ATTACH` path as the remote `host:port` endpoint instead of `server_host` and `server_port`
   options.
 
