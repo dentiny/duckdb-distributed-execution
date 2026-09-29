@@ -9,4 +9,4 @@ SELECT extension_version
 FROM duckdb_extensions()
 WHERE extension_name = 'duckherder';
 ----
-0.0.9
+0.0.10
