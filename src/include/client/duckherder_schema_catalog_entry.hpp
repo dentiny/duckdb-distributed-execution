@@ -77,11 +77,16 @@ private:
 		unique_ptr<CatalogEntry> wrapper;
 	};
 
+	struct RemoteIndexMetadata {
+		string name;
+		IndexInfo info;
+	};
+
 	concurrency::mutex mu;
 	// Cache for catalog entries, including table entries.
 	unordered_map<EntryLookupInfoKey, CachedCatalogEntry, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries DUCKDB_GUARDED_BY(mu);
-	unordered_map<string, vector<IndexInfo>> remote_indexes DUCKDB_GUARDED_BY(mu);
+	unordered_map<string, vector<RemoteIndexMetadata>> remote_indexes DUCKDB_GUARDED_BY(mu);
 };
 
 } // namespace duckdb

@@ -4,6 +4,7 @@
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -82,8 +83,8 @@ void DuckherderSchemaCatalogEntry::AddRemoteIndex(TableCatalogEntry &table, cons
 	index_info.is_primary = info.constraint_type == IndexConstraintType::PRIMARY;
 	index_info.is_foreign = info.constraint_type == IndexConstraintType::FOREIGN;
 	index_info.column_set.insert(info.column_ids.begin(), info.column_ids.end());
-	if (index_info.column_set.empty()) {
-		for (auto &expression : info.expressions) {
+	auto add_expression_columns = [&](const auto &expressions) {
+		for (auto &expression : expressions) {
 			ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(
 			    *expression, [&](const ColumnRefExpression &column_ref) {
 				auto column_name = column_ref.GetColumnName();
@@ -91,10 +92,16 @@ void DuckherderSchemaCatalogEntry::AddRemoteIndex(TableCatalogEntry &table, cons
 				index_info.column_set.insert(table.GetColumns().GetColumn(logical_index).Physical().index);
 			});
 		}
+	};
+	if (index_info.column_set.empty()) {
+		add_expression_columns(info.expressions);
+	}
+	if (index_info.column_set.empty()) {
+		add_expression_columns(info.parsed_expressions);
 	}
 
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
-	remote_indexes[table.name].push_back(std::move(index_info));
+	remote_indexes[table.name].push_back({info.index_name, std::move(index_info)});
 }
 
 vector<IndexInfo> DuckherderSchemaCatalogEntry::GetRemoteIndexes(const string &table_name) {
@@ -103,7 +110,12 @@ vector<IndexInfo> DuckherderSchemaCatalogEntry::GetRemoteIndexes(const string &t
 	if (entry == remote_indexes.end()) {
 		return {};
 	}
-	return entry->second;
+	vector<IndexInfo> result;
+	result.reserve(entry->second.size());
+	for (auto &index : entry->second) {
+		result.push_back(index.info);
+	}
+	return result;
 }
 
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateFunction(CatalogTransaction transaction,
@@ -288,6 +300,14 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, const
 	if (result->HasError()) {
 		throw CatalogException("Failed to drop remote index on server: %s", result->GetError());
 	}
+
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
+	for (auto &table_indexes : remote_indexes) {
+		auto &indexes = table_indexes.second;
+		indexes.erase(std::remove_if(indexes.begin(), indexes.end(),
+		                             [&](const RemoteIndexMetadata &index) { return index.name == info.name; }),
+		              indexes.end());
+	}
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const DropInfo &info) {
@@ -309,6 +329,10 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const
 		throw CatalogException("Failed to drop remote table on server: %s", result->GetError());
 	}
 
+	{
+		concurrency::lock_guard<concurrency::mutex> lck(mu);
+		remote_indexes.erase(info.name);
+	}
 	if (duckherder_catalog.IsRemoteTable(name, info.name)) {
 		duckherder_catalog.UnregisterRemoteTable(info.name);
 	}

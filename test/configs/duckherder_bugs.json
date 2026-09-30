@@ -8,9 +8,7 @@
         "test/sql/catalog/view/test_view_sql_with_dependencies.test",
         "test/sql/index/art/storage/test_art_import.test",
         "test/sql/prepared/test_prepare_null.test",
-        "test/sql/types/time/test_time_ns.test",
-        "test/sql/upsert/insert_or_replace/unique_index.test",
-        "test/sql/upsert/upsert_explicit_index.test"
+        "test/sql/types/time/test_time_ns.test"
       ]
     }
   ]

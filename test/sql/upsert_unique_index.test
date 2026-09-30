@@ -11,6 +11,9 @@ statement ok
 ATTACH DATABASE 'localhost:8855' AS dh (TYPE duckherder, client_role 'read_write');
 
 statement ok
+PRAGMA enable_verification;
+
+statement ok
 CREATE TABLE dh.upsert_index_target (id INTEGER, value VARCHAR);
 
 statement ok
@@ -22,6 +25,27 @@ INSERT INTO dh.upsert_index_target VALUES (1, 'old');
 statement ok
 INSERT INTO dh.upsert_index_target VALUES (1, 'new')
 ON CONFLICT (id) DO UPDATE SET value = excluded.value;
+
+query IT
+SELECT * FROM dh.upsert_index_target;
+----
+1	new
+
+statement ok
+DROP TABLE dh.upsert_index_target;
+
+statement ok
+CREATE TABLE dh.upsert_index_target (id INTEGER PRIMARY KEY, value VARCHAR);
+
+statement ok
+CREATE INDEX upsert_value_index ON dh.upsert_index_target (value);
+
+statement ok
+INSERT INTO dh.upsert_index_target VALUES (1, 'old');
+
+statement ok
+INSERT INTO dh.upsert_index_target VALUES (1, 'new')
+ON CONFLICT DO UPDATE SET value = excluded.value;
 
 query IT
 SELECT * FROM dh.upsert_index_target;
