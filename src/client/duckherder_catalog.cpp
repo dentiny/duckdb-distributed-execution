@@ -81,10 +81,14 @@ string QualifiedRemoteName(const string &schema_name, const string &entry_name) 
 
 } // namespace
 
+namespace {
+
 struct RemoteCreateTableAsSourceState : public GlobalSourceState {
 	bool executed = false;
 	unique_ptr<QueryResult> result;
 };
+
+} // namespace
 
 class PhysicalRemoteCreateTableAs : public PhysicalOperator {
 public:
