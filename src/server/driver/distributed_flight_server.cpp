@@ -457,7 +457,16 @@ arrow::Status DistributedFlightServer::HandleTransaction(const distributed::Dist
 	} catch (const std::exception &ex) {
 		resp.set_success(false);
 		resp.set_error_message(ex.what());
-		resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+		ToRemoteError(ErrorData(ex), *resp.mutable_error());
+		if (req.transaction().action() == distributed::TRANSACTION_ACTION_COMMIT) {
+			registration.active_transaction_id = INVALID_TRANSACTION_ID;
+			registration.finished_transaction_id = req.transaction_id();
+			registration.finished_transaction_status = distributed::TRANSACTION_STATUS_ROLLED_BACK;
+			ClearRequestReplay(registration);
+			resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_ROLLED_BACK);
+		} else {
+			resp.mutable_transaction()->set_status(distributed::TRANSACTION_STATUS_UNKNOWN);
+		}
 		return arrow::Status::OK();
 	}
 	if (resp.success() && req.transaction().action() == distributed::TRANSACTION_ACTION_COMMIT &&

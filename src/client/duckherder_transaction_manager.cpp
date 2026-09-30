@@ -40,7 +40,7 @@ ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context
 			if (result->HasError()) {
 				DuckTransactionManager::RollbackTransaction(transaction);
 				client->ClearTransactionContext();
-				return ErrorData(result->GetError());
+				return result->GetErrorObject();
 			}
 		}
 	} catch (std::exception &ex) {

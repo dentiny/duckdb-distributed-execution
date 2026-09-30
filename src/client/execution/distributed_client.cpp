@@ -76,15 +76,15 @@ const char *TransactionActionName(distributed::TransactionAction action) {
 	}
 }
 
-string GetTransactionError(const arrow::Status &status, const distributed::DistributedResponse &response,
-                           distributed::TransactionAction action) {
+ErrorData GetTransactionError(const arrow::Status &status, const distributed::DistributedResponse &response,
+                              distributed::TransactionAction action) {
 	auto action_name = TransactionActionName(action);
 	if (!status.ok()) {
-		return StringUtil::Format("Remote Duckherder %s outcome is unknown after retry: %s", action_name,
-		                          status.ToString());
+		return ErrorData(StringUtil::Format("Remote Duckherder %s outcome is unknown after retry: %s", action_name,
+		                                    status.ToString()));
 	}
 	if (response.success()) {
-		return {};
+		return ErrorData();
 	}
 	bool unknown_outcome = false;
 	if (response.has_transaction() && response.transaction().status() == distributed::TRANSACTION_STATUS_UNKNOWN) {
@@ -93,9 +93,11 @@ string GetTransactionError(const arrow::Status &status, const distributed::Distr
 	if (action == distributed::TRANSACTION_ACTION_COMMIT && !response.has_transaction()) {
 		unknown_outcome = true;
 	}
-	return unknown_outcome ? StringUtil::Format("Remote Duckherder %s outcome is unknown: %s", action_name,
-	                                            response.error_message())
-	                       : response.error_message();
+	if (unknown_outcome) {
+		return ErrorData(StringUtil::Format("Remote Duckherder %s outcome is unknown: %s", action_name,
+		                                    response.error_message()));
+	}
+	return response.has_error() ? FromRemoteError(response.error()) : ErrorData(response.error_message());
 }
 
 } // namespace
@@ -222,8 +224,8 @@ unique_ptr<QueryResult> DistributedClient::ManageTransaction(distributed::Transa
 	distributed::DistributedResponse response;
 	auto status = GetClient(lock).ManageTransaction(action, response);
 	auto error = GetTransactionError(status, response, action);
-	if (!error.empty()) {
-		return MakeErrorResult(error);
+	if (error.HasError()) {
+		return MakeErrorResult(std::move(error));
 	}
 	return MakeStatementResult(StatementType::TRANSACTION_STATEMENT);
 }
