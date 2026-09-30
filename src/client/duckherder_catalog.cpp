@@ -31,6 +31,7 @@
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
+#include "duckdb/planner/operator/logical_merge_into.hpp"
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "client/execution/logical_remote_create_index.hpp"
@@ -297,6 +298,20 @@ PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, Physical
 	auto sql = GetRemoteStatementSQL(context);
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPDATE to control node: %s", sql));
 	return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::UPDATE, op.types, op.table, std::move(sql),
+	                                       op.estimated_cardinality);
+}
+
+PhysicalOperator &DuckherderCatalog::PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner,
+                                                   LogicalMergeInto &op, PhysicalOperator &plan) {
+	auto sql = GetRemoteStatementSQL(context);
+	Parser parser;
+	parser.ParseQuery(sql);
+	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::INSERT_STATEMENT) {
+		return DuckCatalog::PlanMergeInto(context, planner, op, plan);
+	}
+
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPSERT to control node: %s", sql));
+	return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::INSERT, op.types, op.table, std::move(sql),
 	                                       op.estimated_cardinality);
 }
 
