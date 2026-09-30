@@ -12,33 +12,36 @@ namespace duckdb {
 
 namespace {
 
-constexpr const char *OBJFS_SCHEME = "duckdb_objfs://";
-
-// Build the object storage selection from ATTACH options and remove them so StorageManager doesn't validate them.
-distributed::StorageConfig ExtractStorageConfig(AttachOptions &options) {
-	auto take_option = [&](const string &name) {
-		auto entry = options.options.find(name);
-		if (entry == options.options.end()) {
-			return string();
-		}
-		auto value = entry->second.ToString();
+// Build the object storage selection from the endpoint's database name and DATA_PATH, removing the option so
+// StorageManager doesn't validate it.
+distributed::StorageConfig ExtractStorageConfig(const string &database_name, AttachOptions &options) {
+	if (options.options.find("secret") != options.options.end()) {
+		throw NotImplementedException("Duckherder ATTACH does not support SECRET yet");
+	}
+	string data_path;
+	auto entry = options.options.find("data_path");
+	if (entry != options.options.end()) {
+		data_path = entry->second.ToString();
 		options.options.erase(entry);
-		return value;
-	};
-	auto database = take_option("objfs_database");
-	auto root = take_option("objfs_root");
-	auto backend = take_option("objfs_backend");
+	}
 
 	distributed::StorageConfig config;
-	if (database.empty()) {
-		if (!root.empty() || !backend.empty()) {
-			throw InvalidInputException("Duckherder objfs_root and objfs_backend require objfs_database");
+	if (database_name.empty()) {
+		if (!data_path.empty()) {
+			throw InvalidInputException("Duckherder DATA_PATH requires a database name, for example "
+			                            "ATTACH 'localhost:8815/db_name' (TYPE duckherder, DATA_PATH '/path')");
 		}
 		return config;
 	}
-	config.set_database_uri(StringUtil::StartsWith(database, OBJFS_SCHEME) ? database : OBJFS_SCHEME + database);
-	config.set_backend(backend.empty() ? "local" : backend);
-	config.set_root(root);
+	if (data_path.empty()) {
+		throw InvalidInputException("Duckherder ATTACH of database '%s' requires DATA_PATH", database_name);
+	}
+	if (data_path.find("://") != string::npos) {
+		throw NotImplementedException("Duckherder DATA_PATH only supports local paths yet, got '%s'", data_path);
+	}
+	config.set_database_uri("duckdb_objfs://" + database_name);
+	config.set_backend("local");
+	config.set_root(data_path);
 	return config;
 }
 
@@ -74,7 +77,7 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 
 	// Remove our custom options so StorageManager doesn't validate them.
 	options.options.erase("client_role");
-	auto storage_config = ExtractStorageConfig(options);
+	auto storage_config = ExtractStorageConfig(endpoint.database_name, options);
 
 	// DuckCatalog is only the client-side metadata cache. Never persist its entries or table storage to the ATTACH
 	// path. Its backing storage must remain writable even when the remote attachment itself is READ_ONLY.

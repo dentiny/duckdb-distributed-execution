@@ -23,12 +23,31 @@ TEST_CASE("Parse Duckherder remote endpoints", "[duckherder][endpoint]") {
 		REQUIRE(endpoint.host == "[::1]");
 		REQUIRE(endpoint.port == 8815);
 	}
+
+	SECTION("Without database name") {
+		REQUIRE(ParseRemoteEndpoint("localhost:8815").database_name.empty());
+	}
+
+	SECTION("Database name") {
+		auto endpoint = ParseRemoteEndpoint("grpc://123.45.67.89:45/db_name");
+		REQUIRE(endpoint.host == "123.45.67.89");
+		REQUIRE(endpoint.port == 45);
+		REQUIRE(endpoint.database_name == "db_name");
+	}
+
+	SECTION("IPv6 address with database name") {
+		auto endpoint = ParseRemoteEndpoint("[::1]:8815/shared.db");
+		REQUIRE(endpoint.host == "[::1]");
+		REQUIRE(endpoint.port == 8815);
+		REQUIRE(endpoint.database_name == "shared.db");
+	}
 }
 
 TEST_CASE("Reject invalid Duckherder remote endpoints", "[duckherder][endpoint]") {
 	const char *invalid_endpoints[] {
-	    ":memory:",    "local.duckdb",    "http://localhost:8815", "localhost", "localhost:",
-	    "localhost:0", "localhost:65536", "localhost:abc",         "::1:8815",  "grpc://localhost",
+	    ":memory:",        "local.duckdb",       "http://localhost:8815", "localhost", "localhost:",
+	    "localhost:0",     "localhost:65536",    "localhost:abc",         "::1:8815",  "grpc://localhost",
+	    "localhost:8815/", "localhost:8815/a/b", "localhost/db_name",
 	};
 
 	for (const auto &endpoint : invalid_endpoints) {
