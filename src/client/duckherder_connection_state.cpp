@@ -5,8 +5,9 @@
 namespace duckdb {
 
 DuckherderConnectionState::DuckherderConnectionState(string server_url, distributed::ClientRole role,
-                                                     DatabaseInstance &db_instance)
-    : client(make_uniq<DistributedClient>(std::move(server_url), role, db_instance)) {
+                                                     DatabaseInstance &db_instance,
+                                                     distributed::StorageConfig storage_config)
+    : client(make_uniq<DistributedClient>(std::move(server_url), role, db_instance, std::move(storage_config))) {
 }
 
 DuckherderConnectionState::DuckherderConnectionState(unique_ptr<DistributedClient> client_p)

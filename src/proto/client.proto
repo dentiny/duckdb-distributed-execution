@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
+import "storage.proto";
+
 enum ClientRole {
   CLIENT_ROLE_UNSPECIFIED = 0;
   CLIENT_ROLE_READ_ONLY = 1;
@@ -11,6 +13,7 @@ enum ClientRole {
 // Register a Duckherder attachment with the control node.
 message RegisterClientRequest {
   ClientRole role = 1;
+  StorageConfig storage_config = 2;
 }
 
 message RegisterClientResponse {

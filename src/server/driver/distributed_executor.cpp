@@ -23,8 +23,9 @@
 
 namespace duckdb {
 
-DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p)
-    : worker_manager(worker_manager_p), conn(conn_p) {
+DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p,
+                                         distributed::StorageConfig storage_config_p)
+    : worker_manager(worker_manager_p), conn(conn_p), storage_config(std::move(storage_config_p)) {
 	plan_analyzer = make_uniq<QueryPlanAnalyzer>(conn);
 	sql_generator = make_uniq<PartitionSQLGenerator>();
 	result_merger = make_uniq<ResultMerger>(conn);
@@ -178,6 +179,7 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 			req.set_partition_id(task.task_id);
 			req.set_total_partitions(task.total_tasks);
 			req.set_serialized_plan(serialized_task_plans[task_idx]);
+			*req.mutable_storage_config() = storage_config;
 			for (const auto &name : names) {
 				req.add_column_names(name);
 			}
@@ -189,10 +191,13 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 			std::unique_ptr<arrow::flight::FlightStreamReader> stream;
 			auto status = worker->client->ExecutePartition(req, stream);
 			if (!status.ok()) {
-				DUCKDB_LOG_WARNING(
-				    db_instance, StringUtil::Format("Worker %s failed executing task %llu: %s", worker->worker_id,
-				                                    static_cast<long long unsigned>(task.task_id), status.ToString()));
-				continue;
+				// Merging the remaining partitions would silently drop this task's rows.
+				DUCKDB_LOG_WARNING(db_instance,
+				                   StringUtil::Format("Worker %s failed executing task %llu, falling back to local "
+				                                      "execution: %s",
+				                                      worker->worker_id, static_cast<long long unsigned>(task.task_id),
+				                                      status.ToString()));
+				return exec_result;
 			}
 
 			result_streams.emplace_back(std::move(stream));

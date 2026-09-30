@@ -10,6 +10,7 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/main/query_result.hpp"
+#include "storage.pb.h"
 #include "utils/mutex.hpp"
 
 #include <arrow/flight/api.h>
@@ -27,7 +28,8 @@ class ClientContext;
 class DistributedFlightClient {
 public:
 	DistributedFlightClient(string server_url, distributed::ClientRole role_p,
-	                        optional_ptr<DatabaseInstance> db_instance_p = nullptr);
+	                        optional_ptr<DatabaseInstance> db_instance_p = nullptr,
+	                        distributed::StorageConfig storage_config_p = {});
 	~DistributedFlightClient();
 
 	// Connect to server.
@@ -92,6 +94,7 @@ private:
 	string server_url;
 	distributed::ClientRole role;
 	optional_ptr<DatabaseInstance> db_instance;
+	distributed::StorageConfig storage_config;
 	string client_id;
 	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;

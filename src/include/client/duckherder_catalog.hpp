@@ -10,6 +10,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "storage.pb.h"
 #include "utils/mutex.hpp"
 
 namespace duckdb {
@@ -26,7 +27,7 @@ class DuckherderTableCatalogEntry;
 class DuckherderCatalog : public DuckCatalog {
 public:
 	DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p, distributed::ClientRole role_p,
-	                  connection_t attach_connection_id_p);
+	                  connection_t attach_connection_id_p, distributed::StorageConfig storage_config_p);
 
 	~DuckherderCatalog() override;
 
@@ -91,6 +92,8 @@ private:
 	int server_port;
 	distributed::ClientRole role;
 	connection_t attach_connection_id;
+	// Every remote session of this attachment opens the same database on the control node.
+	distributed::StorageConfig storage_config;
 
 	// Per-connection remote session state.
 	string client_state_key;

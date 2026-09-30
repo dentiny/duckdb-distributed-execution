@@ -10,8 +10,10 @@
 namespace duckdb {
 
 DistributedFlightClient::DistributedFlightClient(string server_url_p, distributed::ClientRole role_p,
-                                                 optional_ptr<DatabaseInstance> db_instance_p)
-    : server_url(std::move(server_url_p)), role(role_p), db_instance(db_instance_p) {
+                                                 optional_ptr<DatabaseInstance> db_instance_p,
+                                                 distributed::StorageConfig storage_config_p)
+    : server_url(std::move(server_url_p)), role(role_p), db_instance(db_instance_p),
+      storage_config(std::move(storage_config_p)) {
 }
 
 DistributedFlightClient::~DistributedFlightClient() {
@@ -133,6 +135,7 @@ arrow::Status DistributedFlightClient::ResolvePendingTransaction(distributed::Di
 arrow::Status DistributedFlightClient::RegisterClient() {
 	distributed::DistributedRequest req;
 	req.mutable_register_client()->set_role(role);
+	*req.mutable_register_client()->mutable_storage_config() = storage_config;
 
 	distributed::DistributedResponse response;
 	ARROW_RETURN_NOT_OK(SendAction(req, response));

@@ -1,0 +1,145 @@
+# name: test/sql/object_storage_attach.test
+# description: Each client-selected ObjFS database is opened by the control node and by every worker
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8839, 2);
+
+statement error
+ATTACH 'localhost:8839' AS missing_database (TYPE duckherder, objfs_root '__BUILD_DIRECTORY__/objfs');
+----
+<REGEX>:.*objfs_root and objfs_backend require objfs_database.*
+
+statement error
+ATTACH 'localhost:8839' AS relative_root (TYPE duckherder, objfs_database 'a.db', objfs_root 'relative/objfs');
+----
+<REGEX>:.*root must be an absolute path.*
+
+statement error
+ATTACH 'localhost:8839' AS memory_backend (TYPE duckherder, objfs_database 'a.db', objfs_backend 'memory', objfs_root '__BUILD_DIRECTORY__/objfs');
+----
+<REGEX>:.*backend must be 'local'.*
+
+statement ok
+ATTACH 'localhost:8839' AS writer_a (TYPE duckherder, objfs_database 'a.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+CREATE OR REPLACE TABLE writer_a.items (id INTEGER, value VARCHAR);
+
+statement ok
+INSERT INTO writer_a.items VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four');
+
+statement ok
+CREATE OR REPLACE TABLE writer_a.writer_probe (id INTEGER);
+
+statement ok
+INSERT INTO writer_a.writer_probe VALUES (10), (20);
+
+# The writer reads its own writes on the control node instead of stale worker snapshots.
+query II
+SELECT count(*), sum(id) FROM writer_a.writer_probe;
+----
+2	30
+
+query I
+SELECT bool_and(execution_mode = 'LOCAL') FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%writer_probe%';
+----
+true
+
+# One writable client per database.
+statement error con1
+ATTACH 'localhost:8839' AS second_writer_a (TYPE duckherder, objfs_database 'a.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+----
+<REGEX>:.*already has a writable Duckherder client.*
+
+# Other databases get their own writer, and the Duckling catalog keeps its own writer slot.
+statement ok con1
+ATTACH 'localhost:8839' AS writer_b (TYPE duckherder, objfs_database 'b.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+statement ok con1
+CREATE OR REPLACE TABLE writer_b.items (id INTEGER);
+
+statement ok con1
+INSERT INTO writer_b.items VALUES (100);
+
+statement ok con2
+ATTACH 'localhost:8839' AS duckling_writer (TYPE duckherder);
+
+# Readers are served by read-only instances on the control node and on each worker.
+statement ok con3
+ATTACH 'localhost:8839' AS reader_a (TYPE duckherder, READ_ONLY, objfs_database 'a.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+query II con3
+SELECT count(*), sum(id) FROM reader_a.items;
+----
+4	10
+
+query I con3
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats()
+              WHERE sql LIKE '%items%' AND execution_mode <> 'LOCAL' AND num_workers_used > 0);
+----
+true
+
+statement error con3
+INSERT INTO reader_a.items VALUES (5, 'five');
+----
+<REGEX>:.*read-only.*
+
+statement ok con4
+ATTACH 'localhost:8839' AS reader_b (TYPE duckherder, READ_ONLY, objfs_database 'b.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+query I con4
+SELECT sum(id) FROM reader_b.items;
+----
+100
+
+# The same database name under another root is a different database, so it gets its own instances and ObjFS
+# settings on the control node and on every worker.
+statement ok con5
+ATTACH 'localhost:8839' AS writer_other_root (TYPE duckherder, objfs_database 'a.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}_other');
+
+statement ok con5
+CREATE OR REPLACE TABLE writer_other_root.items (id INTEGER, value VARCHAR);
+
+statement ok con5
+INSERT INTO writer_other_root.items VALUES (1000, 'other');
+
+statement ok con6
+ATTACH 'localhost:8839' AS reader_other_root (TYPE duckherder, READ_ONLY, objfs_database 'a.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}_other');
+
+query IT con6
+SELECT id, value FROM reader_other_root.items;
+----
+1000	other
+
+# Workers now hold both a.db instances; each reader still sees only its own root.
+query II con3
+SELECT count(*), sum(id) FROM reader_a.items;
+----
+4	10
+
+# reader_a twice, reader_b, and reader_other_root all ran on workers.
+query I con6
+SELECT count(*) >= 4 FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE '%items%' AND execution_mode <> 'LOCAL' AND num_workers_used > 0;
+----
+true
+
+# Detaching the writer releases the database's writer slot.
+statement ok
+DETACH writer_a;
+
+statement ok con1
+ATTACH 'localhost:8839' AS writer_a (TYPE duckherder, objfs_database 'a.db', objfs_root '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+query I con1
+SELECT count(*) FROM writer_a.items;
+----
+4
+
+statement ok
+SELECT duckherder_stop_local_server();

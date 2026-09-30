@@ -138,11 +138,12 @@ private:
 };
 
 DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
-                                     distributed::ClientRole role_p, connection_t attach_connection_id_p)
+                                     distributed::ClientRole role_p, connection_t attach_connection_id_p,
+                                     distributed::StorageConfig storage_config_p)
     : DuckCatalog(db), db_instance(db.GetDatabase()), server_host(std::move(server_host_p)), server_port(server_port_p),
-      role(role_p), attach_connection_id(attach_connection_id_p),
+      role(role_p), attach_connection_id(attach_connection_id_p), storage_config(std::move(storage_config_p)),
       client_state_key(StringUtil::Format("duckherder_client_%s", UUID::ToString(UUID::GenerateRandomUUID()))) {
-	attach_client = make_uniq<DistributedClient>(GetServerUrl(), role, db_instance);
+	attach_client = make_uniq<DistributedClient>(GetServerUrl(), role, db_instance, storage_config);
 }
 
 DuckherderCatalog::~DuckherderCatalog() {
@@ -432,7 +433,7 @@ shared_ptr<DuckherderConnectionState> DuckherderCatalog::GetOrCreateClientState(
 		                                                                         std::move(attach_client));
 	} else {
 		state = context.registered_state->GetOrCreate<DuckherderConnectionState>(client_state_key, GetServerUrl(), role,
-		                                                                         db_instance);
+		                                                                         db_instance, storage_config);
 	}
 	PruneExpiredClientStates();
 	client_states[context.GetConnectionId()] = state;

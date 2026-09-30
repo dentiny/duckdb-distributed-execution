@@ -178,15 +178,30 @@ private:
 	                         const distributed::DistributedResponse &response)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 	void ClearRequestReplay(ClientRegistration &registration) DUCKDB_REQUIRES(registration.connection_mutex);
+
+	// Instances opened for one object storage database. Registrations own them, so an instance closes once its last
+	// client leaves; a live writer instance therefore means the database already has a writable client.
+	struct ObjectStorageInstances {
+		weak_ptr<DuckDB> reader;
+		weak_ptr<DuckDB> writer;
+	};
+	// Return the instance serving a client with the given role, opening it if no live client holds one.
+	shared_ptr<DuckDB> GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config,
+	                                                  distributed::ClientRole role) DUCKDB_REQUIRES(clients_mutex);
+
 	string host;
 	int port;
-	unique_ptr<DuckDB> db;
+	// Duckling instance, shared with local workers.
+	shared_ptr<DuckDB> db;
 	unique_ptr<WorkerManager> worker_manager;
 
-	// Client admission: at most one writable attachment, with any number of readers.
+	// Client admission: at most one writable attachment per database, with any number of readers.
 	mutable concurrency::shared_mutex clients_mutex;
 	unordered_map<string, shared_ptr<ClientRegistration>> clients DUCKDB_GUARDED_BY(clients_mutex);
+	// Writable client of the Duckling catalog.
 	string writable_client_id DUCKDB_GUARDED_BY(clients_mutex);
+	// Keyed by GetStorageKey.
+	unordered_map<string, ObjectStorageInstances> object_storage_databases DUCKDB_GUARDED_BY(clients_mutex);
 	DistributedFlightServerTestState test_state;
 
 	// Query execution tracking.

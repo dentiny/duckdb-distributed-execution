@@ -14,6 +14,7 @@
 #include "duckdb/parser/parser.hpp"
 #include "query_common.hpp"
 #include "server/driver/duckling_storage.hpp"
+#include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "transaction_constants.hpp"
 #include "utils/remote_error.hpp"
@@ -124,6 +125,7 @@ void DistributedFlightServer::Reset() {
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	clients.clear();
 	writable_client_id.clear();
+	object_storage_databases.clear();
 	Initialize();
 }
 
@@ -142,7 +144,7 @@ void DistributedFlightServer::Initialize() {
 	DBConfig config;
 	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
 
-	db = make_uniq<DuckDB>(nullptr, &config);
+	db = make_shared_ptr<DuckDB>(nullptr, &config);
 	// Loadable extensions use DuckDB's dummy loader, so initialize core functions explicitly.
 	db->LoadStaticExtension<CoreFunctionsExtension>();
 	Connection bootstrap_conn(*db);
@@ -320,20 +322,65 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 	}
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	PruneExpiredClients();
-	if (req.role() == distributed::CLIENT_ROLE_READ_WRITE && !writable_client_id.empty()) {
+	const auto &storage_config = req.storage_config();
+	const bool uses_object_storage = HasObjectStorage(storage_config);
+	if (!uses_object_storage && req.role() == distributed::CLIENT_ROLE_READ_WRITE && !writable_client_id.empty()) {
 		resp.set_success(false);
 		resp.set_error_message("Control node already has a writable Duckherder client");
 		return arrow::Status::OK();
 	}
 
+	shared_ptr<ClientRegistration> registration;
+	try {
+		shared_ptr<DuckDB> client_db = db;
+		if (uses_object_storage) {
+			client_db = GetOrOpenObjectStorageDatabase(storage_config, req.role());
+			if (!client_db) {
+				resp.set_success(false);
+				resp.set_error_message(StringUtil::Format("Database %s already has a writable Duckherder client",
+				                                          storage_config.database_uri()));
+				return arrow::Status::OK();
+			}
+		}
+		registration =
+		    make_shared_ptr<ClientRegistration>(std::move(client_db), *worker_manager, req.role(), storage_config);
+	} catch (const std::exception &ex) {
+		resp.set_success(false);
+		resp.set_error_message(ErrorData(ex).Message());
+		return arrow::Status::OK();
+	}
+
 	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
-	clients.emplace(client_id, make_shared_ptr<ClientRegistration>(*db, *worker_manager, req.role()));
-	if (req.role() == distributed::CLIENT_ROLE_READ_WRITE) {
+	clients.emplace(client_id, std::move(registration));
+	if (!uses_object_storage && req.role() == distributed::CLIENT_ROLE_READ_WRITE) {
 		writable_client_id = client_id;
 	}
 	resp.set_success(true);
 	resp.mutable_register_client()->set_client_id(client_id);
 	return arrow::Status::OK();
+}
+
+shared_ptr<DuckDB> DistributedFlightServer::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config,
+                                                                           distributed::ClientRole role) {
+	for (auto entry = object_storage_databases.begin(); entry != object_storage_databases.end();) {
+		if (entry->second.reader.expired() && entry->second.writer.expired()) {
+			entry = object_storage_databases.erase(entry);
+		} else {
+			++entry;
+		}
+	}
+
+	auto &instances = object_storage_databases[GetStorageKey(config)];
+	const bool writable = role == distributed::CLIENT_ROLE_READ_WRITE;
+	auto &slot = writable ? instances.writer : instances.reader;
+	auto instance = slot.lock();
+	if (instance) {
+		// Returning the live writer would admit a second writable client.
+		return writable ? nullptr : instance;
+	}
+	instance = OpenObjectStorageDatabase(config, writable ? AccessMode::READ_WRITE : AccessMode::READ_ONLY);
+	slot = instance;
+	return instance;
 }
 
 arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &client_id,
@@ -907,7 +954,8 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
-	if (worker_manager != nullptr && worker_manager->GetWorkerCount() > 0) {
+	if (registration.distributed_executor != nullptr && worker_manager != nullptr &&
+	    worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = registration.distributed_executor->ExecuteDistributed(sql);
 
 		if (exec_result.result != nullptr) {

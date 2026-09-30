@@ -12,6 +12,36 @@ namespace duckdb {
 
 namespace {
 
+constexpr const char *OBJFS_SCHEME = "duckdb_objfs://";
+
+// Build the object storage selection from ATTACH options and remove them so StorageManager doesn't validate them.
+distributed::StorageConfig ExtractStorageConfig(AttachOptions &options) {
+	auto take_option = [&](const string &name) {
+		auto entry = options.options.find(name);
+		if (entry == options.options.end()) {
+			return string();
+		}
+		auto value = entry->second.ToString();
+		options.options.erase(entry);
+		return value;
+	};
+	auto database = take_option("objfs_database");
+	auto root = take_option("objfs_root");
+	auto backend = take_option("objfs_backend");
+
+	distributed::StorageConfig config;
+	if (database.empty()) {
+		if (!root.empty() || !backend.empty()) {
+			throw InvalidInputException("Duckherder objfs_root and objfs_backend require objfs_database");
+		}
+		return config;
+	}
+	config.set_database_uri(StringUtil::StartsWith(database, OBJFS_SCHEME) ? database : OBJFS_SCHEME + database);
+	config.set_backend(backend.empty() ? "local" : backend);
+	config.set_root(root);
+	return config;
+}
+
 unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
                                      AttachedDatabase &db, const string &name, AttachInfo &info,
                                      AttachOptions &options) {
@@ -44,14 +74,15 @@ unique_ptr<Catalog> DuckherderAttach(optional_ptr<StorageExtensionInfo> storage_
 
 	// Remove our custom options so StorageManager doesn't validate them.
 	options.options.erase("client_role");
+	auto storage_config = ExtractStorageConfig(options);
 
 	// DuckCatalog is only the client-side metadata cache. Never persist its entries or table storage to the ATTACH
 	// path. Its backing storage must remain writable even when the remote attachment itself is READ_ONLY.
 	info.path = ":memory:";
 	options.access_mode = AccessMode::READ_WRITE;
 
-	auto catalog =
-	    make_uniq<DuckherderCatalog>(db, std::move(endpoint.host), endpoint.port, role, context.GetConnectionId());
+	auto catalog = make_uniq<DuckherderCatalog>(db, std::move(endpoint.host), endpoint.port, role,
+	                                            context.GetConnectionId(), std::move(storage_config));
 	catalog->GetClient(context);
 	return std::move(catalog);
 }

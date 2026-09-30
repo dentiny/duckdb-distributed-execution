@@ -8,6 +8,7 @@
 #include "server/driver/query_plan_analyzer.hpp"
 #include "server/driver/result_merger.hpp"
 #include "server/driver/task_partitioner.hpp"
+#include "storage.pb.h"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>
@@ -84,7 +85,9 @@ struct DistributedExecutionResult {
 // Distributed executor that partitions data and sends to workers.
 class DistributedExecutor {
 public:
-	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p);
+	// storage_config_p selects the database workers read; empty means workers share the Duckling instance.
+	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p,
+	                    distributed::StorageConfig storage_config_p);
 
 	// Execute a query in distributed manner.
 	// Returns result with nullptr if query cannot be distributed, which will fall back to local execution.
@@ -96,6 +99,7 @@ private:
 
 	WorkerManager &worker_manager;
 	Connection &conn;
+	distributed::StorageConfig storage_config;
 
 	unique_ptr<QueryPlanAnalyzer> plan_analyzer;
 	unique_ptr<PartitionSQLGenerator> sql_generator;
