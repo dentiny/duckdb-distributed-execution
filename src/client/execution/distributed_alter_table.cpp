@@ -10,6 +10,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckherder_schema_catalog_entry.hpp"
 #include "utils/catalog_utils.hpp"
 #include "utils/mutex.hpp"
 
@@ -63,14 +64,15 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
+	auto transaction = catalog.GetCatalogTransaction(context.client);
+	auto &schema = catalog.GetSchema(context.client, schema_name).Cast<DuckherderSchemaCatalogEntry>();
+	schema.AlterLocal(std::move(transaction), *info);
+
 	auto &client = GetDistributedClient(context.client, catalog);
 	auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
 	if (result->HasError()) {
 		throw CatalogException("Failed to alter table on server: %s", result->GetError());
 	}
-
-	// Now apply the alteration locally to update the catalog.
-	catalog.Alter(context.client, *info);
 
 	gstate.executed = true;
 	return SourceResultType::FINISHED;

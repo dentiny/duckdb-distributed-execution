@@ -17,6 +17,7 @@ namespace duckdb {
 struct CreateSchemaInfo;
 class DatabaseInstance;
 class DuckherderCatalog;
+class PhysicalRemoteAlterTableOperator;
 class PhysicalRemoteCreateTableAs;
 
 class DuckherderSchemaCatalogEntry : public DuckSchemaEntry {
@@ -47,6 +48,7 @@ public:
 
 private:
 	friend class DuckherderCatalog;
+	friend class PhysicalRemoteAlterTableOperator;
 	friend class PhysicalRemoteCreateTableAs;
 
 	DuckherderSchemaCatalogEntry(DuckherderCatalog &duckherder_catalog_p, DatabaseInstance &db_instance_p,
@@ -54,6 +56,8 @@ private:
 
 	optional_ptr<CatalogEntry> CreateTableLocal(CatalogTransaction transaction, BoundCreateTableInfo &info);
 	optional_ptr<CatalogEntry> CreateTypeLocal(CatalogTransaction transaction, CreateTypeInfo &info);
+	// Applies an ALTER only to the client-side metadata cache.
+	void AlterLocal(CatalogTransaction transaction, AlterInfo &info);
 	// Records metadata for an index that is physically stored on the control node.
 	void AddRemoteIndex(TableCatalogEntry &table, const CreateIndexInfo &info);
 

@@ -403,8 +403,8 @@ void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::Alter");
 
-	// Check if this is an ALTER TABLE operation on a remote table
-	string renamed_table;
+	string alter_sql;
+	bool alter_view = false;
 	if (info.type == AlterType::ALTER_TABLE) {
 		auto &table_info = info.Cast<AlterTableInfo>();
 
@@ -414,16 +414,33 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 			auto schema_name = KeywordHelper::WriteQuoted(name, '"');
 			auto table_name = KeywordHelper::WriteQuoted(info.name, '"');
 			auto qualified_table_name = StringUtil::Format("%s.%s", schema_name, table_name);
-			string alter_sql = GenerateAlterTableSQL(table_info, qualified_table_name);
+			alter_sql = GenerateAlterTableSQL(table_info, qualified_table_name);
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
-
-			auto &client = duckherder_catalog.GetClient(transaction.GetContext());
-			auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
-			if (result->HasError()) {
-				throw CatalogException("Failed to alter table on server: %s", result->GetError());
-			}
 		}
+	} else if (info.type == AlterType::ALTER_VIEW) {
+		alter_sql = info.ToString();
+		alter_view = true;
+	}
 
+	auto &context = transaction.GetContext();
+	AlterLocal(std::move(transaction), info);
+	if (alter_sql.empty()) {
+		return;
+	}
+
+	auto &client = duckherder_catalog.GetClient(context);
+	auto result = alter_view
+	                  ? client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT, duckherder_catalog.GetName())
+	                  : client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
+	if (result->HasError()) {
+		throw CatalogException("Failed to alter %s on server: %s", alter_view ? "view" : "table", result->GetError());
+	}
+}
+
+void DuckherderSchemaCatalogEntry::AlterLocal(CatalogTransaction transaction, AlterInfo &info) {
+	string renamed_table;
+	if (info.type == AlterType::ALTER_TABLE) {
+		auto &table_info = info.Cast<AlterTableInfo>();
 		EntryLookupInfoKey key {
 		    .type = CatalogType::TABLE_ENTRY,
 		    .name = info.name,
@@ -433,13 +450,6 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
 		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
 			renamed_table = table_info.Cast<RenameTableInfo>().new_table_name;
-		}
-	} else if (info.type == AlterType::ALTER_VIEW) {
-		auto result =
-		    duckherder_catalog.GetClient(transaction.GetContext())
-		        .ExecuteStatement(info.ToString(), StatementType::ALTER_STATEMENT, duckherder_catalog.GetName());
-		if (result->HasError()) {
-			throw CatalogException("Failed to alter view on server: %s", result->GetError());
 		}
 	}
 

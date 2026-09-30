@@ -5,7 +5,6 @@
       "reason": "Known Duckherder product bug pending verification or repair.",
       "paths": [
         "test/sql/alter/add_pk/test_add_pk_rollback.test",
-        "test/sql/catalog/view/test_view_sql_with_dependencies.test",
         "test/sql/index/art/storage/test_art_import.test",
         "test/sql/prepared/test_prepare_null.test"
       ]

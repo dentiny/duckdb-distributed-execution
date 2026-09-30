@@ -1,0 +1,38 @@
+# name: test/sql/alter_table_once.test
+# description: ALTER TABLE executes once on the control node
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8861);
+
+statement ok
+ATTACH DATABASE 'localhost:8861' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+SET enable_view_dependencies = true;
+
+statement ok
+CREATE TABLE dh.alter_once_target (a INTEGER, b VARCHAR);
+
+statement ok
+CREATE VIEW dh.alter_once_view AS SELECT * FROM dh.alter_once_target;
+
+statement error
+ALTER TABLE dh.alter_once_target RENAME COLUMN b TO x;
+----
+Dependency Error
+
+statement ok
+DROP VIEW dh.alter_once_view;
+
+statement ok
+ALTER TABLE dh.alter_once_target RENAME COLUMN b TO x;
+
+query II
+SELECT a, x FROM dh.alter_once_target;
+----
+
+statement ok
+DROP TABLE dh.alter_once_target;
