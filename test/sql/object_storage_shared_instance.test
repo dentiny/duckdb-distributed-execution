@@ -1,0 +1,79 @@
+# name: test/sql/object_storage_shared_instance.test
+# description: Clients of one ObjFS database share its control node instance, so readers see the writer's commits
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+# Without workers every query runs on the control node.
+statement ok
+SELECT duckherder_start_local_server(8841);
+
+statement ok
+ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+CREATE OR REPLACE TABLE writer.items (id INTEGER);
+
+statement ok
+INSERT INTO writer.items VALUES (1);
+
+statement ok
+DETACH writer;
+
+# With only readers the database is opened read-only.
+statement ok con1
+ATTACH 'localhost:8841/shared.db' AS early_reader (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+query I con1
+SELECT sum(id) FROM early_reader.items;
+----
+1
+
+# A writer joining reopens the database read-write.
+statement ok
+ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+INSERT INTO writer.items VALUES (2);
+
+statement ok con2
+ATTACH 'localhost:8841/shared.db' AS reader (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+query I con2
+SELECT sum(id) FROM reader.items;
+----
+3
+
+# Commits after the reader attached are visible right away.
+statement ok
+INSERT INTO writer.items VALUES (4);
+
+query I con2
+SELECT sum(id) FROM reader.items;
+----
+7
+
+statement error con2
+INSERT INTO reader.items VALUES (8);
+----
+<REGEX>:.*read-only.*
+
+# The next writer reuses the instance the remaining readers are on.
+statement ok
+DETACH writer;
+
+statement ok con3
+ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+
+statement ok con3
+INSERT INTO writer.items VALUES (16);
+
+query I con2
+SELECT sum(id) FROM reader.items;
+----
+23
+
+statement ok
+SELECT duckherder_stop_local_server();

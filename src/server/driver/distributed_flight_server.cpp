@@ -10,6 +10,7 @@
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "query_common.hpp"
@@ -908,6 +909,17 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	}
 	if (req.offset() != NO_QUERY_OFFSET) {
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
+	}
+
+	// Read-only clients may share a read-write instance with the database's writer.
+	if (registration.role != distributed::CLIENT_ROLE_READ_WRITE) {
+		auto prepared = registration.connection->Prepare(sql);
+		if (prepared->HasError()) {
+			return arrow::Status::Invalid("Query error: " + prepared->GetError());
+		}
+		if (!prepared->GetStatementProperties().IsReadOnly()) {
+			return arrow::Status::Invalid("Duckherder client is read-only");
+		}
 	}
 
 	// Start tracking query execution

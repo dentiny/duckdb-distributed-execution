@@ -6,8 +6,7 @@
 
 namespace duckdb {
 
-ServedDatabase::ServedDatabase(shared_ptr<DuckDB> duckling)
-    : reader_instance(duckling), writer_instance(std::move(duckling)) {
+ServedDatabase::ServedDatabase(shared_ptr<DuckDB> duckling) : instance(std::move(duckling)), instance_writable(true) {
 }
 
 ServedDatabase::ServedDatabase(distributed::StorageConfig config_p) : config(std::move(config_p)) {
@@ -20,9 +19,9 @@ shared_ptr<ClientRegistration> ServedDatabase::AddClient(const string &client_id
 		throw InvalidInputException("Database %s already has a writable Duckherder client",
 		                            HasObjectStorage(config) ? config.database_uri() : "duckling");
 	}
-	auto &instance = writable ? writer_instance : reader_instance;
-	if (!instance) {
+	if (!instance || (writable && !instance_writable)) {
 		instance = OpenObjectStorageDatabase(config, writable ? AccessMode::READ_WRITE : AccessMode::READ_ONLY);
+		instance_writable = writable;
 	}
 	auto registration = make_shared_ptr<ClientRegistration>(instance, worker_manager, role, config);
 	if (writable) {
@@ -34,15 +33,10 @@ shared_ptr<ClientRegistration> ServedDatabase::AddClient(const string &client_id
 }
 
 void ServedDatabase::RemoveClient(const string &client_id) {
-	// The Duckling instance is owned by the server and outlives its clients.
-	const bool owns_instances = HasObjectStorage(config);
 	if (writer_client_id == client_id) {
 		writer_client_id.clear();
-		if (owns_instances) {
-			writer_instance.reset();
-		}
-	} else if (reader_client_ids.erase(client_id) > 0 && reader_client_ids.empty() && owns_instances) {
-		reader_instance.reset();
+	} else {
+		reader_client_ids.erase(client_id);
 	}
 }
 

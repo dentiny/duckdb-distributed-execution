@@ -152,6 +152,22 @@ TEST_CASE("Each client owns an isolated DuckDB connection", "[distributed_flight
 	REQUIRE(CountRows(reader, "client_connection_isolation") == 2);
 }
 
+TEST_CASE("Read-only clients cannot write through scans", "[distributed_flight]") {
+	GetTestServer();
+	DistributedFlightClient writer(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	DistributedFlightClient reader(SERVER_URL, distributed::CLIENT_ROLE_READ_ONLY);
+	REQUIRE(writer.Connect().ok());
+	REQUIRE(reader.Connect().ok());
+	ExecuteAutocommit(writer, "CREATE TABLE reader_scan_write (id INTEGER)");
+
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	auto status = reader.ScanTable("INSERT INTO reader_scan_write SELECT 1", 100, 0, batches);
+	REQUIRE_FALSE(status.ok());
+	REQUIRE_THAT(status.ToString(), Catch::Contains("read-only"));
+	REQUIRE(CountRows(reader, "reader_scan_write") == 0);
+	REQUIRE(CountRows(reader, "SELECT * FROM reader_scan_write") == 0);
+}
+
 TEST_CASE("Lost COMMIT response is recovered idempotently", "[distributed_flight]") {
 	auto &server = GetTestServer().GetServer();
 	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
