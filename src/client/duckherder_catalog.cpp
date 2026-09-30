@@ -306,12 +306,19 @@ PhysicalOperator &DuckherderCatalog::PlanMergeInto(ClientContext &context, Physi
 	auto sql = GetRemoteStatementSQL(context);
 	Parser parser;
 	parser.ParseQuery(sql);
-	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::INSERT_STATEMENT) {
+	if (parser.statements.size() != 1) {
 		return DuckCatalog::PlanMergeInto(context, planner, op, plan);
 	}
+	auto statement_type = parser.statements[0]->type;
+	if (statement_type != StatementType::INSERT_STATEMENT &&
+	    statement_type != StatementType::MERGE_INTO_STATEMENT) {
+		return DuckCatalog::PlanMergeInto(context, planner, op, plan);
+	}
+	auto operator_type = statement_type == StatementType::INSERT_STATEMENT ? PhysicalOperatorType::INSERT
+	                                                                      : PhysicalOperatorType::MERGE_INTO;
 
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push UPSERT to control node: %s", sql));
-	return planner.Make<PhysicalRemoteDML>(PhysicalOperatorType::INSERT, op.types, op.table, std::move(sql),
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push MERGE to control node: %s", sql));
+	return planner.Make<PhysicalRemoteDML>(operator_type, op.types, op.table, std::move(sql),
 	                                       op.estimated_cardinality);
 }
 

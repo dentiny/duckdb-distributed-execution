@@ -4,6 +4,7 @@
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/types/uuid.hpp"
@@ -15,6 +16,7 @@
 #include "server/driver/duckling_storage.hpp"
 #include "server/validation.hpp"
 #include "transaction_constants.hpp"
+#include "utils/remote_error.hpp"
 #include "utils/time_utils.hpp"
 
 #include <arrow/array.h>
@@ -754,8 +756,9 @@ arrow::Status DistributedFlightServer::HandleExecuteStatement(const distributed:
 	auto sql = StripClientCatalog(req.sql(), req.client_catalog());
 	auto result = registration.connection->Query(sql);
 	if (result->HasError()) {
+		auto &error = result->GetErrorObject();
 		resp.set_success(false);
-		resp.set_error_message(result->GetError());
+		ToRemoteError(error, *resp.mutable_error());
 		return arrow::Status::OK();
 	}
 	if (!result->client_properties.client_context) {

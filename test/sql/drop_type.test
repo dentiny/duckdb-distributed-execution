@@ -1,0 +1,23 @@
+# name: test/sql/drop_type.test
+# description: DROP TYPE removes remote and local type metadata
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8857);
+
+statement ok
+ATTACH DATABASE 'localhost:8857' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+CREATE TYPE dh.remote_mood AS ENUM ('sad', 'happy');
+
+statement ok
+DROP TYPE dh.remote_mood;
+
+statement ok
+CREATE TYPE dh.remote_mood AS ENUM ('sad', 'happy');
+
+statement ok
+DROP TYPE dh.remote_mood;

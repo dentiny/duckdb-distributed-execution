@@ -1,7 +1,7 @@
 # Protobuf generation for distributed protocol
 find_package(Protobuf REQUIRED)
 
-set(PROTO_FILES client.proto dml.proto query.proto transaction.proto
+set(PROTO_FILES client.proto dml.proto error.proto query.proto transaction.proto
                 worker.proto distributed.proto)
 
 # Generate C++ sources from .proto files

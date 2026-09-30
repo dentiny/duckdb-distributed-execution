@@ -367,7 +367,9 @@ TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 
 	REQUIRE(status.ok());
 	REQUIRE_FALSE(response.success());
-	REQUIRE_FALSE(response.error_message().empty());
+	REQUIRE(response.has_error());
+	REQUIRE(response.error().exception_type() == distributed::REMOTE_EXCEPTION_PARSER);
+	REQUIRE_FALSE(response.error().message().empty());
 }
 
 TEST_CASE("Duckling storage sees the active transaction manager", "[distributed_flight][transaction]") {

@@ -1,0 +1,43 @@
+{
+  "description": "DuckDB tests skipped because their assumptions are incompatible with Duckherder by design.",
+  "skip_tests": [
+    {
+      "reason": "Known Duckherder design or upstream harness incompatibility.",
+      "paths": [
+        "test/optimizer/column_lifetime_analyzer/no_unnecessary_projections.test",
+        "test/optimizer/estimated_cardinalities_are_in_logical_plan.test",
+        "test/optimizer/pushdown/filter_cannot_pushdown.test",
+        "test/optimizer/pushdown/table_or_pushdown.test",
+        "test/optimizer/statistics/statistics_aggregate.test",
+        "test/optimizer/statistics/statistics_null_comparison.test",
+        "test/optimizer/statistics/statistics_try_cast.test",
+        "test/sql/alter/rename_table/test_rename_table_collision.test",
+        "test/sql/alter/rename_table/test_rename_table_with_insert_transaction.test",
+        "test/sql/catalog/dependencies/test_prepared_dependency.test",
+        "test/sql/catalog/function/attached_macro.test",
+        "test/sql/catalog/test_schema_conflict.test",
+        "test/sql/constraints/foreignkey/test_fk_pk_multi_transaction_delete.test",
+        "test/sql/create/create_table_extra_options.test",
+        "test/sql/function/operator/test_conjunction.test",
+        "test/sql/index/art/constraints/test_art_tx_deletes_list.test",
+        "test/sql/index/art/constraints/test_art_tx_updates_pk_col.test",
+        "test/sql/index/art/constraints/test_art_tx_upserts_rollback.test",
+        "test/sql/index/art/insert_update_delete/test_art_update_other_column.test",
+        "test/sql/index/art/scan/test_art_adaptive_scan.test",
+        "test/sql/join/semianti/right_semi.test",
+        "test/sql/storage/attach/attach_invalidation_sibling_rollback.test",
+        "test/sql/transactions/delete_index_lookup_transactions.test",
+        "test/sql/transactions/test_index_abort.test",
+        "test/sql/transactions/test_index_pending_insert.test",
+        "test/sql/transactions/test_index_versioned_deletes.test",
+        "test/sql/transactions/test_null_version.test",
+        "test/sql/transactions/transaction_insert_delete_chunks.test",
+        "test/sql/transactions/types/test_uhugeint_transactions.test",
+        "test/sql/update/test_big_string_update.test",
+        "test/sql/update/test_string_update_many_strings.test",
+        "test/sql/update/test_update_many_updaters_nulls.test",
+        "test/sql/upsert/concurrent_insert_or_replace.test"
+      ]
+    }
+  ]
+}

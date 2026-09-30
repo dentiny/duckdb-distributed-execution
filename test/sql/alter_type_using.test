@@ -1,0 +1,29 @@
+# name: test/sql/alter_type_using.test
+# description: ALTER TYPE forwards its USING expression
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8856);
+
+statement ok
+ATTACH DATABASE 'localhost:8856' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+CREATE TABLE dh.alter_using_target (i INTEGER, j INTEGER);
+
+statement ok
+INSERT INTO dh.alter_using_target VALUES (1, 2);
+
+statement ok
+ALTER TABLE dh.alter_using_target
+ALTER COLUMN i TYPE BIGINT USING 2 * (i + j);
+
+query II
+SELECT * FROM dh.alter_using_target;
+----
+6	2
+
+statement ok
+DROP TABLE dh.alter_using_target;

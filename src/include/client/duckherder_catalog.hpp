@@ -48,7 +48,7 @@ public:
 	                             PhysicalOperator &plan) override;
 	PhysicalOperator &PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op,
 	                             PhysicalOperator &plan) override;
-	// Forwards INSERT ... ON CONFLICT and INSERT OR REPLACE to the control node.
+	// Forwards MERGE, INSERT ... ON CONFLICT, and INSERT OR REPLACE to the control node.
 	PhysicalOperator &PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner, LogicalMergeInto &op,
 	                                PhysicalOperator &plan) override;
 

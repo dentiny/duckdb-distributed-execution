@@ -4,6 +4,7 @@ package duckdb.distributed;
 
 import "client.proto";
 import "dml.proto";
+import "error.proto";
 import "query.proto";
 import "transaction.proto";
 import "worker.proto";
@@ -52,6 +53,8 @@ message DistributedResponse {
   bool success = 1;
   // TODO(hjiang): Return transport errors through gRPC instead of duplicating them here.
   string error_message = 2;
+  // Structured DuckDB application error returned by the control node.
+  RemoteError error = 21;
 
   oneof response {
     // Client registration and lease management.

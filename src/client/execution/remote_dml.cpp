@@ -11,6 +11,7 @@
 #include "duckdb/parser/statement/delete_statement.hpp"
 #include "duckdb/parser/statement/execute_statement.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
+#include "duckdb/parser/statement/merge_into_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "utils/catalog_utils.hpp"
 
@@ -31,6 +32,8 @@ StatementType GetDMLStatementType(PhysicalOperatorType type) {
 		return StatementType::DELETE_STATEMENT;
 	case PhysicalOperatorType::UPDATE:
 		return StatementType::UPDATE_STATEMENT;
+	case PhysicalOperatorType::MERGE_INTO:
+		return StatementType::MERGE_INTO_STATEMENT;
 	default:
 		throw InternalException("Unsupported remote DML operator");
 	}
@@ -54,6 +57,9 @@ string ReturnCompleteRows(const string &sql) {
 		break;
 	case StatementType::DELETE_STATEMENT:
 		returning_list = &statement.Cast<DeleteStatement>().returning_list;
+		break;
+	case StatementType::MERGE_INTO_STATEMENT:
+		returning_list = &statement.Cast<MergeIntoStatement>().returning_list;
 		break;
 	default:
 		return sql;
@@ -121,8 +127,11 @@ SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, D
 		    GetDistributedClient(context.client, table)
 		        .ExecuteStatement(executable_sql, GetDMLStatementType(type), table.catalog.GetName(), &types);
 		if (state.result->HasError()) {
-			throw Exception(ExceptionType::IO,
-			                StringUtil::Format("Failed to execute DML on control node: %s", state.result->GetError()));
+			auto &error = state.result->GetErrorObject();
+			if (error.Type() == ExceptionType::INVALID) {
+				throw IOException("Failed to execute DML on control node: %s", error.RawMessage());
+			}
+			error.Throw();
 		}
 	}
 

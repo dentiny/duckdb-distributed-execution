@@ -9,7 +9,9 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/statement/copy_statement.hpp"
 #include "duckdb/parser/statement/prepare_statement.hpp"
+#include "duckdb/planner/binder.hpp"
 
 namespace duckdb {
 
@@ -21,6 +23,14 @@ string GetRemoteStatementSQL(ClientContext &context) {
 	if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::PREPARE_STATEMENT) {
 		auto &prepare = parser.statements[0]->Cast<PrepareStatement>();
 		return prepare.statement->ToString();
+	}
+	if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::COPY_STATEMENT) {
+		auto &copy = parser.statements[0]->Cast<CopyStatement>();
+		if (copy.info->is_from && copy.info->file_path_expression) {
+			auto binder = Binder::CreateBinder(context);
+			binder->Bind(*parser.statements[0]);
+			return parser.statements[0]->ToString();
+		}
 	}
 	return current_query;
 }
@@ -69,6 +79,9 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 		auto &change_info = info.Cast<ChangeColumnTypeInfo>();
 		sql +=
 		    StringUtil::Format("ALTER COLUMN %s TYPE %s", change_info.column_name, change_info.target_type.ToString());
+		if (change_info.expression) {
+			sql += StringUtil::Format(" USING %s", change_info.expression->ToString());
+		}
 		break;
 	}
 	case AlterTableType::SET_DEFAULT: {

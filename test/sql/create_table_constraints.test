@@ -48,6 +48,7 @@ SELECT id, email, score, status, required_value FROM dh.constraint_target;
 statement error
 INSERT INTO dh.constraint_target VALUES (1, 'second@example.com', 20, 'active', 200);
 ----
+<REGEX>:Constraint Error.*
 
 statement error
 INSERT INTO dh.constraint_target VALUES (2, 'first@example.com', 20, 'active', 200);

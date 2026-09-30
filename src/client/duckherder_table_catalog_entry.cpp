@@ -7,6 +7,7 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckherder_catalog.hpp"
+#include "duckherder_schema_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -39,6 +40,13 @@ TableFunction DuckherderTableCatalogEntry::GetScanFunction(ClientContext &, uniq
 	                                                 config.server_url));
 	bind_data = make_uniq<DistributedTableScanBindData>(*this, config.server_url, config.remote_table_name);
 	return DistributedTableScanFunction::GetFunction();
+}
+
+TableStorageInfo DuckherderTableCatalogEntry::GetStorageInfo(ClientContext &context) {
+	auto result = DuckTableEntry::GetStorageInfo(context);
+	auto remote_indexes = schema.Cast<DuckherderSchemaCatalogEntry>().GetRemoteIndexes(name);
+	result.index_info.insert(result.index_info.end(), remote_indexes.begin(), remote_indexes.end());
+	return result;
 }
 
 } // namespace duckdb

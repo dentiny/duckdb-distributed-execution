@@ -1,0 +1,59 @@
+# name: test/sql/merge_into.test
+# description: MERGE statements execute on the control node
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8854);
+
+statement ok
+ATTACH DATABASE 'localhost:8854' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+CREATE TABLE dh.merge_target (id INTEGER, value INTEGER);
+
+statement ok
+CREATE TABLE dh.merge_source (id INTEGER, value INTEGER);
+
+statement ok
+INSERT INTO dh.merge_target VALUES (1, 10);
+
+statement ok
+INSERT INTO dh.merge_source VALUES (1, 100), (2, 200);
+
+statement ok
+MERGE INTO dh.merge_target AS target
+USING dh.merge_source AS source
+ON source.id = target.id
+WHEN MATCHED THEN UPDATE SET value = source.value
+WHEN NOT MATCHED THEN INSERT (id, value) VALUES (source.id, source.value);
+
+query II
+SELECT * FROM dh.merge_target ORDER BY id;
+----
+1	100
+2	200
+
+statement ok
+UPDATE dh.merge_source SET value = value + 1;
+
+statement ok
+MERGE INTO dh.merge_target AS target
+USING dh.merge_source AS source
+USING (id)
+WHEN MATCHED AND (
+	target.value IS DISTINCT FROM source.value
+) THEN UPDATE SET value = source.value;
+
+query II
+SELECT * FROM dh.merge_target ORDER BY id;
+----
+1	101
+2	201
+
+statement ok
+DROP TABLE dh.merge_source;
+
+statement ok
+DROP TABLE dh.merge_target;

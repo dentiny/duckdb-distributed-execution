@@ -1,0 +1,32 @@
+# name: test/sql/upsert_unique_index.test
+# description: UPSERT binds against remote unique-index metadata
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8855);
+
+statement ok
+ATTACH DATABASE 'localhost:8855' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+CREATE TABLE dh.upsert_index_target (id INTEGER, value VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX upsert_index ON dh.upsert_index_target (id);
+
+statement ok
+INSERT INTO dh.upsert_index_target VALUES (1, 'old');
+
+statement ok
+INSERT INTO dh.upsert_index_target VALUES (1, 'new')
+ON CONFLICT (id) DO UPDATE SET value = excluded.value;
+
+query IT
+SELECT * FROM dh.upsert_index_target;
+----
+1	new
+
+statement ok
+DROP TABLE dh.upsert_index_target;

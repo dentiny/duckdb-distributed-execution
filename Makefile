@@ -42,9 +42,11 @@ test_duckherder_reldebug:
 test_duckherder_loadable_release test_duckherder_loadable_debug test_duckherder_loadable_reldebug:
 	./build/$(patsubst test_duckherder_loadable_%,%,$@)/test/unittest --test-config test/configs/loadable.json "test/*"
 
-DUCKDB_TEST_TARGETS := test_debug_duckdb test_reldebug_duckdb test_release_duckdb
+DUCKDB_TEST_TARGETS := test_debug_duckdb test_reldebug_duckdb test_release_duckdb \
+	test_debug_duckdb_slow test_reldebug_duckdb_slow test_release_duckdb_slow
 DUCKDB_TEST_ARGUMENTS := $(filter-out $(DUCKDB_TEST_TARGETS),$(MAKECMDGOALS))
 DUCKDB_TEST_FILTER ?= $(DUCKDB_TEST_ARGUMENTS)
+DUCKDB_TEST_EXCLUDE ?= ~*_slow
 DUCKDB_TEST_CONFIG := test/configs/duckherder.json
 
 ifneq ($(filter $(DUCKDB_TEST_TARGETS),$(MAKECMDGOALS)),)
@@ -68,7 +70,8 @@ terminate() { \
 trap cleanup EXIT; \
 trap terminate INT TERM; \
 ./build/$(1)/test/unittest --test-config $(DUCKDB_TEST_CONFIG) --test-dir duckdb \
-	$(if $(DUCKDB_TEST_FILTER),"$(DUCKDB_TEST_FILTER)") & \
+	$(if $(DUCKDB_TEST_FILTER),"$(DUCKDB_TEST_FILTER)") \
+	$(if $(DUCKDB_TEST_EXCLUDE),"$(DUCKDB_TEST_EXCLUDE)") & \
 TEST_PID=$$!; \
 wait "$$TEST_PID"
 endef
@@ -76,10 +79,25 @@ endef
 test_debug_duckdb:
 	@$(call RUN_DUCKDB_TESTS,debug)
 
+test_debug_duckdb_slow: DUCKDB_TEST_FILTER := *_slow
+test_debug_duckdb_slow: DUCKDB_TEST_EXCLUDE :=
+test_debug_duckdb_slow:
+	@$(call RUN_DUCKDB_TESTS,debug)
+
 test_reldebug_duckdb:
 	@$(call RUN_DUCKDB_TESTS,reldebug)
 
+test_reldebug_duckdb_slow: DUCKDB_TEST_FILTER := *_slow
+test_reldebug_duckdb_slow: DUCKDB_TEST_EXCLUDE :=
+test_reldebug_duckdb_slow:
+	@$(call RUN_DUCKDB_TESTS,reldebug)
+
 test_release_duckdb:
+	@$(call RUN_DUCKDB_TESTS,release)
+
+test_release_duckdb_slow: DUCKDB_TEST_FILTER := *_slow
+test_release_duckdb_slow: DUCKDB_TEST_EXCLUDE :=
+test_release_duckdb_slow:
 	@$(call RUN_DUCKDB_TESTS,release)
 
 format-all: format

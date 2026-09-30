@@ -21,6 +21,9 @@ public:
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                              const EntryLookupInfo &lookup_info) override;
 
+	// Returns local table storage metadata together with remote index metadata used by the binder.
+	TableStorageInfo GetStorageInfo(ClientContext &context) override;
+
 private:
 	friend class DuckherderSchemaCatalogEntry;
 

@@ -6,7 +6,9 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -69,7 +71,39 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTran
 	if (!AddEntryInternal(std::move(transaction), std::move(remote_index), info.on_conflict, dependencies)) {
 		return nullptr;
 	}
+	AddRemoteIndex(table, info);
 	return result;
+}
+
+void DuckherderSchemaCatalogEntry::AddRemoteIndex(TableCatalogEntry &table, const CreateIndexInfo &info) {
+	IndexInfo index_info;
+	index_info.is_unique =
+	    info.constraint_type == IndexConstraintType::UNIQUE || info.constraint_type == IndexConstraintType::PRIMARY;
+	index_info.is_primary = info.constraint_type == IndexConstraintType::PRIMARY;
+	index_info.is_foreign = info.constraint_type == IndexConstraintType::FOREIGN;
+	index_info.column_set.insert(info.column_ids.begin(), info.column_ids.end());
+	if (index_info.column_set.empty()) {
+		for (auto &expression : info.expressions) {
+			ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(
+			    *expression, [&](const ColumnRefExpression &column_ref) {
+				auto column_name = column_ref.GetColumnName();
+				auto logical_index = table.GetColumnIndex(column_name);
+				index_info.column_set.insert(table.GetColumns().GetColumn(logical_index).Physical().index);
+			});
+		}
+	}
+
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
+	remote_indexes[table.name].push_back(std::move(index_info));
+}
+
+vector<IndexInfo> DuckherderSchemaCatalogEntry::GetRemoteIndexes(const string &table_name) {
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
+	auto entry = remote_indexes.find(table_name);
+	if (entry == remote_indexes.end()) {
+		return {};
+	}
+	return entry->second;
 }
 
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateFunction(CatalogTransaction transaction,
@@ -298,6 +332,24 @@ void DuckherderSchemaCatalogEntry::DropRemoteView(ClientContext &context, const 
 	}
 }
 
+void DuckherderSchemaCatalogEntry::DropRemoteType(ClientContext &context, const DropInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote type: %s", info.name));
+
+	auto schema_name = KeywordHelper::WriteQuoted(name, '"');
+	auto type_name = KeywordHelper::WriteQuoted(info.name, '"');
+	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
+	auto drop_sql = StringUtil::Format("DROP TYPE %s%s.%s", if_exists, schema_name, type_name);
+	if (info.cascade) {
+		drop_sql += " CASCADE";
+	}
+
+	auto &client = duckherder_catalog.GetClient(context);
+	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
+	if (result->HasError()) {
+		throw CatalogException("Failed to drop remote type on server: %s", result->GetError());
+	}
+}
+
 void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderSchemaCatalogEntry::DropEntry - type=%s name=%s",
 	                                                 CatalogTypeToString(info.type), info.name));
@@ -308,6 +360,8 @@ void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 		DropRemoteTable(context, info);
 	} else if (info.type == CatalogType::VIEW_ENTRY) {
 		DropRemoteView(context, info);
+	} else if (info.type == CatalogType::TYPE_ENTRY) {
+		DropRemoteType(context, info);
 	}
 
 	DuckSchemaEntry::DropEntry(context, info);

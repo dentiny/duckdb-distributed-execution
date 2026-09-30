@@ -1,0 +1,37 @@
+# name: test/sql/copy_session_variable.test
+# description: COPY FROM resolves client session variables before remote execution
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8858);
+
+statement ok
+ATTACH DATABASE 'localhost:8858' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+SET VARIABLE copy_target = '__TEST_DIR__/duckherder_copy_variable.csv';
+
+statement ok
+COPY (SELECT * FROM range(3) t(i))
+TO (getvariable('copy_target'));
+
+statement ok
+CREATE TABLE dh.copy_variable_target (i INTEGER);
+
+query I
+COPY dh.copy_variable_target
+FROM (getvariable('copy_target'));
+----
+3
+
+query I
+SELECT * FROM dh.copy_variable_target ORDER BY i;
+----
+0
+1
+2
+
+statement ok
+DROP TABLE dh.copy_variable_target;

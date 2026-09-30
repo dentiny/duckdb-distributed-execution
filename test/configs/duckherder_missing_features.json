@@ -1,0 +1,36 @@
+{
+  "description": "DuckDB tests skipped because Duckherder does not implement the required feature yet.",
+  "skip_tests": [
+    {
+      "reason": "Missing Duckherder feature.",
+      "paths": [
+        "test/optimizer/limit_pushdown.test",
+        "test/sql/aggregate/aggregates/test_avg.test",
+        "test/sql/aggregate/aggregates/test_bit_xor.test",
+        "test/sql/alter/add_col/test_add_col_stats.test",
+        "test/sql/alter/alter_table_set_table_options.test",
+        "test/sql/alter/list/add_column_in_struct.test",
+        "test/sql/alter/map/drop_column_in_struct.test",
+        "test/sql/alter/struct/add_col_nested_struct.test",
+        "test/sql/alter/struct/rename_col_nested_struct.test",
+        "test/sql/attach/attach_views.test",
+        "test/sql/catalog/comment_on_pg_description.test",
+        "test/sql/catalog/dependencies/test_alter_dependency_ownership.test",
+        "test/sql/catalog/dependencies/test_concurrent_drop.test",
+        "test/sql/catalog/sequence/test_duckdb_sequences.test",
+        "test/sql/copy/partitioned/hive_partition_escape.test",
+        "test/sql/function/list/aggregates/avg.test",
+        "test/sql/function/time/test_extract_stats.test",
+        "test/sql/storage/types/variant/index_fetch.test",
+        "test/sql/types/bignum/test_big_bignum.test",
+        "test/sql/types/bignum/test_bignum_subtract.test",
+        "test/sql/types/geo/geometry_stats.test",
+        "test/sql/types/map/map_extract_nested_null.test",
+        "test/sql/types/union/union_ambiguous.test",
+        "test/sql/types/union/union_list.test",
+        "test/sql/types/union/union_test.test",
+        "test/sql/upsert/insert_or_replace/returning_nothing.test"
+      ]
+    }
+  ]
+}

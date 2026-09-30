@@ -7,6 +7,7 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+#include "duckdb/storage/table_storage_info.hpp"
 #include "entry_lookup_info_hash_utils.hpp"
 #include "utils/mutex.hpp"
 
@@ -41,6 +42,9 @@ public:
 	void DropEntry(ClientContext &context, DropInfo &info) override;
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 
+	// Returns metadata for indexes that are physically stored on the control node.
+	vector<IndexInfo> GetRemoteIndexes(const string &table_name);
+
 private:
 	friend class DuckherderCatalog;
 	friend class PhysicalRemoteCreateTableAs;
@@ -50,6 +54,8 @@ private:
 
 	optional_ptr<CatalogEntry> CreateTableLocal(CatalogTransaction transaction, BoundCreateTableInfo &info);
 	optional_ptr<CatalogEntry> CreateTypeLocal(CatalogTransaction transaction, CreateTypeInfo &info);
+	// Records metadata for an index that is physically stored on the control node.
+	void AddRemoteIndex(TableCatalogEntry &table, const CreateIndexInfo &info);
 
 	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry)
 	    DUCKDB_REQUIRES(mu);
@@ -58,6 +64,8 @@ private:
 	void DropRemoteTable(ClientContext &context, const DropInfo &info);
 	// Drops the view on the control node before removing its local metadata.
 	void DropRemoteView(ClientContext &context, const DropInfo &info);
+	// Drops the type on the control node before removing its local metadata.
+	void DropRemoteType(ClientContext &context, const DropInfo &info);
 
 	DatabaseInstance &db_instance;
 	DuckherderCatalog &duckherder_catalog;
@@ -73,6 +81,7 @@ private:
 	// Cache for catalog entries, including table entries.
 	unordered_map<EntryLookupInfoKey, CachedCatalogEntry, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries DUCKDB_GUARDED_BY(mu);
+	unordered_map<string, vector<IndexInfo>> remote_indexes DUCKDB_GUARDED_BY(mu);
 };
 
 } // namespace duckdb
