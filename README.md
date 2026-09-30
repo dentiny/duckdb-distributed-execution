@@ -596,33 +596,49 @@ See the [Roadmap](#roadmap) for planned work.
 
 ## Roadmap
 
+DuckDB compatibility gaps listed below are also tracked by
+[`test/configs/duckherder_missing_features.json`](test/configs/duckherder_missing_features.json).
+
 ### Table and Index Operations
 - [x] Create/drop table
 - [x] Create/drop index
-- [x] Update table schema
+- [x] Automatic index maintenance on remote DML
+- [x] Basic table schema updates
+- [ ] Nested table schema updates
+- [ ] Table options and column statistics updates
 - [x] Create/drop view
+- [ ] Restore existing views during initial catalog discovery
+- [x] Create/drop schema
 - [ ] Create/drop sequence
-- [ ] Alter schema
-- [ ] Update index
+- [ ] Alter schema and catalog ownership
+- [ ] Concurrent catalog DDL/drop semantics
+- [ ] DuckDB-compatible eager primary-key and unique-constraint checking
 
 ### Data Type Support
 - [x] Primitive type support
 - [x] List type support for primitive elements
-- [ ] Nested list type support
-- [x] Map type support
+- [x] Nested list type support
+- [x] Basic map type support
+- [ ] Nested map NULL semantics
 - [x] Struct type support
 - [ ] Union type support
+- [ ] BIGNUM type support
+- [ ] GEOMETRY type and statistics support
+- [ ] VARIANT type support
 
 ### Distributed Query Support
 - [x] Intelligent query partitioning
 - [x] Natural parallelism analysis
 - [x] Row group-aligned execution
 - [x] Range-based partitioning
+- [ ] LIMIT pushdown compatibility
 - [ ] Aggregation pushdown (infrastructure ready)
+- [ ] AVG, BIT_XOR, and nested-list aggregate compatibility
 - [ ] Correct GROUP BY distributed finalization
 - [ ] JOIN optimization (broadcast/co-partition)
 - [ ] ORDER BY support (distributed sort)
 - [ ] DISTINCT, LIMIT/OFFSET, window, CTE, and set-operation support
+- [ ] TIME and GEOMETRY optimizer statistics
 - [x] Driver collect partition and execution stats
 
 ### Multi-Client Support
@@ -634,6 +650,7 @@ See the [Roadmap](#roadmap) for planned work.
 - [ ] Persist server-side database file
 - [ ] Recover DuckDB instance via database file
 - [x] Basic transaction forwarding
+- [ ] `INSERT OR REPLACE ... RETURNING NOTHING` compatibility
 - [ ] Durable transaction and snapshot recovery
 
 ### Additional Features
@@ -644,6 +661,8 @@ See the [Roadmap](#roadmap) for planned work.
 - [x] Support community extension install and load
 - [ ] Dynamic worker scaling
 - [ ] Query result caching
+- [ ] COMMENT and `pg_description` compatibility
+- [ ] Hive-partition path escaping for COPY
 - [x] Util function to register driver node and worker nodes
 - [x] Util function to register or replace the driver node
 
