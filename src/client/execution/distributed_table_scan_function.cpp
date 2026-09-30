@@ -1,8 +1,11 @@
 #include "client/execution/distributed_table_scan_function.hpp"
 
 #include "client/execution/distributed_client.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -10,6 +13,36 @@
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
+
+namespace {
+
+void SerializeDistributedTableScan(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
+                                   const TableFunction &function) {
+	auto &data = bind_data->Cast<DistributedTableScanBindData>();
+	serializer.WriteProperty(100, "catalog", data.table.schema.catalog.GetName());
+	serializer.WriteProperty(101, "schema", data.table.schema.name);
+	serializer.WriteProperty(102, "table", data.table.name);
+	serializer.WriteProperty(103, "server_url", data.server_url);
+	serializer.WriteProperty(104, "remote_table_name", data.remote_table_name);
+}
+
+unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deserializer, TableFunction &function) {
+	auto catalog = deserializer.ReadProperty<string>(100, "catalog");
+	auto schema = deserializer.ReadProperty<string>(101, "schema");
+	auto table = deserializer.ReadProperty<string>(102, "table");
+	auto server_url = deserializer.ReadProperty<string>(103, "server_url");
+	auto remote_table_name = deserializer.ReadProperty<string>(104, "remote_table_name");
+	auto &table_entry =
+	    Catalog::GetEntry<TableCatalogEntry>(deserializer.Get<ClientContext &>(), catalog, schema, table);
+	return make_uniq<DistributedTableScanBindData>(table_entry, std::move(server_url), std::move(remote_table_name));
+}
+
+virtual_column_map_t GetDistributedTableScanVirtualColumns(ClientContext &context,
+                                                           optional_ptr<FunctionData> bind_data) {
+	return bind_data->Cast<DistributedTableScanBindData>().table.GetVirtualColumns();
+}
+
+} // namespace
 
 struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 	DistributedTableScanGlobalState() : finished(false) {
@@ -39,6 +72,9 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	function.projection_pushdown = true;
 	function.filter_pushdown = false;
 	function.get_bind_info = GetBindInfo;
+	function.serialize = SerializeDistributedTableScan;
+	function.deserialize = DeserializeDistributedTableScan;
+	function.get_virtual_columns = GetDistributedTableScanVirtualColumns;
 	return function;
 }
 

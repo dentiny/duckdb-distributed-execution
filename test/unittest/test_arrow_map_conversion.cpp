@@ -64,9 +64,9 @@ TEST_CASE("Arrow MAP with nested LIST values conversion", "[arrow][map]") {
 	Vector result(type, 1);
 	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 1);
 
-	auto expected = Value::MAP(LogicalType::BIGINT, value_type, {Value::BIGINT(10), Value::BIGINT(20)},
-	                           {Value::LIST(LogicalType::DOUBLE, {Value::DOUBLE(1.5), Value::DOUBLE(2.5)}),
-	                            Value(value_type)});
+	auto expected =
+	    Value::MAP(LogicalType::BIGINT, value_type, {Value::BIGINT(10), Value::BIGINT(20)},
+	               {Value::LIST(LogicalType::DOUBLE, {Value::DOUBLE(1.5), Value::DOUBLE(2.5)}), Value(value_type)});
 	REQUIRE(result.GetValue(0) == expected);
 }
 

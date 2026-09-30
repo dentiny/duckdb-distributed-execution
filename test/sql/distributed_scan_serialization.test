@@ -1,0 +1,36 @@
+# name: test/sql/distributed_scan_serialization.test
+# description: Test distributed scan logical-plan serialization
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8853);
+
+statement ok
+ATTACH DATABASE 'localhost:8853' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.scan_serde_test (id INTEGER PRIMARY KEY, value VARCHAR);
+
+statement ok
+INSERT INTO dh.scan_serde_test VALUES (1, 'one'), (2, 'two');
+
+statement ok
+PRAGMA enable_verification;
+
+statement ok
+INSERT INTO dh.scan_serde_test VALUES (2, 'updated')
+ON CONFLICT (id) DO UPDATE SET value = excluded.value;
+
+query IT
+SELECT id, value FROM dh.scan_serde_test ORDER BY id;
+----
+1	one
+2	updated
+
+statement ok
+PRAGMA disable_verification;
+
+statement ok
+DROP TABLE dh.scan_serde_test;

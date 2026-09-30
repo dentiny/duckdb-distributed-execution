@@ -36,8 +36,8 @@ TEST_CASE("Arrow STRUCT conversion", "[arrow][struct]") {
 	REQUIRE(Value::NotDistinctFrom(result.GetValue(0),
 	                               Value::STRUCT({{"id", Value::INTEGER(1)}, {"name", Value("alice")}})));
 	REQUIRE(result.GetValue(1).IsNull());
-	REQUIRE(Value::NotDistinctFrom(result.GetValue(2), Value::STRUCT({{"id", Value::INTEGER(3)},
-	                                                                  {"name", Value(LogicalType::VARCHAR)}})));
+	REQUIRE(Value::NotDistinctFrom(result.GetValue(2),
+	                               Value::STRUCT({{"id", Value::INTEGER(3)}, {"name", Value(LogicalType::VARCHAR)}})));
 
 	auto &entries = StructVector::GetEntries(result);
 	REQUIRE(!FlatVector::Validity(*entries[0]).RowIsValid(1));
@@ -80,9 +80,8 @@ TEST_CASE("Arrow nested STRUCT conversion", "[arrow][struct]") {
 	Vector result(type, 2);
 	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 2);
 
-	auto expected_row0 =
-	    Value::STRUCT({{"point", Value::STRUCT({{"x", Value::DOUBLE(1.5)}})},
-	                   {"tags", Value::LIST(LogicalType::VARCHAR, {Value("a"), Value("b")})}});
+	auto expected_row0 = Value::STRUCT({{"point", Value::STRUCT({{"x", Value::DOUBLE(1.5)}})},
+	                                    {"tags", Value::LIST(LogicalType::VARCHAR, {Value("a"), Value("b")})}});
 	auto expected_row1 = Value::STRUCT({{"point", Value(LogicalType::STRUCT(inner_children))},
 	                                    {"tags", Value::LIST(LogicalType::VARCHAR, {Value("c")})}});
 	REQUIRE(Value::NotDistinctFrom(result.GetValue(0), expected_row0));
