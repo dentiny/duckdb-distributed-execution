@@ -1,5 +1,6 @@
 #include "duckherder_functions.hpp"
 
+#include "client/execution/distributed_table_scan_function.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
@@ -82,6 +83,11 @@ ScalarFunction GetClearQueryRecorderStatsFunction() {
 } // namespace
 
 void RegisterDuckherderFunctions(ExtensionLoader &loader) {
+	RegisterTableFunction(loader, DistributedTableScanFunction::GetFunction(),
+	                      /*parameter_names=*/ {},
+	                      /*description=*/"Scans a table stored on a Duckherder server.",
+	                      /*examples=*/ {},
+	                      /*categories=*/ {"duckherder", "distributed_execution"});
 	RegisterPragmaFunction(loader, DuckherderPragmas::GetUnregisterRemoteTableFunction(),
 	                       /*parameter_names=*/ {"local_table_name"},
 	                       /*description=*/"Removes a remote table mapping from the attached Duckherder catalog.",
