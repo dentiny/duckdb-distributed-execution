@@ -3,6 +3,8 @@
 #include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/constants.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
@@ -111,9 +113,17 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
+	auto includes_rowid =
+	    std::find(local_state.column_ids.begin(), local_state.column_ids.end(), COLUMN_IDENTIFIER_ROW_ID) !=
+	    local_state.column_ids.end();
+	auto scan_source = bind_data.remote_table_name;
+	if (includes_rowid) {
+		expected_types.insert(expected_types.begin(), LogicalType::ROW_TYPE);
+		scan_source = StringUtil::Format("SELECT rowid, * FROM %s", bind_data.remote_table_name);
+	}
 	auto &client = GetDistributedClient(context, bind_data.table);
-	auto result = client.ScanTable(bind_data.remote_table_name, /*limit=*/output.GetCapacity(), local_state.offset,
-	                               &expected_types);
+	auto result =
+	    client.ScanTable(scan_source, /*limit=*/output.GetCapacity(), local_state.offset, &expected_types);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL,
 		                StringUtil::Format("Distributed table scan error: %s", result->GetError()));
@@ -145,8 +155,9 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	else {
 		for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size(); ++out_idx) {
 			auto col_idx = local_state.column_ids[out_idx];
-			if (col_idx < data_chunk->ColumnCount()) {
-				VectorOperations::Copy(data_chunk->data[col_idx], output.data[out_idx], data_chunk->size(),
+			auto source_idx = col_idx == COLUMN_IDENTIFIER_ROW_ID ? 0 : col_idx + (includes_rowid ? 1 : 0);
+			if (source_idx < data_chunk->ColumnCount()) {
+				VectorOperations::Copy(data_chunk->data[source_idx], output.data[out_idx], data_chunk->size(),
 				                       /*source_offset=*/0, /*target_offset=*/0);
 			}
 		}

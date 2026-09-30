@@ -1,0 +1,29 @@
+# name: test/sql/rowid_scan.test
+# description: Remote scans preserve DuckDB rowid values
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8859);
+
+statement ok
+ATTACH DATABASE 'localhost:8859' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+CREATE TABLE dh.rowid_target (value INTEGER);
+
+statement ok
+INSERT INTO dh.rowid_target VALUES (10), (20), (30);
+
+statement ok
+DELETE FROM dh.rowid_target WHERE value = 20;
+
+query II
+SELECT rowid, value FROM dh.rowid_target ORDER BY rowid;
+----
+0	10
+2	30
+
+statement ok
+DROP TABLE dh.rowid_target;

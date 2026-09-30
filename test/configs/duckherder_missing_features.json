@@ -21,6 +21,7 @@
         "test/sql/copy/partitioned/hive_partition_escape.test",
         "test/sql/function/list/aggregates/avg.test",
         "test/sql/function/time/test_extract_stats.test",
+        "test/sql/index/art/constraints/test_art_eager_constraint_checking.test",
         "test/sql/storage/types/variant/index_fetch.test",
         "test/sql/types/bignum/test_big_bignum.test",
         "test/sql/types/bignum/test_bignum_subtract.test",
