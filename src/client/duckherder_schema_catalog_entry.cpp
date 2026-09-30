@@ -12,6 +12,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckherder_catalog.hpp"
@@ -122,8 +123,22 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 	return DuckSchemaEntry::CreateTable(std::move(transaction), info);
 }
 
-optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateView(CatalogTransaction, CreateViewInfo &) {
-	throw CatalogException("CREATE VIEW is not supported by Duckherder catalogs");
+optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateView(CatalogTransaction transaction,
+                                                                    CreateViewInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateView");
+	if (info.internal) {
+		return DuckSchemaEntry::CreateView(std::move(transaction), info);
+	}
+	if (!transaction.HasContext()) {
+		throw InternalException("Cannot create a remote Duckherder view without a client context");
+	}
+
+	auto result = duckherder_catalog.GetClient(transaction.GetContext())
+	                  .ExecuteStatement(info.ToString(), StatementType::CREATE_STATEMENT, duckherder_catalog.GetName());
+	if (result->HasError()) {
+		throw CatalogException("Failed to create view on server: %s", result->GetError());
+	}
+	return DuckSchemaEntry::CreateView(std::move(transaction), info);
 }
 
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateSequence(CatalogTransaction, CreateSequenceInfo &) {
@@ -208,7 +223,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::LookupEntry(CatalogTran
 		return catalog_entry;
 	}
 
-	if (catalog_type == CatalogType::TABLE_ENTRY) {
+	if (catalog_entry->type == CatalogType::TABLE_ENTRY) {
 		concurrency::lock_guard<concurrency::mutex> lck(mu);
 		auto iter = catalog_entries.find(key);
 		if (iter != catalog_entries.end() && iter->second.source == catalog_entry.get() &&
@@ -265,6 +280,24 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const
 	}
 }
 
+void DuckherderSchemaCatalogEntry::DropRemoteView(ClientContext &context, const DropInfo &info) {
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote view: %s", info.name));
+
+	auto schema_name = KeywordHelper::WriteQuoted(name, '"');
+	auto view_name = KeywordHelper::WriteQuoted(info.name, '"');
+	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
+	auto drop_sql = StringUtil::Format("DROP VIEW %s%s.%s", if_exists, schema_name, view_name);
+	if (info.cascade) {
+		drop_sql += " CASCADE";
+	}
+
+	auto &client = duckherder_catalog.GetClient(context);
+	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
+	if (result->HasError()) {
+		throw CatalogException("Failed to drop remote view on server: %s", result->GetError());
+	}
+}
+
 void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderSchemaCatalogEntry::DropEntry - type=%s name=%s",
 	                                                 CatalogTypeToString(info.type), info.name));
@@ -273,6 +306,8 @@ void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 		DropRemoteIndex(context, info);
 	} else if (info.type == CatalogType::TABLE_ENTRY) {
 		DropRemoteTable(context, info);
+	} else if (info.type == CatalogType::VIEW_ENTRY) {
+		DropRemoteView(context, info);
 	}
 
 	DuckSchemaEntry::DropEntry(context, info);
@@ -316,6 +351,13 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
 		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
 			renamed_table = table_info.Cast<RenameTableInfo>().new_table_name;
+		}
+	} else if (info.type == AlterType::ALTER_VIEW) {
+		auto result =
+		    duckherder_catalog.GetClient(transaction.GetContext())
+		        .ExecuteStatement(info.ToString(), StatementType::ALTER_STATEMENT, duckherder_catalog.GetName());
+		if (result->HasError()) {
+			throw CatalogException("Failed to alter view on server: %s", result->GetError());
 		}
 	}
 

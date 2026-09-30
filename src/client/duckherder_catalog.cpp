@@ -105,8 +105,6 @@ void DuckherderCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
 }
 
 void DuckherderCatalog::LoadRemoteCatalog(ClientContext &context) {
-	// TODO(hjiang): Adopt Quack-style metadata-only catalog entries before expanding discovery to views, macros,
-	// sequences, and other entry types that require dependency-aware loading.
 	auto &client = GetClient(context);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db_instance);
 

@@ -19,10 +19,24 @@ WHERE database_name = 'dh' AND schema_name = 'main' AND internal;
 statement ok
 CREATE SCHEMA dh."Analytics";
 
-statement error
+statement ok
 CREATE VIEW dh.analytics.local_view AS SELECT 42;
+
+query I
+SELECT * FROM dh.analytics.local_view;
 ----
-<REGEX>:.*CREATE VIEW is not supported by Duckherder catalogs.*
+42
+
+statement ok
+ALTER VIEW dh.analytics.local_view RENAME TO renamed_view;
+
+query I
+SELECT * FROM dh.analytics.renamed_view;
+----
+42
+
+statement ok
+DROP VIEW dh.analytics.renamed_view;
 
 statement error
 CREATE SEQUENCE dh.analytics.local_sequence;

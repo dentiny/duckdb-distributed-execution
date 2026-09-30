@@ -13,6 +13,12 @@ namespace {
 
 class RemoteCreateIndexOperatorExtension : public OperatorExtension {
 public:
+	RemoteCreateIndexOperatorExtension() {
+		Bind = [](ClientContext &, Binder &, OperatorExtensionInfo *, SQLStatement &) {
+			return BoundStatement();
+		};
+	}
+
 	string GetName() override {
 		return "duckherder_remote_create_index";
 	}

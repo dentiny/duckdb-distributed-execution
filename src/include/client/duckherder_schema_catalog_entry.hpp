@@ -54,6 +54,8 @@ private:
 
 	void DropRemoteIndex(ClientContext &context, const DropInfo &info);
 	void DropRemoteTable(ClientContext &context, const DropInfo &info);
+	// Drops the view on the control node before removing its local metadata.
+	void DropRemoteView(ClientContext &context, const DropInfo &info);
 
 	DatabaseInstance &db_instance;
 	DuckherderCatalog &duckherder_catalog;

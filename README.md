@@ -551,8 +551,7 @@ through local execution on the Driver/Control Node.
 
 ### Not Implemented
 
-- `CREATE VIEW` and remote view discovery. Consequently, remote views cannot be queried or managed through a
-  Duckherder attachment.
+- Remote view discovery after attaching to a catalog that already contains views.
 - `CREATE SEQUENCE` and remote sequence discovery.
 - `ALTER SCHEMA`.
 - `ALTER TABLE` variants other than add/drop/rename column, rename table, change column type, set a default, and
@@ -600,7 +599,7 @@ See the [Roadmap](#roadmap) for planned work.
 - [x] Create/drop table
 - [x] Create/drop index
 - [x] Update table schema
-- [ ] Create/drop view
+- [x] Create/drop view
 - [ ] Create/drop sequence
 - [ ] Alter schema
 - [ ] Update index
