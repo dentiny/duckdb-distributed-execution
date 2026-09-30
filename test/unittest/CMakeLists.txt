@@ -8,6 +8,8 @@ set(DUCKHERDER_UNITTEST_SOURCES
     main.cpp
     test_arrow_enum_conversion.cpp
     test_arrow_list_array_conversion.cpp
+    test_arrow_map_conversion.cpp
+    test_arrow_struct_conversion.cpp
     test_distributed_flight.cpp
     test_arrow_uuid_conversion.cpp
     test_duckherder_remote_endpoint.cpp

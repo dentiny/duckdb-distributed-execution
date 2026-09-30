@@ -539,10 +539,43 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 	}
 }
 
+// Util function to append a list entry of the given length to a DuckDB LIST or MAP vector, returns the child offset.
+idx_t AppendListEntry(Vector &list_vector, idx_t duck_idx, idx_t length) {
+	auto old_size = ListVector::GetListSize(list_vector);
+	auto &entry = FlatVector::GetData<list_entry_t>(list_vector)[duck_idx];
+	entry.offset = old_size;
+	entry.length = length;
+	ListVector::Reserve(list_vector, old_size + length);
+	ListVector::SetListSize(list_vector, old_size + length);
+	return old_size;
+}
+
 void ConvertArrowElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx, Vector &duckdb_vector,
                          idx_t duck_idx, const LogicalType &type) {
 	if (arrow_array->IsNull(arrow_idx)) {
 		FlatVector::SetNull(duckdb_vector, duck_idx, true);
+		return;
+	}
+
+	if (type.id() == LogicalTypeId::MAP) {
+		if (arrow_array->type_id() != arrow::Type::MAP) {
+			throw InternalException("Expected Arrow MAP for DuckDB type %s, received %s", type.ToString(),
+			                        arrow_array->type()->ToString());
+		}
+		auto map_array = std::static_pointer_cast<arrow::MapArray>(arrow_array);
+		auto offset = NumericCast<idx_t>(map_array->value_offset(arrow_idx));
+		auto length = NumericCast<idx_t>(map_array->value_length(arrow_idx));
+		auto child_offset = AppendListEntry(duckdb_vector, duck_idx, length);
+
+		auto &key_vector = MapVector::GetKeys(duckdb_vector);
+		auto &value_vector = MapVector::GetValues(duckdb_vector);
+		auto &key_type = MapType::KeyType(type);
+		auto &value_type = MapType::ValueType(type);
+		for (idx_t child_idx = 0; child_idx < length; child_idx++) {
+			ConvertArrowElement(map_array->keys(), offset + child_idx, key_vector, child_offset + child_idx, key_type);
+			ConvertArrowElement(map_array->items(), offset + child_idx, value_vector, child_offset + child_idx,
+			                    value_type);
+		}
 		return;
 	}
 
@@ -565,18 +598,14 @@ void ConvertArrowElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t
 			                        arrow_array->type()->ToString());
 		}
 
-		auto old_size = ListVector::GetListSize(duckdb_vector);
-		auto &entry = FlatVector::GetData<list_entry_t>(duckdb_vector)[duck_idx];
-		entry.offset = old_size;
-		entry.length = NumericCast<idx_t>(length);
-		ListVector::Reserve(duckdb_vector, old_size + entry.length);
-		ListVector::SetListSize(duckdb_vector, old_size + entry.length);
+		auto child_length = NumericCast<idx_t>(length);
+		auto child_offset = AppendListEntry(duckdb_vector, duck_idx, child_length);
 
 		auto &child_vector = ListVector::GetEntry(duckdb_vector);
 		auto &child_type = ListType::GetChildType(type);
-		for (idx_t child_idx = 0; child_idx < entry.length; child_idx++) {
-			ConvertArrowElement(child_array, NumericCast<idx_t>(offset) + child_idx, child_vector, old_size + child_idx,
-			                    child_type);
+		for (idx_t child_idx = 0; child_idx < child_length; child_idx++) {
+			ConvertArrowElement(child_array, NumericCast<idx_t>(offset) + child_idx, child_vector,
+			                    child_offset + child_idx, child_type);
 		}
 		return;
 	}
@@ -603,6 +632,27 @@ void ConvertArrowElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t
 		return;
 	}
 
+	if (type.id() == LogicalTypeId::STRUCT) {
+		if (arrow_array->type_id() != arrow::Type::STRUCT) {
+			throw InternalException("Expected Arrow STRUCT for DuckDB type %s, received %s", type.ToString(),
+			                        arrow_array->type()->ToString());
+		}
+		auto struct_array = std::static_pointer_cast<arrow::StructArray>(arrow_array);
+		auto &child_types = StructType::GetChildTypes(type);
+		if (NumericCast<idx_t>(struct_array->num_fields()) != child_types.size()) {
+			throw InternalException("Arrow struct field count %d does not match DuckDB type %s",
+			                        struct_array->num_fields(), type.ToString());
+		}
+
+		auto &child_vectors = StructVector::GetEntries(duckdb_vector);
+		for (idx_t child_idx = 0; child_idx < child_types.size(); child_idx++) {
+			// StructArray::field() applies the parent array offset to the child array.
+			ConvertArrowElement(struct_array->field(NumericCast<int>(child_idx)), arrow_idx, *child_vectors[child_idx],
+			                    duck_idx, child_types[child_idx].second);
+		}
+		return;
+	}
+
 	ConvertArrowPrimitiveElement(arrow_array, arrow_idx, duckdb_vector, duck_idx, type);
 }
 
@@ -610,7 +660,7 @@ void ConvertArrowElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
 	// TODO(hjiang):
-	// 1. Add support for complex nested types (STRUCT, MAP, UNION).
+	// 1. Add support for complex nested types (UNION).
 	// 2. Add support for special types (ENUM, BIT, BIGNUM).
 	switch (arrow_type->id()) {
 	case arrow::Type::NA:
@@ -715,6 +765,19 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 		auto child_type = ArrowTypeToDuckDBType(array_type->value_type());
 		return LogicalType::ARRAY(child_type, NumericCast<idx_t>(array_type->list_size()));
 	}
+	case arrow::Type::MAP: {
+		auto map_type = std::static_pointer_cast<arrow::MapType>(arrow_type);
+		auto key_type = ArrowTypeToDuckDBType(map_type->key_type());
+		auto value_type = ArrowTypeToDuckDBType(map_type->item_type());
+		return LogicalType::MAP(std::move(key_type), std::move(value_type));
+	}
+	case arrow::Type::STRUCT: {
+		child_list_t<LogicalType> child_types;
+		for (const auto &field : arrow_type->fields()) {
+			child_types.emplace_back(field->name(), ArrowTypeToDuckDBType(field->type()));
+		}
+		return LogicalType::STRUCT(std::move(child_types));
+	}
 	case arrow::Type::DICTIONARY: {
 		// Arrow dictionary types map to DuckDB ENUM types.
 		// The dictionary contains the enum values (strings), and indices reference them.
@@ -732,7 +795,7 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 		return LogicalType {LogicalTypeId::VARCHAR};
 	}
 	default:
-		// Fallback to VARCHAR for unsupported types (STRUCT, MAP, UNION, etc.).
+		// Fallback to VARCHAR for unsupported types (UNION, etc.).
 		return LogicalType {LogicalTypeId::VARCHAR};
 	}
 }

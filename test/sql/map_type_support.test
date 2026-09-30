@@ -1,0 +1,70 @@
+# name: test/sql/map_type_support.test
+# description: Test distributed execution with MAP data types
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8851);
+
+statement ok
+ATTACH DATABASE 'localhost:8851' AS dh (TYPE duckherder);
+
+statement ok
+DROP TABLE IF EXISTS dh.map_test_table;
+
+statement ok
+CREATE TABLE dh.map_test_table (
+    id INTEGER,
+    str_int_map MAP(VARCHAR, INTEGER),
+    int_double_map MAP(INTEGER, DOUBLE),
+    str_list_map MAP(VARCHAR, INTEGER[]),
+    nested_map MAP(VARCHAR, MAP(VARCHAR, BIGINT))
+);
+
+statement ok
+INSERT INTO dh.map_test_table VALUES
+    (1, MAP {'a': 1, 'b': 2}, MAP {1: 1.5, 2: 2.5}, MAP {'x': [1, 2], 'y': [3]}, MAP {'outer': MAP {'inner': 100}}),
+    (2, MAP {'c': NULL}, MAP {10: 10.5}, MAP {'z': NULL}, MAP {'k': MAP {}}),
+    (3, MAP {}, MAP {}, MAP {}, MAP {}),
+    (4, NULL, NULL, NULL, NULL);
+
+query ITTTT
+SELECT * FROM dh.map_test_table ORDER BY id;
+----
+1	{a=1, b=2}	{1=1.5, 2=2.5}	{x=[1, 2], y=[3]}	{outer={inner=100}}
+2	{c=NULL}	{10=10.5}	{z=NULL}	{k={}}
+3	{}	{}	{}	{}
+4	NULL	NULL	NULL	NULL
+
+# Test map element access
+query IIIII
+SELECT id, str_int_map['b'], int_double_map[2], str_list_map['x'][2], nested_map['outer']['inner']
+FROM dh.map_test_table WHERE id = 1;
+----
+1	2	2.5	2	100
+
+query II
+SELECT id, cardinality(str_int_map) FROM dh.map_test_table WHERE str_int_map IS NOT NULL ORDER BY id;
+----
+1	2
+2	1
+3	0
+
+query TT
+SELECT map_keys(str_int_map), map_values(str_int_map) FROM dh.map_test_table WHERE id = 1;
+----
+[a, b]	[1, 2]
+
+query I
+SELECT id FROM dh.map_test_table WHERE str_int_map IS NULL;
+----
+4
+
+query I
+SELECT id FROM dh.map_test_table WHERE map_contains(str_int_map, 'c') ORDER BY id;
+----
+2
+
+statement ok
+DROP TABLE dh.map_test_table;

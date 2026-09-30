@@ -1,0 +1,70 @@
+# name: test/sql/struct_type_support.test
+# description: Test distributed execution with STRUCT data types
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8850);
+
+statement ok
+ATTACH DATABASE 'localhost:8850' AS dh (TYPE duckherder);
+
+statement ok
+DROP TABLE IF EXISTS dh.struct_test_table;
+
+statement ok
+CREATE TABLE dh.struct_test_table (
+    id INTEGER,
+    person STRUCT(name VARCHAR, age INTEGER),
+    nested STRUCT(point STRUCT(x DOUBLE, y DOUBLE), tags VARCHAR[]),
+    struct_list STRUCT(k VARCHAR, v BIGINT)[]
+);
+
+statement ok
+INSERT INTO dh.struct_test_table VALUES
+    (1, {'name': 'alice', 'age': 30}, {'point': {'x': 1.5, 'y': 2.5}, 'tags': ['a', 'b']}, [{'k': 'x', 'v': 1}, {'k': 'y', 'v': 2}]),
+    (2, {'name': 'bob', 'age': NULL}, {'point': NULL, 'tags': []}, []),
+    (3, NULL, NULL, NULL);
+
+query IT
+SELECT id, person FROM dh.struct_test_table ORDER BY id;
+----
+1	{'name': alice, 'age': 30}
+2	{'name': bob, 'age': NULL}
+3	NULL
+
+query ITT
+SELECT id, nested, struct_list FROM dh.struct_test_table ORDER BY id;
+----
+1	{'point': {'x': 1.5, 'y': 2.5}, 'tags': [a, b]}	[{'k': x, 'v': 1}, {'k': y, 'v': 2}]
+2	{'point': NULL, 'tags': []}	[]
+3	NULL	NULL
+
+query ITIRT
+SELECT id, person.name, person.age, nested.point.x, struct_list[2].k FROM dh.struct_test_table ORDER BY id;
+----
+1	alice	30	1.5	y
+2	bob	NULL	NULL	NULL
+3	NULL	NULL	NULL	NULL
+
+query I
+SELECT id FROM dh.struct_test_table WHERE person.name = 'bob';
+----
+2
+
+query T
+SELECT {'id': id, 'first_tag': nested.tags[1]} FROM dh.struct_test_table WHERE id = 1;
+----
+{'id': 1, 'first_tag': a}
+
+statement ok
+UPDATE dh.struct_test_table SET person = {'name': 'carol', 'age': 40} WHERE id = 3;
+
+query T
+SELECT person FROM dh.struct_test_table WHERE id = 3;
+----
+{'name': carol, 'age': 40}
+
+statement ok
+DROP TABLE dh.struct_test_table;
