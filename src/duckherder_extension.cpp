@@ -1,5 +1,6 @@
 #define DUCKDB_EXTENSION_MAIN
 
+#include "client/execution/logical_remote_create_index.hpp"
 #include "duckdb.hpp"
 #include "duckherder_extension.hpp"
 #include "duckherder_functions.hpp"
@@ -15,6 +16,7 @@ void LoadInternal(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
 	StorageExtension::Register(config, "duckherder", make_shared_ptr<DuckherderStorageExtension>());
+	OperatorExtension::Register(config, GetRemoteCreateIndexOperatorExtension());
 	config.AddExtensionOption(RETRY_MAX_ATTEMPTS_SETTING, "Maximum number of attempts for retryable Duckherder RPCs",
 	                          LogicalType::UBIGINT, Value::UBIGINT(DEFAULT_RETRY_MAX_ATTEMPTS), nullptr,
 	                          SetScope::GLOBAL);

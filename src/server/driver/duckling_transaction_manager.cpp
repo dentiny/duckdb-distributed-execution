@@ -5,8 +5,7 @@
 
 namespace duckdb {
 
-DucklingTransactionManager::DucklingTransactionManager(AttachedDatabase &db)
-    : DuckTransactionManager(db) {
+DucklingTransactionManager::DucklingTransactionManager(AttachedDatabase &db) : DuckTransactionManager(db) {
 }
 
 DucklingTransactionManager::~DucklingTransactionManager() = default;

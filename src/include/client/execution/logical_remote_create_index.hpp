@@ -26,10 +26,15 @@ public:
 		return "duckherder_remote_create_index";
 	}
 
+	void Serialize(Serializer &serializer) const override;
+
 protected:
 	void ResolveTypes() override {
 		types.emplace_back(LogicalType {LogicalTypeId::BIGINT});
 	}
 };
+
+// Creates the deserializer registered for remote CREATE INDEX logical operators.
+shared_ptr<OperatorExtension> GetRemoteCreateIndexOperatorExtension();
 
 } // namespace duckdb
