@@ -3,6 +3,7 @@
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/conversion_exception.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/string.hpp"
@@ -538,13 +539,79 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 	}
 }
 
+void ConvertArrowElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t arrow_idx, Vector &duckdb_vector,
+                         idx_t duck_idx, const LogicalType &type) {
+	if (arrow_array->IsNull(arrow_idx)) {
+		FlatVector::SetNull(duckdb_vector, duck_idx, true);
+		return;
+	}
+
+	if (type.id() == LogicalTypeId::LIST) {
+		std::shared_ptr<arrow::Array> child_array;
+		int64_t offset;
+		int64_t length;
+		if (arrow_array->type_id() == arrow::Type::LIST) {
+			auto list_array = std::static_pointer_cast<arrow::ListArray>(arrow_array);
+			child_array = list_array->values();
+			offset = list_array->value_offset(arrow_idx);
+			length = list_array->value_length(arrow_idx);
+		} else if (arrow_array->type_id() == arrow::Type::LARGE_LIST) {
+			auto list_array = std::static_pointer_cast<arrow::LargeListArray>(arrow_array);
+			child_array = list_array->values();
+			offset = list_array->value_offset(arrow_idx);
+			length = list_array->value_length(arrow_idx);
+		} else {
+			throw InternalException("Expected Arrow LIST for DuckDB type %s, received %s", type.ToString(),
+			                        arrow_array->type()->ToString());
+		}
+
+		auto old_size = ListVector::GetListSize(duckdb_vector);
+		auto &entry = FlatVector::GetData<list_entry_t>(duckdb_vector)[duck_idx];
+		entry.offset = old_size;
+		entry.length = NumericCast<idx_t>(length);
+		ListVector::Reserve(duckdb_vector, old_size + entry.length);
+		ListVector::SetListSize(duckdb_vector, old_size + entry.length);
+
+		auto &child_vector = ListVector::GetEntry(duckdb_vector);
+		auto &child_type = ListType::GetChildType(type);
+		for (idx_t child_idx = 0; child_idx < entry.length; child_idx++) {
+			ConvertArrowElement(child_array, NumericCast<idx_t>(offset) + child_idx, child_vector, old_size + child_idx,
+			                    child_type);
+		}
+		return;
+	}
+
+	if (type.id() == LogicalTypeId::ARRAY) {
+		if (arrow_array->type_id() != arrow::Type::FIXED_SIZE_LIST) {
+			throw InternalException("Expected Arrow FIXED_SIZE_LIST for DuckDB type %s, received %s", type.ToString(),
+			                        arrow_array->type()->ToString());
+		}
+		auto array = std::static_pointer_cast<arrow::FixedSizeListArray>(arrow_array);
+		auto array_size = ArrayType::GetSize(type);
+		if (NumericCast<idx_t>(array->value_length(arrow_idx)) != array_size) {
+			throw InternalException("Arrow fixed-size list length does not match DuckDB type %s", type.ToString());
+		}
+
+		auto &child_vector = ArrayVector::GetEntry(duckdb_vector);
+		auto &child_type = ArrayType::GetChildType(type);
+		auto child_offset = NumericCast<idx_t>(array->value_offset(arrow_idx));
+		auto target_offset = duck_idx * array_size;
+		for (idx_t child_idx = 0; child_idx < array_size; child_idx++) {
+			ConvertArrowElement(array->values(), child_offset + child_idx, child_vector, target_offset + child_idx,
+			                    child_type);
+		}
+		return;
+	}
+
+	ConvertArrowPrimitiveElement(arrow_array, arrow_idx, duckdb_vector, duck_idx, type);
+}
+
 } // namespace
 
 LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type) {
 	// TODO(hjiang):
 	// 1. Add support for complex nested types (STRUCT, MAP, UNION).
 	// 2. Add support for special types (ENUM, BIT, BIGNUM).
-	// 3. Add support for the above unsupported types, and nested list support.
 	switch (arrow_type->id()) {
 	case arrow::Type::NA:
 		return LogicalType {LogicalTypeId::SQLNULL};
@@ -637,10 +704,16 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 		auto decimal_type = std::static_pointer_cast<arrow::DecimalType>(arrow_type);
 		return LogicalType::DECIMAL(decimal_type->precision(), decimal_type->scale());
 	}
-	case arrow::Type::LIST: {
-		auto list_type = std::static_pointer_cast<arrow::ListType>(arrow_type);
+	case arrow::Type::LIST:
+	case arrow::Type::LARGE_LIST: {
+		auto list_type = std::static_pointer_cast<arrow::BaseListType>(arrow_type);
 		auto child_type = ArrowTypeToDuckDBType(list_type->value_type());
 		return LogicalType::LIST(child_type);
+	}
+	case arrow::Type::FIXED_SIZE_LIST: {
+		auto array_type = std::static_pointer_cast<arrow::FixedSizeListType>(arrow_type);
+		auto child_type = ArrowTypeToDuckDBType(array_type->value_type());
+		return LogicalType::ARRAY(child_type, NumericCast<idx_t>(array_type->list_size()));
 	}
 	case arrow::Type::DICTIONARY: {
 		// Arrow dictionary types map to DuckDB ENUM types.
@@ -666,45 +739,8 @@ LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_
 
 void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_array, Vector &duckdb_vector,
                                      const LogicalType &type, idx_t num_rows) {
-	// Convert based on type - match Arrow array type to DuckDB type.
 	for (idx_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-		if (arrow_array->IsNull(row_idx)) {
-			FlatVector::SetNull(duckdb_vector, row_idx, true);
-			continue;
-		}
-
-		// Check if this is a LIST type, which requires special handling
-		if (type.id() == LogicalTypeId::LIST) {
-			auto list_array = std::static_pointer_cast<arrow::ListArray>(arrow_array);
-			auto child_array = list_array->values();
-
-			auto &child_type = ListType::GetChildType(type);
-			auto offset = list_array->value_offset(row_idx);
-			auto length = list_array->value_length(row_idx);
-
-			// Create a list entry in the DuckDB vector.
-			auto old_size = ListVector::GetListSize(duckdb_vector);
-			FlatVector::GetData<list_entry_t>(duckdb_vector)[row_idx].offset = old_size;
-			FlatVector::GetData<list_entry_t>(duckdb_vector)[row_idx].length = length;
-
-			// Get the child vector from the LIST vector.
-			auto &child_vector = ListVector::GetEntry(duckdb_vector);
-			ListVector::SetListSize(duckdb_vector, old_size + length);
-
-			// Convert each element in the list using the helper function.
-			for (idx_t idx = 0; idx < static_cast<idx_t>(length); ++idx) {
-				auto child_idx = offset + idx;
-				if (child_array->IsNull(child_idx)) {
-					FlatVector::SetNull(child_vector, old_size + idx, /*is_null=*/true);
-					continue;
-				}
-				ConvertArrowPrimitiveElement(child_array, child_idx, child_vector, old_size + idx, child_type);
-			}
-			continue;
-		}
-
-		// For primitive types, use the helper function directly.
-		ConvertArrowPrimitiveElement(arrow_array, row_idx, duckdb_vector, row_idx, type);
+		ConvertArrowElement(arrow_array, row_idx, duckdb_vector, row_idx, type);
 	}
 }
 

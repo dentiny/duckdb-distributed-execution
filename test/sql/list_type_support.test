@@ -156,3 +156,25 @@ SELECT id, bool_list FROM dh.list_test_table WHERE id <= 2 ORDER BY id;
 ----
 1	[true, false, true]
 2	[false, false]
+
+statement ok
+CREATE TABLE dh.nested_list_array_table (
+    nested_lists INTEGER[][],
+    fixed_array INTEGER[3],
+    list_of_arrays INTEGER[2][]
+);
+
+statement ok
+INSERT INTO dh.nested_list_array_table
+VALUES ([[1, 2], [3, NULL]], [4, 5, 6], [[7, 8], [9, 10]]);
+
+query III
+SELECT nested_lists[1][2], fixed_array[3], list_of_arrays[2][1]
+FROM dh.nested_list_array_table;
+----
+2	6	9
+
+query I
+SELECT nested_lists[2][2] IS NULL FROM dh.nested_list_array_table;
+----
+true

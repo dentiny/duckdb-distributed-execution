@@ -557,7 +557,7 @@ through local execution on the Driver/Control Node.
 - `ALTER TABLE` variants other than add/drop/rename column, rename table, change column type, set a default, set/drop
   `NOT NULL`, and add a primary key. Adding other constraint types or dropping constraints is not implemented by
   DuckDB's ALTER path. Foreign keys declared by `CREATE TABLE` are supported.
-- Full Arrow transport for `STRUCT`, `MAP`, `UNION`, nested `LIST`, `BIT`, `BIGNUM`, and non-string dictionary types.
+- Full Arrow transport for `STRUCT`, `MAP`, `UNION`, `BIT`, `BIGNUM`, and non-string dictionary types.
   Unsupported values may be converted to `VARCHAR` or rejected.
 - A persistent default Duckling database and server restart recovery. The default server database is in memory.
 - Authentication, authorization, connection pooling, multiple server-side DuckDB instances, automatic worker
