@@ -129,18 +129,8 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 
 // Execute a pipeline task.
 arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
-                                              unique_ptr<Connection> &task_conn, unique_ptr<QueryResult> &result) {
+                                              Connection &task_conn, unique_ptr<QueryResult> &result) {
 	arrow::Status exec_status = arrow::Status::OK();
-	if (HasObjectStorage(req.storage_config())) {
-		ARROW_RETURN_NOT_OK(ValidateRequest(req.storage_config()));
-		try {
-			task_conn = ConnectObjectStorageDatabase(GetOrOpenObjectStorageDatabase(req.storage_config()));
-		} catch (const std::exception &ex) {
-			return arrow::Status::IOError(StringUtil::Format("Worker %s failed to attach %s: %s", worker_id,
-			                                                 req.storage_config().database_uri(),
-			                                                 ErrorData(ex).Message()));
-		}
-	}
 
 	// TODO(hjiang): Plan-based execution temporarily disabled
 	//
@@ -161,7 +151,7 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 
 	// Execute task using SQL-based execution.
 	if (!result && !req.sql().empty()) {
-		result = (task_conn ? *task_conn : *conn).Query(req.sql());
+		result = task_conn.Query(req.sql());
 	}
 
 	// Validate result.
@@ -178,8 +168,21 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
                                                  distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
+	// Object storage tasks run on their own session of this worker's instance for that database.
+	unique_ptr<Connection> object_storage_conn;
+	if (HasObjectStorage(req.storage_config())) {
+		ARROW_RETURN_NOT_OK(ValidateRequest(req.storage_config()));
+		try {
+			object_storage_conn = ConnectObjectStorageDatabase(GetOrOpenObjectStorageDatabase(req.storage_config()));
+		} catch (const std::exception &ex) {
+			return arrow::Status::IOError(StringUtil::Format("Worker %s failed to attach %s: %s", worker_id,
+			                                                 req.storage_config().database_uri(),
+			                                                 ErrorData(ex).Message()));
+		}
+	}
+	auto &task_conn = object_storage_conn ? *object_storage_conn : *conn;
+
 	// Execute the pipeline task with state tracking
-	unique_ptr<Connection> task_conn;
 	unique_ptr<QueryResult> result;
 	auto exec_status = ExecutePipelineTask(req, task_conn, result);
 
@@ -192,7 +195,7 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	// Convert result to Arrow format.
 	// This represents the LocalState output from this worker node.
 	idx_t row_count = 0;
-	auto status = QueryResultToArrow(*result, task_conn ? *task_conn : *conn, reader, &row_count);
+	auto status = QueryResultToArrow(*result, task_conn, reader, &row_count);
 	if (!status.ok()) {
 		return status;
 	}

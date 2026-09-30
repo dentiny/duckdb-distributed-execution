@@ -80,6 +80,8 @@ statement ok con2
 ATTACH 'localhost:8839' AS duckling_writer (TYPE duckherder);
 
 # Readers are served by read-only instances on the control node and on each worker.
+# Worker instances are snapshots taken the first time the worker opens the database and are not refreshed,
+# so every write to a database in this test happens before its first read.
 statement ok con3
 ATTACH 'localhost:8839/a.db' AS reader_a (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
 

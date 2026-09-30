@@ -44,11 +44,12 @@ private:
 	arrow::Status QueryResultToArrow(QueryResult &result, Connection &result_conn,
 	                                 std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count = nullptr);
 
-	// Execute a pipeline task. Object storage tasks run on task_conn, which must outlive the result.
-	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
-	                                  unique_ptr<Connection> &task_conn, unique_ptr<QueryResult> &result);
+	// Execute a pipeline task on task_conn, which must outlive the result.
+	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
+	                                  unique_ptr<QueryResult> &result);
 
 	// Return this worker's read-only instance for the configuration, attaching it on first use.
+	// The instance is a snapshot from that first attach; later writes are not visible through it.
 	DuckDB &GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config);
 
 	string worker_id;
