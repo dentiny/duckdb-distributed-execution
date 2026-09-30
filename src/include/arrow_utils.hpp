@@ -15,19 +15,24 @@ class Schema;
 
 namespace duckdb {
 
+class ClientContext;
+class DataChunk;
 class QueryResult;
 
-// Convert Arrow type to DuckDB LogicalType.
-// Returns VARCHAR for unsupported types as a fallback.
-LogicalType ArrowTypeToDuckDBType(const std::shared_ptr<arrow::DataType> &arrow_type);
+// Convert an Arrow type to its DuckDB logical type using DuckDB's Arrow schema importer.
+LogicalType ArrowTypeToDuckDBType(ClientContext &context, const std::shared_ptr<arrow::DataType> &arrow_type);
 
-// Convert Arrow array data to DuckDB vector.
-void ConvertArrowArrayToDuckDBVector(const std::shared_ptr<arrow::Array> &arrow_array, Vector &duckdb_vector,
-                                     const LogicalType &type, idx_t num_rows);
+// Convert an Arrow array to a DuckDB vector using DuckDB's Arrow scan conversion.
+void ConvertArrowArrayToDuckDBVector(ClientContext &context, const std::shared_ptr<arrow::Array> &arrow_array,
+                                     Vector &duckdb_vector, const LogicalType &type, idx_t num_rows);
+
+// Convert an Arrow record batch into a DuckDB data chunk using DuckDB's Arrow scan conversion.
+void ArrowRecordBatchToDataChunk(ClientContext &context, const arrow::RecordBatch &batch, DataChunk &out,
+                                 const vector<LogicalType> *expected_types = nullptr);
 
 // Convert Arrow record batches into a materialized DuckDB query result.
 // Uses expected_types when provided to preserve logical types that cannot be inferred from Arrow alone.
-unique_ptr<QueryResult> MakeArrowResult(StatementType statement_type,
+unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType statement_type,
                                         const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
                                         const std::shared_ptr<arrow::Schema> &schema,
                                         const vector<LogicalType> *expected_types);

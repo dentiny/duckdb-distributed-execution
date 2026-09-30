@@ -56,9 +56,9 @@ public:
 	                                            unique_ptr<LogicalOperator> plan) override;
 	// Routes ADD PRIMARY KEY to the control node without building a client-side index over a remote scan.
 	unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
-	                                             unique_ptr<LogicalOperator> plan,
-	                                             unique_ptr<CreateIndexInfo> create_info,
-	                                             unique_ptr<AlterTableInfo> alter_info) override;
+	                                              unique_ptr<LogicalOperator> plan,
+	                                              unique_ptr<CreateIndexInfo> create_info,
+	                                              unique_ptr<AlterTableInfo> alter_info) override;
 
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 

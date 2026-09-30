@@ -113,17 +113,15 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 
 	// Get the expected types from the table schema to handle special types like ENUM.
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
-	auto includes_rowid =
-	    std::find(local_state.column_ids.begin(), local_state.column_ids.end(), COLUMN_IDENTIFIER_ROW_ID) !=
-	    local_state.column_ids.end();
+	auto includes_rowid = std::find(local_state.column_ids.begin(), local_state.column_ids.end(),
+	                                COLUMN_IDENTIFIER_ROW_ID) != local_state.column_ids.end();
 	auto scan_source = bind_data.remote_table_name;
 	if (includes_rowid) {
 		expected_types.insert(expected_types.begin(), LogicalType::ROW_TYPE);
 		scan_source = StringUtil::Format("SELECT rowid, * FROM %s", bind_data.remote_table_name);
 	}
 	auto &client = GetDistributedClient(context, bind_data.table);
-	auto result =
-	    client.ScanTable(scan_source, /*limit=*/output.GetCapacity(), local_state.offset, &expected_types);
+	auto result = client.ScanTable(scan_source, /*limit=*/output.GetCapacity(), local_state.offset, &expected_types);
 	if (result->HasError()) {
 		throw Exception(ExceptionType::INTERNAL,
 		                StringUtil::Format("Distributed table scan error: %s", result->GetError()));

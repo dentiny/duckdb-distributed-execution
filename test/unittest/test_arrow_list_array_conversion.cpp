@@ -1,6 +1,7 @@
 #include "catch/catch.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb.hpp"
 #include "duckdb/common/types/vector.hpp"
 
 #include <arrow/builder.h>
@@ -8,6 +9,10 @@
 using namespace duckdb;
 
 TEST_CASE("Arrow nested LIST conversion", "[arrow][list]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto values_builder = std::make_shared<arrow::Int32Builder>();
 	auto inner_builder = std::make_shared<arrow::ListBuilder>(arrow::default_memory_pool(), values_builder);
 	arrow::ListBuilder outer_builder(arrow::default_memory_pool(), inner_builder);
@@ -25,9 +30,9 @@ TEST_CASE("Arrow nested LIST conversion", "[arrow][list]") {
 	REQUIRE(outer_builder.Finish(&arrow_array).ok());
 
 	auto type = LogicalType::LIST(LogicalType::LIST(LogicalType::INTEGER));
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 	Vector result(type, 2);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 2);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 2);
 
 	auto outer_entries = FlatVector::GetData<list_entry_t>(result);
 	REQUIRE(outer_entries[0].length == 2);
@@ -47,6 +52,10 @@ TEST_CASE("Arrow nested LIST conversion", "[arrow][list]") {
 }
 
 TEST_CASE("Arrow fixed-size LIST to DuckDB ARRAY conversion", "[arrow][array]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto values_builder = std::make_shared<arrow::Int32Builder>();
 	arrow::FixedSizeListBuilder array_builder(arrow::default_memory_pool(), values_builder, 3);
 
@@ -63,10 +72,10 @@ TEST_CASE("Arrow fixed-size LIST to DuckDB ARRAY conversion", "[arrow][array]") 
 	REQUIRE(array_builder.Finish(&arrow_array).ok());
 
 	auto type = LogicalType::ARRAY(LogicalType::INTEGER, 3);
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 
 	Vector result(type, 2);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 2);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 2);
 
 	auto &child_vector = ArrayVector::GetEntry(result);
 	auto values = FlatVector::GetData<int32_t>(child_vector);
@@ -79,6 +88,10 @@ TEST_CASE("Arrow fixed-size LIST to DuckDB ARRAY conversion", "[arrow][array]") 
 }
 
 TEST_CASE("Arrow nested fixed-size LIST to DuckDB nested ARRAY conversion", "[arrow][array]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto values_builder = std::make_shared<arrow::Int32Builder>();
 	auto inner_builder = std::make_shared<arrow::FixedSizeListBuilder>(arrow::default_memory_pool(), values_builder, 2);
 	arrow::FixedSizeListBuilder outer_builder(arrow::default_memory_pool(), inner_builder, 2);
@@ -95,10 +108,10 @@ TEST_CASE("Arrow nested fixed-size LIST to DuckDB nested ARRAY conversion", "[ar
 	REQUIRE(outer_builder.Finish(&arrow_array).ok());
 
 	auto type = LogicalType::ARRAY(LogicalType::ARRAY(LogicalType::INTEGER, 2), 2);
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 
 	Vector result(type, 1);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 1);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 1);
 
 	auto &inner_vector = ArrayVector::GetEntry(result);
 	auto &values_vector = ArrayVector::GetEntry(inner_vector);

@@ -295,9 +295,11 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 	if (!result.client_properties.client_context) {
 		result.client_properties.client_context = conn->context.get();
 	}
+	auto client_properties = result.client_properties;
+	client_properties.arrow_lossless_conversion = true;
 
 	ArrowSchema arrow_schema;
-	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
+	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
 
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
@@ -313,8 +315,8 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, std::shared_pt
 
 		ArrowArray arrow_array;
 		auto extension_types =
-		    ArrowTypeExtensionData::GetExtensionTypes(*result.client_properties.client_context, result.types);
-		ArrowConverter::ToArrowArray(*chunk, &arrow_array, result.client_properties, extension_types);
+		    ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
+		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_properties, extension_types);
 
 		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
 		if (!batch_result.ok()) {

@@ -1,6 +1,7 @@
 #include "catch/catch.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/common/vector.hpp"
 
@@ -10,6 +11,9 @@
 using namespace duckdb;
 
 TEST_CASE("Arrow UUID conversion", "[arrow][uuid]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
 	const auto uuid_type = LogicalType::UUID;
 
 	SECTION("UTF-8 strings") {
@@ -22,7 +26,7 @@ TEST_CASE("Arrow UUID conversion", "[arrow][uuid]") {
 		REQUIRE(builder.Finish(&arrow_array).ok());
 
 		Vector result(uuid_type, 3);
-		ConvertArrowArrayToDuckDBVector(arrow_array, result, uuid_type, 3);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, result, uuid_type, 3);
 
 		auto values = FlatVector::GetData<hugeint_t>(result);
 		REQUIRE(UUID::ToString(values[0]) == "550e8400-e29b-41d4-a716-446655440000");
@@ -41,7 +45,7 @@ TEST_CASE("Arrow UUID conversion", "[arrow][uuid]") {
 		REQUIRE(builder.Finish(&arrow_array).ok());
 
 		Vector result(uuid_type, 1);
-		ConvertArrowArrayToDuckDBVector(arrow_array, result, uuid_type, 1);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, result, uuid_type, 1);
 
 		auto value = FlatVector::GetData<hugeint_t>(result)[0];
 		REQUIRE(UUID::ToString(value) == "550e8400-e29b-41d4-a716-446655440000");

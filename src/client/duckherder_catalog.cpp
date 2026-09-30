@@ -311,16 +311,14 @@ PhysicalOperator &DuckherderCatalog::PlanMergeInto(ClientContext &context, Physi
 		return DuckCatalog::PlanMergeInto(context, planner, op, plan);
 	}
 	auto statement_type = parser.statements[0]->type;
-	if (statement_type != StatementType::INSERT_STATEMENT &&
-	    statement_type != StatementType::MERGE_INTO_STATEMENT) {
+	if (statement_type != StatementType::INSERT_STATEMENT && statement_type != StatementType::MERGE_INTO_STATEMENT) {
 		return DuckCatalog::PlanMergeInto(context, planner, op, plan);
 	}
 	auto operator_type = statement_type == StatementType::INSERT_STATEMENT ? PhysicalOperatorType::INSERT
-	                                                                      : PhysicalOperatorType::MERGE_INTO;
+	                                                                       : PhysicalOperatorType::MERGE_INTO;
 
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Push MERGE to control node: %s", sql));
-	return planner.Make<PhysicalRemoteDML>(operator_type, op.types, op.table, std::move(sql),
-	                                       op.estimated_cardinality);
+	return planner.Make<PhysicalRemoteDML>(operator_type, op.types, op.table, std::move(sql), op.estimated_cardinality);
 }
 
 unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
@@ -340,7 +338,7 @@ unique_ptr<LogicalOperator> DuckherderCatalog::BindAlterAddIndex(Binder &binder,
                                                                  unique_ptr<AlterTableInfo> alter_info) {
 	if (table_entry.internal) {
 		return DuckCatalog::BindAlterAddIndex(binder, table_entry, std::move(plan), std::move(create_info),
-		                                     std::move(alter_info));
+		                                      std::move(alter_info));
 	}
 	return make_uniq<LogicalRemoteAlterTableOperator>(std::move(alter_info), table_entry.schema, table_entry);
 }

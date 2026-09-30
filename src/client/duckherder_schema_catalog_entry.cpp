@@ -69,8 +69,7 @@ void DuckherderSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type
 	});
 }
 
-void DuckherderSchemaCatalogEntry::Scan(CatalogType type,
-                                        const std::function<void(CatalogEntry &)> &callback) {
+void DuckherderSchemaCatalogEntry::Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
 	DuckSchemaEntry::Scan(type, [&](CatalogEntry &entry) {
 		if (entry.type != CatalogType::TABLE_ENTRY) {
 			callback(entry);
@@ -127,10 +126,10 @@ void DuckherderSchemaCatalogEntry::AddRemoteIndex(TableCatalogEntry &table, cons
 		for (auto &expression : expressions) {
 			ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(
 			    *expression, [&](const ColumnRefExpression &column_ref) {
-				auto column_name = column_ref.GetColumnName();
-				auto logical_index = table.GetColumnIndex(column_name);
-				index_info.column_set.insert(table.GetColumns().GetColumn(logical_index).Physical().index);
-			});
+				    auto column_name = column_ref.GetColumnName();
+				    auto logical_index = table.GetColumnIndex(column_name);
+				    index_info.column_set.insert(table.GetColumns().GetColumn(logical_index).Physical().index);
+			    });
 		}
 	};
 	if (index_info.column_set.empty()) {

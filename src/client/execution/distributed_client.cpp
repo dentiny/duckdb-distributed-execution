@@ -94,8 +94,8 @@ ErrorData GetTransactionError(const arrow::Status &status, const distributed::Di
 		unknown_outcome = true;
 	}
 	if (unknown_outcome) {
-		return ErrorData(StringUtil::Format("Remote Duckherder %s outcome is unknown: %s", action_name,
-		                                    response.error_message()));
+		return ErrorData(
+		    StringUtil::Format("Remote Duckherder %s outcome is unknown: %s", action_name, response.error_message()));
 	}
 	return response.has_error() ? FromRemoteError(response.error()) : ErrorData(response.error_message());
 }
@@ -115,8 +115,15 @@ DistributedFlightClient &DistributedClient::GetClient(DistributedClientLock &) {
 	return *client;
 }
 
+ClientContext &DistributedClient::GetArrowContext(DistributedClientLock &) {
+	if (!arrow_connection) {
+		arrow_connection = make_uniq<Connection>(db_instance);
+	}
+	return *arrow_connection->context;
+}
+
 DistributedClient::DistributedClient(string server_url_p, distributed::ClientRole role_p, DatabaseInstance &db_instance)
-    : server_url(std::move(server_url_p)) {
+    : server_url(std::move(server_url_p)), db_instance(db_instance) {
 	client = make_uniq<DistributedFlightClient>(server_url, role_p, db_instance);
 	auto status = client->Connect();
 	if (!status.ok()) {
@@ -131,6 +138,7 @@ void DistributedClient::Close() {
 		return;
 	}
 	client->Close();
+	arrow_connection.reset();
 	closed = true;
 }
 
@@ -160,7 +168,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 		return MakeErrorResult(status.ToString());
 	}
 	auto schema = batches.empty() ? nullptr : batches[0]->schema();
-	return MakeArrowResult(StatementType::SELECT_STATEMENT, batches, schema, expected_types);
+	return MakeArrowResult(GetArrowContext(lock), StatementType::SELECT_STATEMENT, batches, schema, expected_types);
 }
 
 bool DistributedClient::TableExists(const string &table_name) {
@@ -196,19 +204,13 @@ unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, S
 		return MakeErrorResult(reader_result.status().ToString());
 	}
 	auto reader = reader_result.ValueOrDie();
-	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	while (true) {
-		auto batch_result = reader->Next();
-		if (!batch_result.ok()) {
-			return MakeErrorResult(batch_result.status().ToString());
-		}
-		auto batch = batch_result.ValueOrDie();
-		if (!batch) {
-			break;
-		}
-		batches.emplace_back(std::move(batch));
+	auto batches_result = reader->ToRecordBatches();
+	if (!batches_result.ok()) {
+		return MakeErrorResult(batches_result.status().ToString());
 	}
-	return MakeArrowResult(statement_type, batches, reader->schema(), expected_types);
+	auto arrow_batches = batches_result.ValueOrDie();
+	vector<std::shared_ptr<arrow::RecordBatch>> batches(arrow_batches.begin(), arrow_batches.end());
+	return MakeArrowResult(GetArrowContext(lock), statement_type, batches, reader->schema(), expected_types);
 }
 
 unique_ptr<QueryResult> DistributedClient::CommitTransaction() {

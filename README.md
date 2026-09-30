@@ -621,6 +621,7 @@ DuckDB compatibility gaps listed below are also tracked by
 - [x] Basic map type support
 - [ ] Nested map NULL semantics
 - [x] Struct type support
+- [x] Lossless `HUGEINT` and `UHUGEINT` Arrow transport
 - [ ] Union type support
 - [ ] BIGNUM type support
 - [ ] GEOMETRY type and statistics support

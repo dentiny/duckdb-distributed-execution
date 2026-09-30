@@ -1,6 +1,7 @@
 #include "catch/catch.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector.hpp"
 
@@ -11,6 +12,10 @@
 using namespace duckdb;
 
 TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	// Create a DuckDB ENUM type: ENUM('happy', 'sad', 'neutral')
 	Vector enum_values(LogicalType {LogicalTypeId::VARCHAR}, 3);
 	auto values_ptr = FlatVector::GetData<string_t>(enum_values);
@@ -31,7 +36,7 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 
 		// Convert to DuckDB vector.
 		Vector duckdb_vector(enum_type, 3);
-		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 3);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, duckdb_vector, enum_type, 3);
 
 		// Verify the conversion.
 		auto data_ptr = FlatVector::GetData<uint8_t>(duckdb_vector);
@@ -49,7 +54,7 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 		REQUIRE(builder.Finish(&arrow_array).ok());
 
 		Vector duckdb_vector(enum_type, 2);
-		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 2);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, duckdb_vector, enum_type, 2);
 
 		auto data_ptr = FlatVector::GetData<uint8_t>(duckdb_vector);
 		REQUIRE(data_ptr[0] == 1); // 'sad'
@@ -79,30 +84,12 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 		auto arrow_array = std::make_shared<arrow::DictionaryArray>(dict_type, indices_array, dict_array);
 
 		Vector duckdb_vector(enum_type, 3);
-		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 3);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, duckdb_vector, enum_type, 3);
 
 		auto data_ptr = FlatVector::GetData<uint8_t>(duckdb_vector);
 		REQUIRE(data_ptr[0] == 0); // 'happy'
 		REQUIRE(data_ptr[1] == 2); // 'neutral'
 		REQUIRE(data_ptr[2] == 1); // 'sad'
-	}
-
-	SECTION("Convert from Arrow UINT8 (physical type)") {
-		arrow::UInt8Builder builder;
-		REQUIRE(builder.Append(0).ok()); // happy
-		REQUIRE(builder.Append(1).ok()); // sad
-		REQUIRE(builder.Append(2).ok()); // neutral
-
-		std::shared_ptr<arrow::Array> arrow_array;
-		REQUIRE(builder.Finish(&arrow_array).ok());
-
-		Vector duckdb_vector(enum_type, 3);
-		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 3);
-
-		auto data_ptr = FlatVector::GetData<uint8_t>(duckdb_vector);
-		REQUIRE(data_ptr[0] == 0);
-		REQUIRE(data_ptr[1] == 1);
-		REQUIRE(data_ptr[2] == 2);
 	}
 
 	SECTION("Convert with NULL values") {
@@ -115,7 +102,7 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 		REQUIRE(builder.Finish(&arrow_array).ok());
 
 		Vector duckdb_vector(enum_type, 3);
-		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 3);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, duckdb_vector, enum_type, 3);
 
 		auto data_ptr = FlatVector::GetData<uint8_t>(duckdb_vector);
 		auto &validity = FlatVector::Validity(duckdb_vector);
@@ -135,13 +122,15 @@ TEST_CASE("Arrow ENUM Conversion Tests", "[arrow][enum]") {
 
 		Vector duckdb_vector(enum_type, 2);
 
-		// Should throw InvalidInputException
-		REQUIRE_THROWS_AS(ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 2),
-		                  InvalidInputException);
+		REQUIRE_THROWS(ConvertArrowArrayToDuckDBVector(context, arrow_array, duckdb_vector, enum_type, 2));
 	}
 }
 
 TEST_CASE("Arrow ENUM with larger physical types", "[arrow][enum]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	// Create ENUM with more than 256 values (requires UINT16).
 	Vector enum_values(LogicalType {LogicalTypeId::VARCHAR}, 300);
 	for (idx_t idx = 0; idx < 300; idx++) {
@@ -151,17 +140,25 @@ TEST_CASE("Arrow ENUM with larger physical types", "[arrow][enum]") {
 
 	auto enum_type = LogicalType::ENUM("large_enum", enum_values, 300);
 
-	SECTION("Convert from UINT16") {
-		arrow::UInt16Builder builder;
-		REQUIRE(builder.Append(0).ok());
-		REQUIRE(builder.Append(100).ok());
-		REQUIRE(builder.Append(299).ok());
+	SECTION("Convert from Arrow DICTIONARY with UINT16 indices") {
+		arrow::StringBuilder dictionary_builder;
+		for (idx_t idx = 0; idx < 300; idx++) {
+			REQUIRE(dictionary_builder.Append("value_" + std::to_string(idx)).ok());
+		}
+		std::shared_ptr<arrow::Array> dictionary;
+		REQUIRE(dictionary_builder.Finish(&dictionary).ok());
 
-		std::shared_ptr<arrow::Array> arrow_array;
-		REQUIRE(builder.Finish(&arrow_array).ok());
+		arrow::UInt16Builder indices_builder;
+		REQUIRE(indices_builder.Append(0).ok());
+		REQUIRE(indices_builder.Append(100).ok());
+		REQUIRE(indices_builder.Append(299).ok());
+		std::shared_ptr<arrow::Array> indices;
+		REQUIRE(indices_builder.Finish(&indices).ok());
 
+		auto dictionary_type = std::make_shared<arrow::DictionaryType>(arrow::uint16(), arrow::utf8());
+		auto arrow_array = std::make_shared<arrow::DictionaryArray>(dictionary_type, indices, dictionary);
 		Vector duckdb_vector(enum_type, 3);
-		ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, enum_type, 3);
+		ConvertArrowArrayToDuckDBVector(context, arrow_array, duckdb_vector, enum_type, 3);
 
 		auto data_ptr = FlatVector::GetData<uint16_t>(duckdb_vector);
 		REQUIRE(data_ptr[0] == 0);

@@ -185,35 +185,15 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 
 			// Convert Arrow batch (LocalState output) to DuckDB DataChunk
 			auto arrow_batch = batch_with_metadata.data;
-
-			// Use Arrow schema to get actual types from the batch
-			vector<LogicalType> batch_types;
-			batch_types.reserve(arrow_batch->num_columns());
-
-			for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
-				auto arrow_field = arrow_batch->schema()->field(col_idx);
-				auto arrow_type = arrow_field->type();
-				auto duckdb_type = ArrowTypeToDuckDBType(arrow_type);
-				batch_types.push_back(duckdb_type);
-			}
+			DataChunk chunk;
+			ArrowRecordBatchToDataChunk(*conn.context, *arrow_batch, chunk, types.empty() ? nullptr : &types);
 
 			// Initialize collection with actual schema from first batch
 			if (!collection) {
-				actual_types = batch_types;
+				actual_types = chunk.GetTypes();
 				collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), actual_types);
 			}
 
-			DataChunk chunk;
-			chunk.Initialize(Allocator::DefaultAllocator(), batch_types);
-
-			for (int col_idx = 0; col_idx < arrow_batch->num_columns(); ++col_idx) {
-				auto arrow_array = arrow_batch->column(col_idx);
-				auto &duckdb_vector = chunk.data[col_idx];
-				ConvertArrowArrayToDuckDBVector(arrow_array, duckdb_vector, batch_types[col_idx],
-				                                arrow_batch->num_rows());
-			}
-
-			chunk.SetCardinality(arrow_batch->num_rows());
 			// Append to GlobalSinkState (ColumnDataCollection)
 			collection->Append(chunk);
 

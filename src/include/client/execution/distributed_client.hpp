@@ -67,8 +67,10 @@ public:
 
 private:
 	string server_url;
+	DatabaseInstance &db_instance;
 	mutable concurrency::mutex lifecycle_mutex;
 	unique_ptr<DistributedFlightClient> client DUCKDB_GUARDED_BY(lifecycle_mutex);
+	unique_ptr<Connection> arrow_connection DUCKDB_GUARDED_BY(lifecycle_mutex);
 	bool closed DUCKDB_GUARDED_BY(lifecycle_mutex) = false;
 
 	class DUCKDB_SCOPED_CAPABILITY DistributedClientLock {
@@ -81,6 +83,8 @@ private:
 	};
 
 	DistributedFlightClient &GetClient(DistributedClientLock &) DUCKDB_REQUIRES(lifecycle_mutex);
+	// Returns the dedicated context used by DuckDB's Arrow import and cast functions.
+	ClientContext &GetArrowContext(DistributedClientLock &) DUCKDB_REQUIRES(lifecycle_mutex);
 
 	unique_ptr<QueryResult> ManageTransaction(distributed::TransactionAction action);
 };

@@ -1,6 +1,7 @@
 #include "catch/catch.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb.hpp"
 #include "duckdb/common/types/vector.hpp"
 
 #include <arrow/builder.h>
@@ -8,6 +9,10 @@
 using namespace duckdb;
 
 TEST_CASE("Arrow STRUCT conversion", "[arrow][struct]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto id_builder = std::make_shared<arrow::Int32Builder>();
 	auto name_builder = std::make_shared<arrow::StringBuilder>();
 	auto arrow_type = arrow::struct_({arrow::field("id", arrow::int32()), arrow::field("name", arrow::utf8())});
@@ -28,10 +33,10 @@ TEST_CASE("Arrow STRUCT conversion", "[arrow][struct]") {
 	child_types.emplace_back("id", LogicalType::INTEGER);
 	child_types.emplace_back("name", LogicalType::VARCHAR);
 	auto type = LogicalType::STRUCT(std::move(child_types));
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 
 	Vector result(type, 3);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 3);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 3);
 
 	REQUIRE(Value::NotDistinctFrom(result.GetValue(0),
 	                               Value::STRUCT({{"id", Value::INTEGER(1)}, {"name", Value("alice")}})));
@@ -45,6 +50,10 @@ TEST_CASE("Arrow STRUCT conversion", "[arrow][struct]") {
 }
 
 TEST_CASE("Arrow nested STRUCT conversion", "[arrow][struct]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto x_builder = std::make_shared<arrow::DoubleBuilder>();
 	auto inner_type = arrow::struct_({arrow::field("x", arrow::float64())});
 	auto inner_builder = std::make_shared<arrow::StructBuilder>(
@@ -75,10 +84,10 @@ TEST_CASE("Arrow nested STRUCT conversion", "[arrow][struct]") {
 	outer_children.emplace_back("point", LogicalType::STRUCT(inner_children));
 	outer_children.emplace_back("tags", LogicalType::LIST(LogicalType::VARCHAR));
 	auto type = LogicalType::STRUCT(std::move(outer_children));
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 
 	Vector result(type, 2);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 2);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 2);
 
 	auto expected_row0 = Value::STRUCT({{"point", Value::STRUCT({{"x", Value::DOUBLE(1.5)}})},
 	                                    {"tags", Value::LIST(LogicalType::VARCHAR, {Value("a"), Value("b")})}});
@@ -89,6 +98,10 @@ TEST_CASE("Arrow nested STRUCT conversion", "[arrow][struct]") {
 }
 
 TEST_CASE("Arrow sliced STRUCT conversion", "[arrow][struct]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto id_builder = std::make_shared<arrow::Int32Builder>();
 	auto arrow_type = arrow::struct_({arrow::field("id", arrow::int32())});
 	arrow::StructBuilder struct_builder(arrow_type, arrow::default_memory_pool(), {id_builder});
@@ -101,9 +114,9 @@ TEST_CASE("Arrow sliced STRUCT conversion", "[arrow][struct]") {
 	REQUIRE(struct_builder.Finish(&arrow_array).ok());
 	auto sliced_array = arrow_array->Slice(2, 2);
 
-	auto type = ArrowTypeToDuckDBType(sliced_array->type());
+	auto type = ArrowTypeToDuckDBType(context, sliced_array->type());
 	Vector result(type, 2);
-	ConvertArrowArrayToDuckDBVector(sliced_array, result, type, 2);
+	ConvertArrowArrayToDuckDBVector(context, sliced_array, result, type, 2);
 
 	REQUIRE(Value::NotDistinctFrom(result.GetValue(0), Value::STRUCT({{"id", Value::INTEGER(20)}})));
 	REQUIRE(Value::NotDistinctFrom(result.GetValue(1), Value::STRUCT({{"id", Value::INTEGER(30)}})));

@@ -1,6 +1,7 @@
 #include "catch/catch.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb.hpp"
 #include "duckdb/common/types/vector.hpp"
 
 #include <arrow/builder.h>
@@ -8,6 +9,10 @@
 using namespace duckdb;
 
 TEST_CASE("Arrow MAP conversion", "[arrow][map]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto key_builder = std::make_shared<arrow::StringBuilder>();
 	auto item_builder = std::make_shared<arrow::Int32Builder>();
 	arrow::MapBuilder map_builder(arrow::default_memory_pool(), key_builder, item_builder);
@@ -27,10 +32,10 @@ TEST_CASE("Arrow MAP conversion", "[arrow][map]") {
 	REQUIRE(map_builder.Finish(&arrow_array).ok());
 
 	auto type = LogicalType::MAP(LogicalType::VARCHAR, LogicalType::INTEGER);
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 
 	Vector result(type, 4);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 4);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 4);
 
 	REQUIRE(result.GetValue(0) == Value::MAP(LogicalType::VARCHAR, LogicalType::INTEGER, {Value("a"), Value("b")},
 	                                         {Value::INTEGER(1), Value(LogicalType::INTEGER)}));
@@ -41,6 +46,10 @@ TEST_CASE("Arrow MAP conversion", "[arrow][map]") {
 }
 
 TEST_CASE("Arrow MAP with nested LIST values conversion", "[arrow][map]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto key_builder = std::make_shared<arrow::Int64Builder>();
 	auto values_builder = std::make_shared<arrow::DoubleBuilder>();
 	auto item_builder = std::make_shared<arrow::ListBuilder>(arrow::default_memory_pool(), values_builder);
@@ -59,10 +68,10 @@ TEST_CASE("Arrow MAP with nested LIST values conversion", "[arrow][map]") {
 
 	auto value_type = LogicalType::LIST(LogicalType::DOUBLE);
 	auto type = LogicalType::MAP(LogicalType::BIGINT, value_type);
-	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+	REQUIRE(ArrowTypeToDuckDBType(context, arrow_array->type()) == type);
 
 	Vector result(type, 1);
-	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 1);
+	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 1);
 
 	auto expected =
 	    Value::MAP(LogicalType::BIGINT, value_type, {Value::BIGINT(10), Value::BIGINT(20)},
@@ -71,6 +80,10 @@ TEST_CASE("Arrow MAP with nested LIST values conversion", "[arrow][map]") {
 }
 
 TEST_CASE("Arrow sliced MAP conversion", "[arrow][map]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &context = *connection.context;
+
 	auto key_builder = std::make_shared<arrow::Int32Builder>();
 	auto item_builder = std::make_shared<arrow::Int32Builder>();
 	arrow::MapBuilder map_builder(arrow::default_memory_pool(), key_builder, item_builder);
@@ -84,9 +97,9 @@ TEST_CASE("Arrow sliced MAP conversion", "[arrow][map]") {
 	REQUIRE(map_builder.Finish(&arrow_array).ok());
 	auto sliced_array = arrow_array->Slice(2, 2);
 
-	auto type = ArrowTypeToDuckDBType(sliced_array->type());
+	auto type = ArrowTypeToDuckDBType(context, sliced_array->type());
 	Vector result(type, 2);
-	ConvertArrowArrayToDuckDBVector(sliced_array, result, type, 2);
+	ConvertArrowArrayToDuckDBVector(context, sliced_array, result, type, 2);
 
 	REQUIRE(result.GetValue(0) ==
 	        Value::MAP(LogicalType::INTEGER, LogicalType::INTEGER, {Value::INTEGER(2)}, {Value::INTEGER(20)}));

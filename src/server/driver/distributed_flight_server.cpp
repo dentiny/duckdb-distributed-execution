@@ -1004,8 +1004,10 @@ arrow::Status DistributedFlightServer::HandleInsertData(const std::string &table
 arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result, std::shared_ptr<arrow::Schema> &schema,
                                                           vector<std::shared_ptr<arrow::RecordBatch>> &batches,
                                                           idx_t *row_count) {
+	auto client_properties = result.client_properties;
+	client_properties.arrow_lossless_conversion = true;
 	ArrowSchema arrow_schema;
-	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, result.client_properties);
+	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
 	ARROW_ASSIGN_OR_RAISE(schema, arrow::ImportSchema(&arrow_schema));
 
 	// Collect all data chunks and convert to Arrow RecordBatches.
@@ -1019,8 +1021,8 @@ arrow::Status DistributedFlightServer::QueryResultToArrow(QueryResult &result, s
 
 		ArrowArray arrow_array;
 		auto extension_types =
-		    ArrowTypeExtensionData::GetExtensionTypes(*result.client_properties.client_context, result.types);
-		ArrowConverter::ToArrowArray(*chunk, &arrow_array, result.client_properties, extension_types);
+		    ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
+		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_properties, extension_types);
 
 		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
 		if (!batch_result.ok()) {
