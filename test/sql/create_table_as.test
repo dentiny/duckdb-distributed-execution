@@ -1,0 +1,41 @@
+# name: test/sql/create_table_as.test
+# description: Test CREATE TABLE AS on a Duckherder catalog
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8852);
+
+statement ok
+ATTACH DATABASE 'localhost:8852' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.ctas_source AS
+SELECT range AS id, 'value-' || range::VARCHAR AS value
+FROM range(3);
+
+query IT
+SELECT * FROM dh.ctas_source ORDER BY id;
+----
+0	value-0
+1	value-1
+2	value-2
+
+statement ok
+CREATE TABLE dh.ctas_copy AS
+SELECT id + 10 AS id, upper(value) AS value
+FROM dh.ctas_source
+WHERE id > 0;
+
+query IT
+SELECT * FROM dh.ctas_copy ORDER BY id;
+----
+11	VALUE-1
+12	VALUE-2
+
+statement ok
+DROP TABLE dh.ctas_copy;
+
+statement ok
+DROP TABLE dh.ctas_source;

@@ -16,6 +16,7 @@ namespace duckdb {
 struct CreateSchemaInfo;
 class DatabaseInstance;
 class DuckherderCatalog;
+class PhysicalRemoteCreateTableAs;
 
 class DuckherderSchemaCatalogEntry : public DuckSchemaEntry {
 public:
@@ -42,6 +43,7 @@ public:
 
 private:
 	friend class DuckherderCatalog;
+	friend class PhysicalRemoteCreateTableAs;
 
 	DuckherderSchemaCatalogEntry(DuckherderCatalog &duckherder_catalog_p, DatabaseInstance &db_instance_p,
 	                             CreateSchemaInfo &create_schema_info);

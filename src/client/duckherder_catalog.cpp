@@ -27,6 +27,7 @@
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/operator/logical_create_table.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
@@ -79,6 +80,56 @@ string QualifiedRemoteName(const string &schema_name, const string &entry_name) 
 }
 
 } // namespace
+
+struct RemoteCreateTableAsSourceState : public GlobalSourceState {
+	bool executed = false;
+	unique_ptr<QueryResult> result;
+};
+
+class PhysicalRemoteCreateTableAs : public PhysicalOperator {
+public:
+	PhysicalRemoteCreateTableAs(PhysicalPlan &physical_plan, LogicalCreateTable &op, DuckherderCatalog &catalog_p,
+	                            DuckherderSchemaCatalogEntry &schema_p, unique_ptr<BoundCreateTableInfo> info_p,
+	                            string sql_p)
+	    : PhysicalOperator(physical_plan, PhysicalOperatorType::CREATE_TABLE, op.types, op.estimated_cardinality),
+	      catalog(catalog_p), schema(schema_p), info(std::move(info_p)), sql(std::move(sql_p)) {
+	}
+
+	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override {
+		return make_uniq<RemoteCreateTableAsSourceState>();
+	}
+
+	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+	                                 OperatorSourceInput &input) const override {
+		auto &state = input.global_state.Cast<RemoteCreateTableAsSourceState>();
+		if (!state.executed) {
+			state.executed = true;
+			state.result = catalog.GetClient(context.client)
+			                   .ExecuteStatement(sql, StatementType::CREATE_STATEMENT, catalog.GetName(), &types);
+			if (state.result->HasError()) {
+				throw CatalogException("Failed to execute CREATE TABLE AS on server: %s", state.result->GetError());
+			}
+			schema.CreateTableLocal(catalog.GetCatalogTransaction(context.client), *info);
+		}
+
+		auto result_chunk = state.result->Fetch();
+		if (!result_chunk || result_chunk->size() == 0) {
+			return SourceResultType::FINISHED;
+		}
+		chunk.Move(*result_chunk);
+		return SourceResultType::HAVE_MORE_OUTPUT;
+	}
+
+	bool IsSource() const override {
+		return true;
+	}
+
+private:
+	DuckherderCatalog &catalog;
+	DuckherderSchemaCatalogEntry &schema;
+	unique_ptr<BoundCreateTableInfo> info;
+	string sql;
+};
 
 DuckherderCatalog::DuckherderCatalog(AttachedDatabase &db, string server_host_p, int server_port_p,
                                      distributed::ClientRole role_p, connection_t attach_connection_id_p)
@@ -206,6 +257,14 @@ optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction tr
 		throw CatalogException("Failed to create schema on server: %s", result->GetError());
 	}
 	return CreateSchemaLocal(std::move(transaction), info);
+}
+
+PhysicalOperator &DuckherderCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
+                                                       LogicalCreateTable &op, PhysicalOperator &plan) {
+	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::PlanCreateTableAs");
+	auto sql = GetRemoteStatementSQL(context);
+	auto &schema = op.schema.Cast<DuckherderSchemaCatalogEntry>();
+	return planner.Make<PhysicalRemoteCreateTableAs>(op, *this, schema, std::move(op.info), std::move(sql));
 }
 
 PhysicalOperator &DuckherderCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
