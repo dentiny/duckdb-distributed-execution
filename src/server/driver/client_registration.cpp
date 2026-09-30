@@ -11,9 +11,9 @@
 namespace duckdb {
 
 ClientRegistration::ClientRegistration(shared_ptr<DuckDB> db, WorkerManager &worker_manager,
-                                       distributed::ClientRole role_p,
-                                       const distributed::StorageConfig &storage_config)
-    : role(role_p), database(std::move(db)), last_seen(GetSteadyNowMilliSecSinceEpoch()) {
+                                       distributed::ClientRole role_p, const distributed::StorageConfig &storage_config)
+    : role(role_p), database_key(GetStorageKey(storage_config)), database(std::move(db)),
+      last_seen(GetSteadyNowMilliSecSinceEpoch()) {
 	if (!HasObjectStorage(storage_config)) {
 		connection = make_uniq<Connection>(*database);
 		auto use_result = connection->Query("USE duckling;");

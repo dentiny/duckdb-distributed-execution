@@ -9,6 +9,7 @@
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/distributed_flight_server_test_state.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
+#include "server/driver/served_database.hpp"
 #include "server/driver/worker_manager.hpp"
 #include "utils/mutex.hpp"
 
@@ -179,15 +180,9 @@ private:
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 	void ClearRequestReplay(ClientRegistration &registration) DUCKDB_REQUIRES(registration.connection_mutex);
 
-	// Instances opened for one object storage database. Registrations own them, so an instance closes once its last
-	// client leaves; a live writer instance therefore means the database already has a writable client.
-	struct ObjectStorageInstances {
-		weak_ptr<DuckDB> reader;
-		weak_ptr<DuckDB> writer;
-	};
-	// Return the instance serving a client with the given role, opening it if no live client holds one.
-	shared_ptr<DuckDB> GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config,
-	                                                  distributed::ClientRole role) DUCKDB_REQUIRES(clients_mutex);
+	// Detach a client from its database, dropping the database once it has no clients.
+	void RemoveClient(unordered_map<string, shared_ptr<ClientRegistration>>::iterator entry)
+	    DUCKDB_REQUIRES(clients_mutex);
 
 	string host;
 	int port;
@@ -195,13 +190,11 @@ private:
 	shared_ptr<DuckDB> db;
 	unique_ptr<WorkerManager> worker_manager;
 
-	// Client admission: at most one writable attachment per database, with any number of readers.
 	mutable concurrency::shared_mutex clients_mutex;
+	// Keyed by client id.
 	unordered_map<string, shared_ptr<ClientRegistration>> clients DUCKDB_GUARDED_BY(clients_mutex);
-	// Writable client of the Duckling catalog.
-	string writable_client_id DUCKDB_GUARDED_BY(clients_mutex);
-	// Keyed by GetStorageKey.
-	unordered_map<string, ObjectStorageInstances> object_storage_databases DUCKDB_GUARDED_BY(clients_mutex);
+	// Databases with attached clients, keyed by GetStorageKey; the empty key is the Duckling catalog.
+	unordered_map<string, unique_ptr<ServedDatabase>> databases DUCKDB_GUARDED_BY(clients_mutex);
 	DistributedFlightServerTestState test_state;
 
 	// Query execution tracking.

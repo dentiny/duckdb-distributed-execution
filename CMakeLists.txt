@@ -96,6 +96,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/query_plan_analyzer.cpp
     src/server/driver/query_utils.cpp
     src/server/driver/result_merger.cpp
+    src/server/driver/served_database.cpp
     src/server/driver/task_partitioner.cpp
     src/server/driver/worker_manager.cpp)
 

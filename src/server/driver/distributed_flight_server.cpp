@@ -124,8 +124,7 @@ void DistributedFlightServer::Shutdown() {
 void DistributedFlightServer::Reset() {
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	clients.clear();
-	writable_client_id.clear();
-	object_storage_databases.clear();
+	databases.clear();
 	Initialize();
 }
 
@@ -283,15 +282,21 @@ void DistributedFlightServer::TouchClient(const shared_ptr<ClientRegistration> &
 void DistributedFlightServer::PruneExpiredClients() {
 	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - test_state.GetClientLeaseTimeout().count();
 	for (auto entry = clients.begin(); entry != clients.end();) {
-		if (entry->second->last_seen.load() >= expiration) {
-			++entry;
-			continue;
+		auto current = entry++;
+		if (current->second->last_seen.load() < expiration) {
+			RemoveClient(current);
 		}
-		if (writable_client_id == entry->first) {
-			writable_client_id.clear();
-		}
-		entry = clients.erase(entry);
 	}
+}
+
+void DistributedFlightServer::RemoveClient(unordered_map<string, shared_ptr<ClientRegistration>>::iterator entry) {
+	auto database = databases.find(entry->second->database_key);
+	D_ASSERT(database != databases.end());
+	database->second->RemoveClient(entry->first);
+	if (!database->second->HasClients()) {
+		databases.erase(database);
+	}
+	clients.erase(entry);
 }
 
 bool DistributedFlightServer::AuthorizeClient(const string &client_id, distributed::ClientRole required_role,
@@ -323,64 +328,26 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	PruneExpiredClients();
 	const auto &storage_config = req.storage_config();
-	const bool uses_object_storage = HasObjectStorage(storage_config);
-	if (!uses_object_storage && req.role() == distributed::CLIENT_ROLE_READ_WRITE && !writable_client_id.empty()) {
-		resp.set_success(false);
-		resp.set_error_message("Control node already has a writable Duckherder client");
-		return arrow::Status::OK();
+	auto &database = databases[GetStorageKey(storage_config)];
+	if (!database) {
+		database = HasObjectStorage(storage_config) ? make_uniq<ServedDatabase>(storage_config)
+		                                            : make_uniq<ServedDatabase>(db);
 	}
 
-	shared_ptr<ClientRegistration> registration;
+	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
 	try {
-		shared_ptr<DuckDB> client_db = db;
-		if (uses_object_storage) {
-			client_db = GetOrOpenObjectStorageDatabase(storage_config, req.role());
-			if (!client_db) {
-				resp.set_success(false);
-				resp.set_error_message(StringUtil::Format("Database %s already has a writable Duckherder client",
-				                                          storage_config.database_uri()));
-				return arrow::Status::OK();
-			}
-		}
-		registration =
-		    make_shared_ptr<ClientRegistration>(std::move(client_db), *worker_manager, req.role(), storage_config);
+		clients.emplace(client_id, database->AddClient(client_id, req.role(), *worker_manager));
 	} catch (const std::exception &ex) {
+		if (!database->HasClients()) {
+			databases.erase(GetStorageKey(storage_config));
+		}
 		resp.set_success(false);
 		resp.set_error_message(ErrorData(ex).Message());
 		return arrow::Status::OK();
 	}
-
-	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
-	clients.emplace(client_id, std::move(registration));
-	if (!uses_object_storage && req.role() == distributed::CLIENT_ROLE_READ_WRITE) {
-		writable_client_id = client_id;
-	}
 	resp.set_success(true);
 	resp.mutable_register_client()->set_client_id(client_id);
 	return arrow::Status::OK();
-}
-
-shared_ptr<DuckDB> DistributedFlightServer::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config,
-                                                                           distributed::ClientRole role) {
-	for (auto entry = object_storage_databases.begin(); entry != object_storage_databases.end();) {
-		if (entry->second.reader.expired() && entry->second.writer.expired()) {
-			entry = object_storage_databases.erase(entry);
-		} else {
-			++entry;
-		}
-	}
-
-	auto &instances = object_storage_databases[GetStorageKey(config)];
-	const bool writable = role == distributed::CLIENT_ROLE_READ_WRITE;
-	auto &slot = writable ? instances.writer : instances.reader;
-	auto instance = slot.lock();
-	if (instance) {
-		// Returning the live writer would admit a second writable client.
-		return writable ? nullptr : instance;
-	}
-	instance = OpenObjectStorageDatabase(config, writable ? AccessMode::READ_WRITE : AccessMode::READ_ONLY);
-	slot = instance;
-	return instance;
 }
 
 arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &client_id,
@@ -388,10 +355,7 @@ arrow::Status DistributedFlightServer::HandleUnregisterClient(const string &clie
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	auto entry = clients.find(client_id);
 	if (entry != clients.end()) {
-		if (writable_client_id == client_id) {
-			writable_client_id.clear();
-		}
-		clients.erase(entry);
+		RemoveClient(entry);
 	}
 	resp.set_success(true);
 	resp.mutable_unregister_client();

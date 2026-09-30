@@ -128,8 +128,8 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 }
 
 // Execute a pipeline task.
-arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req,
-                                              Connection &task_conn, unique_ptr<QueryResult> &result) {
+arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
+                                              unique_ptr<QueryResult> &result) {
 	arrow::Status exec_status = arrow::Status::OK();
 
 	// TODO(hjiang): Plan-based execution temporarily disabled

@@ -39,7 +39,7 @@ distributed::StorageConfig ExtractStorageConfig(const string &database_name, Att
 	if (data_path.find("://") != string::npos) {
 		throw NotImplementedException("Duckherder DATA_PATH only supports local paths yet, got '%s'", data_path);
 	}
-	config.set_database_uri("duckdb_objfs://" + database_name);
+	config.set_database_uri(StringUtil::Format("duckdb_objfs://%s", database_name));
 	config.set_backend("local");
 	config.set_root(data_path);
 	return config;
