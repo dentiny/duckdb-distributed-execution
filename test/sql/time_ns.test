@@ -1,0 +1,26 @@
+# name: test/sql/time_ns.test
+# description: Remote scans preserve nanosecond time values
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8860);
+
+statement ok
+ATTACH DATABASE 'localhost:8860' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+CREATE TABLE dh.time_ns_target (value TIME_NS);
+
+statement ok
+INSERT INTO dh.time_ns_target VALUES ('00:01:20'), ('23:59:59.123456789');
+
+query I
+SELECT * FROM dh.time_ns_target ORDER BY value;
+----
+00:01:20
+23:59:59.123456789
+
+statement ok
+DROP TABLE dh.time_ns_target;

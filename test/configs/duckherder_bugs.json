@@ -7,8 +7,7 @@
         "test/sql/alter/add_pk/test_add_pk_rollback.test",
         "test/sql/catalog/view/test_view_sql_with_dependencies.test",
         "test/sql/index/art/storage/test_art_import.test",
-        "test/sql/prepared/test_prepare_null.test",
-        "test/sql/types/time/test_time_ns.test"
+        "test/sql/prepared/test_prepare_null.test"
       ]
     }
   ]

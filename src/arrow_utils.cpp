@@ -271,6 +271,15 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 	case LogicalTypeId::TIME:
 	case LogicalTypeId::TIME_NS:
 	case LogicalTypeId::TIME_TZ: {
+		if (type.id() == LogicalTypeId::TIME_NS) {
+			D_ASSERT(arrow_array->type_id() == arrow::Type::TIME64);
+			auto time_array = std::static_pointer_cast<arrow::Time64Array>(arrow_array);
+			auto time_type = std::static_pointer_cast<arrow::Time64Type>(arrow_array->type());
+			D_ASSERT(time_type->unit() == arrow::TimeUnit::NANO);
+			FlatVector::GetData<dtime_ns_t>(duckdb_vector)[duck_idx] = dtime_ns_t(time_array->Value(arrow_idx));
+			break;
+		}
+
 		dtime_t time_val;
 
 		if (arrow_array->type_id() == arrow::Type::TIME32) {
