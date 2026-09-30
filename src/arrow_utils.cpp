@@ -195,13 +195,13 @@ void ConvertArrowPrimitiveElement(const std::shared_ptr<arrow::Array> &arrow_arr
 		string_t blob_val;
 		if (arrow_array->type_id() == arrow::Type::BINARY) {
 			auto binary_array = std::static_pointer_cast<arrow::BinaryArray>(arrow_array);
-			int32_t length;
+			int32_t length = 0;
 			auto data = binary_array->GetValue(arrow_idx, &length);
 			blob_val =
 			    StringVector::AddStringOrBlob(duckdb_vector, string_t(reinterpret_cast<const char *>(data), length));
 		} else if (arrow_array->type_id() == arrow::Type::LARGE_BINARY) {
 			auto binary_array = std::static_pointer_cast<arrow::LargeBinaryArray>(arrow_array);
-			int64_t length;
+			int64_t length = 0;
 			auto data = binary_array->GetValue(arrow_idx, &length);
 			blob_val = StringVector::AddStringOrBlob(
 			    duckdb_vector, string_t(reinterpret_cast<const char *>(data), static_cast<uint32_t>(length)));
@@ -548,8 +548,8 @@ void ConvertArrowElement(const std::shared_ptr<arrow::Array> &arrow_array, idx_t
 
 	if (type.id() == LogicalTypeId::LIST) {
 		std::shared_ptr<arrow::Array> child_array;
-		int64_t offset;
-		int64_t length;
+		int64_t offset = 0;
+		int64_t length = 0;
 		if (arrow_array->type_id() == arrow::Type::LIST) {
 			auto list_array = std::static_pointer_cast<arrow::ListArray>(arrow_array);
 			child_array = list_array->values();

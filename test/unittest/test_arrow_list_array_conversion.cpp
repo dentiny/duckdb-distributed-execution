@@ -77,3 +77,34 @@ TEST_CASE("Arrow fixed-size LIST to DuckDB ARRAY conversion", "[arrow][array]") 
 	REQUIRE(!FlatVector::Validity(child_vector).RowIsValid(4));
 	REQUIRE(values[5] == 6);
 }
+
+TEST_CASE("Arrow nested fixed-size LIST to DuckDB nested ARRAY conversion", "[arrow][array]") {
+	auto values_builder = std::make_shared<arrow::Int32Builder>();
+	auto inner_builder = std::make_shared<arrow::FixedSizeListBuilder>(arrow::default_memory_pool(), values_builder, 2);
+	arrow::FixedSizeListBuilder outer_builder(arrow::default_memory_pool(), inner_builder, 2);
+
+	REQUIRE(outer_builder.Append().ok());
+	REQUIRE(inner_builder->Append().ok());
+	REQUIRE(values_builder->Append(1).ok());
+	REQUIRE(values_builder->Append(2).ok());
+	REQUIRE(inner_builder->Append().ok());
+	REQUIRE(values_builder->Append(3).ok());
+	REQUIRE(values_builder->AppendNull().ok());
+
+	std::shared_ptr<arrow::Array> arrow_array;
+	REQUIRE(outer_builder.Finish(&arrow_array).ok());
+
+	auto type = LogicalType::ARRAY(LogicalType::ARRAY(LogicalType::INTEGER, 2), 2);
+	REQUIRE(ArrowTypeToDuckDBType(arrow_array->type()) == type);
+
+	Vector result(type, 1);
+	ConvertArrowArrayToDuckDBVector(arrow_array, result, type, 1);
+
+	auto &inner_vector = ArrayVector::GetEntry(result);
+	auto &values_vector = ArrayVector::GetEntry(inner_vector);
+	auto values = FlatVector::GetData<int32_t>(values_vector);
+	REQUIRE(values[0] == 1);
+	REQUIRE(values[1] == 2);
+	REQUIRE(values[2] == 3);
+	REQUIRE(!FlatVector::Validity(values_vector).RowIsValid(3));
+}

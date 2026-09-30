@@ -161,20 +161,28 @@ statement ok
 CREATE TABLE dh.nested_list_array_table (
     nested_lists INTEGER[][],
     fixed_array INTEGER[3],
+    nested_array INTEGER[2][2],
     list_of_arrays INTEGER[2][]
 );
 
 statement ok
 INSERT INTO dh.nested_list_array_table
-VALUES ([[1, 2], [3, NULL]], [4, 5, 6], [[7, 8], [9, 10]]);
+VALUES ([[1, 2], [3, NULL]], [4, 5, 6], [[11, 12], [13, NULL]], [[7, 8], [9, 10]]);
 
-query III
-SELECT nested_lists[1][2], fixed_array[3], list_of_arrays[2][1]
+query IIII
+SELECT nested_lists[1][2], fixed_array[3], nested_array[2][1], list_of_arrays[2][1]
 FROM dh.nested_list_array_table;
 ----
-2	6	9
+2	6	13	9
 
-query I
-SELECT nested_lists[2][2] IS NULL FROM dh.nested_list_array_table;
+query TTT
+SELECT nested_lists, nested_array, list_of_arrays
+FROM dh.nested_list_array_table;
 ----
-true
+[[1, 2], [3, NULL]]	[[11, 12], [13, NULL]]	[[7, 8], [9, 10]]
+
+query II
+SELECT nested_lists[2][2] IS NULL, nested_array[2][2] IS NULL
+FROM dh.nested_list_array_table;
+----
+true	true
