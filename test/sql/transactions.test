@@ -76,3 +76,25 @@ COMMIT;
 # The failed remote transaction was rolled back, including its new constraint.
 statement ok
 INSERT INTO dh.commit_constraint_error VALUES (1, 1), (2, 1);
+
+# ADD PRIMARY KEY must not validate transaction-local inserts until COMMIT.
+statement ok
+CREATE TABLE dh.commit_existing_duplicates (id INTEGER, key INTEGER);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO dh.commit_existing_duplicates VALUES (1, 1), (2, 1);
+
+statement ok
+ALTER TABLE dh.commit_existing_duplicates ADD PRIMARY KEY (key);
+
+statement error
+COMMIT;
+----
+<REGEX>:TransactionContext Error.*Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1".*
+
+# The failed transaction also rolls back this constraint.
+statement ok
+INSERT INTO dh.commit_existing_duplicates VALUES (1, 1), (2, 1);

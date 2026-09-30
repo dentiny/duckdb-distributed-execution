@@ -1,7 +1,6 @@
 {
   "description": "Run selected DuckDB SQLLogicTests through a local Duckherder control node.",
   "extends": [
-    "duckherder_bugs.json",
     "duckherder_missing_features.json",
     "duckherder_known_to_fail.json"
   ],

@@ -26,10 +26,15 @@ public:
 		return "duckherder_remote_alter_table";
 	}
 
+	void Serialize(Serializer &serializer) const override;
+
 protected:
 	void ResolveTypes() override {
 		types.emplace_back(LogicalType {LogicalTypeId::BIGINT});
 	}
 };
+
+// Creates the deserializer registered for remote ALTER TABLE logical operators.
+shared_ptr<OperatorExtension> GetRemoteAlterTableOperatorExtension();
 
 } // namespace duckdb
