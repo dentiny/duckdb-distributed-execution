@@ -5,6 +5,8 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/uuid.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -94,7 +96,12 @@ string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
 		arguments.push_back(
 		    StringUtil::Format("%s := %s", KeywordHelper::WriteQuoted(entry.first, '"'), entry.second->ToString()));
 	}
-	auto statement_sql = sql;
+	auto &prepared_statements = ClientData::Get(context).prepared_statements;
+	auto prepared_entry = prepared_statements.find(execute.name);
+	if (prepared_entry == prepared_statements.end() || !prepared_entry->second->unbound_statement) {
+		throw InternalException("Prepared statement %s is unavailable for remote execution", execute.name);
+	}
+	auto statement_sql = prepared_entry->second->unbound_statement->ToString();
 	StringUtil::RTrim(statement_sql);
 	auto prepare_sql = StringUtil::Format("PREPARE %s AS %s", statement_name, statement_sql);
 	if (prepare_sql.back() != ';') {

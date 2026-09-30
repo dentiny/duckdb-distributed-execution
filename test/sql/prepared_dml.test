@@ -26,6 +26,21 @@ SELECT COUNT(*) FROM dh.prepared_dml;
 2
 
 statement ok
+PREPARE prepared_null_insert AS
+    INSERT INTO dh.prepared_dml VALUES (0, $1);
+
+statement ok
+EXECUTE prepared_null_insert(NULL);
+
+query I
+SELECT value FROM dh.prepared_dml WHERE id = 0;
+----
+NULL
+
+statement ok
+DELETE FROM dh.prepared_dml WHERE id = 0;
+
+statement ok
 EXECUTE prepared_insert;
 
 statement ok
