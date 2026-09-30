@@ -330,16 +330,20 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 	if (info.type == AlterType::ALTER_TABLE) {
 		auto &table_info = info.Cast<AlterTableInfo>();
 
-		auto schema_name = KeywordHelper::WriteQuoted(name, '"');
-		auto table_name = KeywordHelper::WriteQuoted(info.name, '"');
-		auto qualified_table_name = StringUtil::Format("%s.%s", schema_name, table_name);
-		string alter_sql = GenerateAlterTableSQL(table_info, qualified_table_name);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
+		// CREATE/DROP TABLE with a foreign key already updates both tables on the control node. DuckDB issues this
+		// internal ALTER only to mirror the foreign-key metadata into the referenced table's local catalog entry.
+		if (table_info.alter_table_type != AlterTableType::FOREIGN_KEY_CONSTRAINT) {
+			auto schema_name = KeywordHelper::WriteQuoted(name, '"');
+			auto table_name = KeywordHelper::WriteQuoted(info.name, '"');
+			auto qualified_table_name = StringUtil::Format("%s.%s", schema_name, table_name);
+			string alter_sql = GenerateAlterTableSQL(table_info, qualified_table_name);
+			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
-		auto &client = duckherder_catalog.GetClient(transaction.GetContext());
-		auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
-		if (result->HasError()) {
-			throw CatalogException("Failed to alter table on server: %s", result->GetError());
+			auto &client = duckherder_catalog.GetClient(transaction.GetContext());
+			auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
+			if (result->HasError()) {
+				throw CatalogException("Failed to alter table on server: %s", result->GetError());
+			}
 		}
 
 		EntryLookupInfoKey key {

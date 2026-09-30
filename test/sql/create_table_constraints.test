@@ -65,3 +65,48 @@ query I
 SELECT COUNT(*) FROM dh.constraint_target;
 ----
 1
+
+statement ok
+USE dh;
+
+statement ok
+CREATE TABLE dh.parent_table (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE dh.child_table (
+    id INTEGER PRIMARY KEY,
+    parent_id INTEGER REFERENCES parent_table(id)
+);
+
+statement ok
+INSERT INTO dh.parent_table VALUES (1);
+
+statement ok
+INSERT INTO dh.child_table VALUES (10, 1);
+
+statement error
+INSERT INTO dh.child_table VALUES (11, 999);
+----
+
+statement error
+DROP TABLE dh.parent_table;
+----
+
+statement ok
+DROP TABLE dh.child_table;
+
+statement ok
+DROP TABLE dh.parent_table;
+
+statement ok
+CREATE TABLE dh.add_primary_key (id INTEGER);
+
+statement ok
+ALTER TABLE dh.add_primary_key ADD PRIMARY KEY (id);
+
+statement ok
+INSERT INTO dh.add_primary_key VALUES (1);
+
+statement error
+INSERT INTO dh.add_primary_key VALUES (1);
+----

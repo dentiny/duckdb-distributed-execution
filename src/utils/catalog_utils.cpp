@@ -5,6 +5,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -36,59 +37,59 @@ string SanitizeQuery(const string &sql, const string &catalog_name) {
 }
 
 string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
-	string sql = "ALTER TABLE " + table_name + " ";
+	string sql = StringUtil::Format("ALTER TABLE %s ", table_name);
 
 	switch (info.alter_table_type) {
 	case AlterTableType::ADD_COLUMN: {
 		auto &add_info = info.Cast<AddColumnInfo>();
-		sql += "ADD COLUMN ";
-		if (add_info.if_column_not_exists) {
-			sql += "IF NOT EXISTS ";
-		}
-		sql += add_info.new_column.Name() + " " + add_info.new_column.Type().ToString();
+		sql += StringUtil::Format("ADD COLUMN %s%s %s", add_info.if_column_not_exists ? "IF NOT EXISTS " : "",
+		                          add_info.new_column.Name(), add_info.new_column.Type().ToString());
 		if (add_info.new_column.HasDefaultValue()) {
-			sql += " DEFAULT " + add_info.new_column.DefaultValue().ToString();
+			sql += StringUtil::Format(" DEFAULT %s", add_info.new_column.DefaultValue().ToString());
 		}
 		break;
 	}
 	case AlterTableType::REMOVE_COLUMN: {
 		auto &remove_info = info.Cast<RemoveColumnInfo>();
-		sql += "DROP COLUMN ";
-		if (remove_info.if_column_exists) {
-			sql += "IF EXISTS ";
-		}
-		sql += remove_info.removed_column;
+		sql += StringUtil::Format("DROP COLUMN %s%s", remove_info.if_column_exists ? "IF EXISTS " : "",
+		                          remove_info.removed_column);
 		break;
 	}
 	case AlterTableType::RENAME_COLUMN: {
 		auto &rename_info = info.Cast<RenameColumnInfo>();
-		sql += "RENAME COLUMN " + rename_info.old_name + " TO " + rename_info.new_name;
+		sql += StringUtil::Format("RENAME COLUMN %s TO %s", rename_info.old_name, rename_info.new_name);
 		break;
 	}
 	case AlterTableType::RENAME_TABLE: {
 		auto &rename_info = info.Cast<RenameTableInfo>();
-		sql = "ALTER TABLE " + table_name + " RENAME TO " + rename_info.new_table_name;
+		sql = StringUtil::Format("ALTER TABLE %s RENAME TO %s", table_name, rename_info.new_table_name);
 		break;
 	}
 	case AlterTableType::ALTER_COLUMN_TYPE: {
 		auto &change_info = info.Cast<ChangeColumnTypeInfo>();
-		sql += "ALTER COLUMN " + change_info.column_name + " TYPE " + change_info.target_type.ToString();
+		sql +=
+		    StringUtil::Format("ALTER COLUMN %s TYPE %s", change_info.column_name, change_info.target_type.ToString());
 		break;
 	}
 	case AlterTableType::SET_DEFAULT: {
 		auto &set_default_info = info.Cast<SetDefaultInfo>();
-		sql +=
-		    "ALTER COLUMN " + set_default_info.column_name + " SET DEFAULT " + set_default_info.expression->ToString();
+		sql += StringUtil::Format("ALTER COLUMN %s SET DEFAULT %s", set_default_info.column_name,
+		                          set_default_info.expression->ToString());
 		break;
 	}
 	case AlterTableType::SET_NOT_NULL: {
 		auto &set_not_null_info = info.Cast<SetNotNullInfo>();
-		sql += "ALTER COLUMN " + set_not_null_info.column_name + " SET NOT NULL";
+		sql += StringUtil::Format("ALTER COLUMN %s SET NOT NULL", set_not_null_info.column_name);
 		break;
 	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = info.Cast<DropNotNullInfo>();
-		sql += "ALTER COLUMN " + drop_not_null_info.column_name + " DROP NOT NULL";
+		sql += StringUtil::Format("ALTER COLUMN %s DROP NOT NULL", drop_not_null_info.column_name);
+		break;
+	}
+	case AlterTableType::ADD_CONSTRAINT: {
+		auto &add_constraint_info = info.Cast<AddConstraintInfo>();
+		sql += StringUtil::Format("ADD %s", add_constraint_info.constraint->ToString());
 		break;
 	}
 	default:

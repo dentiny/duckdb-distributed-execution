@@ -554,8 +554,9 @@ through local execution on the Driver/Control Node.
 - Remote view discovery after attaching to a catalog that already contains views.
 - `CREATE SEQUENCE` and remote sequence discovery.
 - `ALTER SCHEMA`.
-- `ALTER TABLE` variants other than add/drop/rename column, rename table, change column type, set a default, and
-  set/drop `NOT NULL`. For example, adding or dropping constraints is not implemented by the remote ALTER path.
+- `ALTER TABLE` variants other than add/drop/rename column, rename table, change column type, set a default, set/drop
+  `NOT NULL`, and add a primary key. Adding other constraint types or dropping constraints is not implemented by
+  DuckDB's ALTER path. Foreign keys declared by `CREATE TABLE` are supported.
 - Full Arrow transport for `STRUCT`, `MAP`, `UNION`, nested `LIST`, `BIT`, `BIGNUM`, and non-string dictionary types.
   Unsupported values may be converted to `VARCHAR` or rejected.
 - A persistent default Duckling database and server restart recovery. The default server database is in memory.
