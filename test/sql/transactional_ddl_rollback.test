@@ -1,0 +1,32 @@
+# name: test/sql/transactional_ddl_rollback.test
+# description: Transactional DDL is rolled back on the control node
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8863);
+
+statement ok
+ATTACH DATABASE 'localhost:8863' AS dh (TYPE duckherder, client_role 'read_write');
+
+statement ok
+USE dh;
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE rollback_table (id INTEGER);
+
+statement ok
+CREATE INDEX rollback_idx ON rollback_table (id);
+
+statement ok
+EXPORT DATABASE '__TEST_DIR__/transactional_ddl_rollback';
+
+statement ok
+ROLLBACK;
+
+statement ok
+IMPORT DATABASE '__TEST_DIR__/transactional_ddl_rollback';

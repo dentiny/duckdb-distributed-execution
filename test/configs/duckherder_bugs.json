@@ -4,8 +4,7 @@
     {
       "reason": "Known Duckherder product bug pending verification or repair.",
       "paths": [
-        "test/sql/alter/add_pk/test_add_pk_rollback.test",
-        "test/sql/index/art/storage/test_art_import.test"
+        "test/sql/alter/add_pk/test_add_pk_rollback.test"
       ]
     }
   ]

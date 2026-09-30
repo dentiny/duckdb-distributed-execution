@@ -32,6 +32,11 @@ public:
 	//===--------------------------------------------------------------------===//
 	// SchemaCatalogEntry-specific functions
 	//===--------------------------------------------------------------------===//
+	// Scans catalog entries while exposing remote table wrappers consistently.
+	void Scan(ClientContext &context, CatalogType type,
+	          const std::function<void(CatalogEntry &)> &callback) override;
+	// Scans committed catalog entries while exposing remote table wrappers consistently.
+	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                       TableCatalogEntry &table) override;
 	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) override;

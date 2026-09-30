@@ -49,6 +49,46 @@ unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::Copy(ClientContext &conte
 	throw NotImplementedException("Altering Duckherder schemas is not supported");
 }
 
+void DuckherderSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type,
+                                        const std::function<void(CatalogEntry &)> &callback) {
+	DuckSchemaEntry::Scan(context, type, [&](CatalogEntry &entry) {
+		if (entry.type != CatalogType::TABLE_ENTRY) {
+			callback(entry);
+			return;
+		}
+		EntryLookupInfoKey key {
+		    .type = CatalogType::TABLE_ENTRY,
+		    .name = entry.name,
+		};
+		CatalogEntry *wrapped_entry = nullptr;
+		{
+			concurrency::lock_guard<concurrency::mutex> lck(mu);
+			wrapped_entry = WrapAndCacheTableCatalogEntryWithLock(std::move(key), &entry);
+		}
+		callback(*wrapped_entry);
+	});
+}
+
+void DuckherderSchemaCatalogEntry::Scan(CatalogType type,
+                                        const std::function<void(CatalogEntry &)> &callback) {
+	DuckSchemaEntry::Scan(type, [&](CatalogEntry &entry) {
+		if (entry.type != CatalogType::TABLE_ENTRY) {
+			callback(entry);
+			return;
+		}
+		EntryLookupInfoKey key {
+		    .type = CatalogType::TABLE_ENTRY,
+		    .name = entry.name,
+		};
+		CatalogEntry *wrapped_entry = nullptr;
+		{
+			concurrency::lock_guard<concurrency::mutex> lck(mu);
+			wrapped_entry = WrapAndCacheTableCatalogEntryWithLock(std::move(key), &entry);
+		}
+		callback(*wrapped_entry);
+	});
+}
+
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
                                                                      CreateIndexInfo &info, TableCatalogEntry &table) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateIndex");
