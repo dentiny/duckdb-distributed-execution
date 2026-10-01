@@ -13,7 +13,7 @@ arrow::Status WorkerNodeClient::Connect() {
 }
 
 arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecutePartitionRequest &request,
-                                                 std::unique_ptr<arrow::flight::FlightStreamReader> &stream) {
+                                                 arrow::RecordBatchVector &batches) {
 	distributed::DistributedRequest req;
 	*req.mutable_execute_partition() = request;
 
@@ -47,12 +47,8 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 	// Now get the actual data stream using DoGet with the request as ticket.
 	arrow::flight::Ticket ticket;
 	ticket.ticket = req_data;
-	auto doget_result = client->DoGet(ticket);
-	if (!doget_result.ok()) {
-		return doget_result.status();
-	}
-	stream = std::move(doget_result).ValueOrDie();
-
+	ARROW_ASSIGN_OR_RAISE(auto stream, client->DoGet(ticket));
+	ARROW_ASSIGN_OR_RAISE(batches, stream->ToRecordBatches());
 	return arrow::Status::OK();
 }
 

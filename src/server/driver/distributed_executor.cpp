@@ -32,15 +32,14 @@ class WorkerDispatchTask : public BaseExecutorTask {
 public:
 	WorkerDispatchTask(TaskExecutor &executor, WorkerNodeClient &client_p, const vector<idx_t> &task_indices_p,
 	                   const vector<distributed::ExecutePartitionRequest> &requests_p,
-	                   vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &result_streams_p,
-	                   vector<arrow::Status> &task_statuses_p)
+	                   vector<arrow::RecordBatchVector> &task_batches_p, vector<arrow::Status> &task_statuses_p)
 	    : BaseExecutorTask(executor), client(client_p), task_indices(task_indices_p), requests(requests_p),
-	      result_streams(result_streams_p), task_statuses(task_statuses_p) {
+	      task_batches(task_batches_p), task_statuses(task_statuses_p) {
 	}
 
 	void ExecuteTask() override {
 		for (auto task_idx : task_indices) {
-			task_statuses[task_idx] = client.ExecutePartition(requests[task_idx], result_streams[task_idx]);
+			task_statuses[task_idx] = client.ExecutePartition(requests[task_idx], task_batches[task_idx]);
 			if (!task_statuses[task_idx].ok()) {
 				return;
 			}
@@ -55,7 +54,7 @@ private:
 	WorkerNodeClient &client;
 	const vector<idx_t> &task_indices;
 	const vector<distributed::ExecutePartitionRequest> &requests;
-	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &result_streams;
+	vector<arrow::RecordBatchVector> &task_batches;
 	vector<arrow::Status> &task_statuses;
 };
 
@@ -202,16 +201,15 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		}
 	}
 
-	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> result_streams(tasks.size());
+	vector<arrow::RecordBatchVector> task_batches(tasks.size());
 	vector<arrow::Status> task_statuses(tasks.size());
 	TaskExecutor executor(*conn.context);
 	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
 		if (worker_to_tasks[worker_id].empty()) {
 			continue;
 		}
-		executor.ScheduleTask(make_uniq<WorkerDispatchTask>(executor, *workers[worker_id]->client,
-		                                                    worker_to_tasks[worker_id], requests, result_streams,
-		                                                    task_statuses));
+		executor.ScheduleTask(make_uniq<WorkerDispatchTask>(
+		    executor, *workers[worker_id]->client, worker_to_tasks[worker_id], requests, task_batches, task_statuses));
 	}
 	executor.WorkOnTasks();
 
@@ -233,22 +231,16 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 
 	// Phase 5: Combine results.
 	if (partitioned_aggregation) {
-		exec_result.result = result_merger->MergePartialAggregates(result_streams, partial_names, partial_types, names,
+		exec_result.result = result_merger->MergePartialAggregates(task_batches, partial_names, partial_types, names,
 		                                                           types, query_analysis.final_sql);
 		return exec_result;
 	}
 	std::shared_ptr<arrow::Schema> schema;
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	auto collect_status = result_merger->CollectResults(result_streams, names, types, schema, batches);
-	if (collect_status.IsInvalid()) {
+	auto collect_status = result_merger->CollectResults(task_batches, names, types, schema, batches);
+	if (!collect_status.ok()) {
 		exec_result.result = make_uniq<MaterializedQueryResult>(ErrorData(
 		    InternalException(StringUtil::Format("Failed collecting worker results: %s", collect_status.ToString()))));
-		return exec_result;
-	}
-	if (!collect_status.ok()) {
-		DUCKDB_LOG_WARNING(db_instance, StringUtil::Format("Failed collecting worker results, falling back to local "
-		                                                   "execution: %s",
-		                                                   collect_status.ToString()));
 		return exec_result;
 	}
 	exec_result.arrow_schema = std::move(schema);

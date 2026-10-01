@@ -17,9 +17,9 @@ public:
 	// Connect to the worker.
 	arrow::Status Connect();
 
-	// Execute a partitioned query task on the worker.
+	// Execute a partitioned query task on the worker and read all of its result batches.
 	arrow::Status ExecutePartition(const distributed::ExecutePartitionRequest &request,
-	                               std::unique_ptr<arrow::flight::FlightStreamReader> &stream);
+	                               arrow::RecordBatchVector &batches);
 
 private:
 	string location;

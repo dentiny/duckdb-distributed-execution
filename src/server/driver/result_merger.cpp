@@ -15,11 +15,12 @@ namespace duckdb {
 ResultMerger::ResultMerger(Connection &conn_p) : conn(conn_p) {
 }
 
-unique_ptr<QueryResult>
-ResultMerger::MergePartialAggregates(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
-                                     const vector<string> &partial_names, const vector<LogicalType> &partial_types,
-                                     const vector<string> &output_names, const vector<LogicalType> &output_types,
-                                     const string &final_sql) {
+unique_ptr<QueryResult> ResultMerger::MergePartialAggregates(const vector<arrow::RecordBatchVector> &task_batches,
+                                                             const vector<string> &partial_names,
+                                                             const vector<LogicalType> &partial_types,
+                                                             const vector<string> &output_names,
+                                                             const vector<LogicalType> &output_types,
+                                                             const string &final_sql) {
 	const string temp_table_name = QueryPlanAnalyzer::PARTIAL_TABLE_NAME;
 	vector<string> columns;
 	for (idx_t idx = 0; idx < partial_names.size(); ++idx) {
@@ -33,17 +34,10 @@ ResultMerger::MergePartialAggregates(vector<std::unique_ptr<arrow::flight::Fligh
 
 	// Append whole chunks; a per-row INSERT statement costs a full parse, bind and execute.
 	Appender appender(conn, TEMP_CATALOG, DEFAULT_SCHEMA, temp_table_name);
-	for (auto &stream : streams) {
-		while (true) {
-			auto next = stream->Next();
-			if (!next.ok()) {
-				throw IOException("Failed reading worker result: %s", next.status().ToString());
-			}
-			if (!next->data) {
-				break;
-			}
+	for (const auto &batches : task_batches) {
+		for (const auto &batch : batches) {
 			DataChunk chunk;
-			ArrowRecordBatchToDataChunk(*conn.context, *next->data, chunk, &partial_types);
+			ArrowRecordBatchToDataChunk(*conn.context, *batch, chunk, &partial_types);
 			appender.AppendDataChunk(chunk);
 		}
 	}
@@ -63,9 +57,8 @@ ResultMerger::MergePartialAggregates(vector<std::unique_ptr<arrow::flight::Fligh
 	return std::move(result);
 }
 
-arrow::Status ResultMerger::CollectResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
-                                           const vector<string> &names, const vector<LogicalType> &types,
-                                           std::shared_ptr<arrow::Schema> &schema,
+arrow::Status ResultMerger::CollectResults(vector<arrow::RecordBatchVector> &task_batches, const vector<string> &names,
+                                           const vector<LogicalType> &types, std::shared_ptr<arrow::Schema> &schema,
                                            vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
 	// Workers and local execution encode results with the same converter options.
 	auto client_properties = conn.context->GetClientProperties();
@@ -74,18 +67,14 @@ arrow::Status ResultMerger::CollectResults(vector<std::unique_ptr<arrow::flight:
 	ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
 	ARROW_ASSIGN_OR_RAISE(schema, arrow::ImportSchema(&arrow_schema));
 
-	for (auto &stream : streams) {
-		while (true) {
-			ARROW_ASSIGN_OR_RAISE(auto next, stream->Next());
-			if (!next.data) {
-				break;
-			}
+	for (auto &task_result : task_batches) {
+		for (auto &batch : task_result) {
 			// Field metadata carries Arrow extension types, so it must match too.
-			if (!next.data->schema()->Equals(*schema, /*check_metadata=*/true)) {
-				return arrow::Status::Invalid("Worker result schema ", next.data->schema()->ToString(),
+			if (!batch->schema()->Equals(*schema, /*check_metadata=*/true)) {
+				return arrow::Status::Invalid("Worker result schema ", batch->schema()->ToString(),
 				                              " does not match expected schema ", schema->ToString());
 			}
-			batches.emplace_back(std::move(next.data));
+			batches.emplace_back(std::move(batch));
 		}
 	}
 	return arrow::Status::OK();
