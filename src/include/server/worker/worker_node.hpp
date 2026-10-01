@@ -60,7 +60,7 @@ private:
 	unique_ptr<Connection> conn;
 
 	concurrency::mutex object_storage_mutex;
-	// Keyed by ObjectStorageDatabase::GetKey. Instances stay attached for the worker's lifetime.
+	// Keyed by serialized storage configuration. Instances stay attached for the worker's lifetime.
 	unordered_map<string, unique_ptr<ObjectStorageDatabase>>
 	    object_storage_databases DUCKDB_GUARDED_BY(object_storage_mutex);
 };

@@ -180,7 +180,7 @@ private:
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 	void ClearRequestReplay(ClientRegistration &registration) DUCKDB_REQUIRES(registration.connection_mutex);
 
-	// Detach a client from its database, dropping the database once it has no clients.
+	// Detach a client and drop a non-default database after its final client leaves.
 	void RemoveClient(unordered_map<string, shared_ptr<ClientRegistration>>::iterator entry)
 	    DUCKDB_REQUIRES(clients_mutex);
 
@@ -193,7 +193,8 @@ private:
 	mutable concurrency::shared_mutex clients_mutex;
 	// Keyed by client id.
 	unordered_map<string, shared_ptr<ClientRegistration>> clients DUCKDB_GUARDED_BY(clients_mutex);
-	// Databases with attached clients, keyed by ObjectStorageDatabase::GetKey.
+	// Control-node databases keyed by serialized storage configuration. The default in-memory database is retained
+	// after its final client leaves.
 	unordered_map<string, unique_ptr<ServedDatabase>> databases DUCKDB_GUARDED_BY(clients_mutex);
 	DistributedFlightServerTestState test_state;
 
