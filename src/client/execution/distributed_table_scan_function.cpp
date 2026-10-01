@@ -63,58 +63,30 @@ string GetScanColumn(const DistributedTableScanBindData &bind_data, const virtua
 	return KeywordHelper::WriteOptionallyQuoted(column.Name());
 }
 
-// Untyped literals may compare with different semantics on the server, e.g. a FLOAT column against a DECIMAL
-// literal, or an ENUM column against a VARCHAR literal. ENUMs order by position, so they compare by code.
-string FilterOperand(const string &column, const LogicalType &column_type) {
-	if (column_type.id() == LogicalTypeId::ENUM) {
-		return StringUtil::Format("enum_code(%s)", column);
-	}
-	return column;
+// ENUMs order by declaration but would compare as strings against a remote literal, and aliased or nested types may
+// not render as valid remote SQL. Filters on these columns are evaluated locally instead.
+bool SupportsFilterPushdown(const LogicalType &type) {
+	return type.id() != LogicalTypeId::ENUM && !type.HasAlias() && !type.IsNested();
 }
 
-// Renders `value` as a literal of the column type; fails if the value cannot be represented exactly.
-bool TryFilterLiteral(const Value &value, const LogicalType &column_type, string &literal) {
-	Value typed_value = value;
-	if (value.type() != column_type && !typed_value.DefaultTryCastAs(column_type, /*strict=*/true)) {
-		return false;
-	}
-	if (column_type.id() == LogicalTypeId::ENUM) {
-		literal = std::to_string(EnumType::GetPos(column_type, typed_value.ToString()));
-		return true;
-	}
-	if (column_type.IsNested()) {
-		literal = typed_value.ToSQLString();
-		return true;
-	}
-	// Rebuild the type so a user type alias, which the server may not know, is not rendered.
-	auto target_type =
-	    column_type.id() == LogicalTypeId::DECIMAL
-	        ? LogicalType::DECIMAL(DecimalType::GetWidth(column_type), DecimalType::GetScale(column_type))
-	        : LogicalType(column_type.id());
-	literal = StringUtil::Format("CAST(%s AS %s)", typed_value.ToSQLString(), target_type.ToString());
-	return true;
-}
-
-string UntranslatableFilter(const TableFilter &filter, const string &column, bool required) {
-	if (!required) {
-		return "";
-	}
-	throw InternalException("Distributed table scan cannot push down table filter %s", filter.ToString(column));
+bool DistributedTableScanSupportsPushdownType(const FunctionData &bind_data_p, idx_t column_id) {
+	auto &bind_data = bind_data_p.Cast<DistributedTableScanBindData>();
+	LogicalType type;
+	GetScanColumn(bind_data, bind_data.table.GetVirtualColumns(), column_id, type);
+	return SupportsFilterPushdown(type);
 }
 
 // Translates a table filter into a SQL predicate on `column`.
-// Returns an empty string when the filter does not constrain the scan, which is only allowed for optional filters.
-string TableFilterToSQL(const TableFilter &filter, const string &column, const LogicalType &column_type,
-                        bool required) {
+// Returns an empty string for optional filters, which only prune data and are not needed for correctness.
+string TableFilterToSQL(const TableFilter &filter, const string &column) {
 	switch (filter.filter_type) {
 	case TableFilterType::CONSTANT_COMPARISON: {
 		auto &constant_filter = filter.Cast<ConstantFilter>();
-		string literal;
-		if (!TryFilterLiteral(constant_filter.constant, column_type, literal)) {
-			return UntranslatableFilter(filter, column, required);
-		}
-		return StringUtil::Format("%s %s %s", FilterOperand(column, column_type),
-		                          ExpressionTypeToOperator(constant_filter.comparison_type), literal);
+		auto &constant = constant_filter.constant;
+		// A typed literal makes the server compare with the column type, e.g. FLOAT instead of DECIMAL.
+		return StringUtil::Format("%s %s CAST(%s AS %s)", column,
+		                          ExpressionTypeToOperator(constant_filter.comparison_type), constant.ToSQLString(),
+		                          constant.type().ToString());
 	}
 	case TableFilterType::IS_NULL:
 		return StringUtil::Format("%s IS NULL", column);
@@ -123,7 +95,7 @@ string TableFilterToSQL(const TableFilter &filter, const string &column, const L
 	case TableFilterType::CONJUNCTION_AND: {
 		vector<string> predicates;
 		for (auto &child : filter.Cast<ConjunctionAndFilter>().child_filters) {
-			auto predicate = TableFilterToSQL(*child, column, column_type, required);
+			auto predicate = TableFilterToSQL(*child, column);
 			if (!predicate.empty()) {
 				predicates.emplace_back(std::move(predicate));
 			}
@@ -136,8 +108,8 @@ string TableFilterToSQL(const TableFilter &filter, const string &column, const L
 	case TableFilterType::CONJUNCTION_OR: {
 		vector<string> predicates;
 		for (auto &child : filter.Cast<ConjunctionOrFilter>().child_filters) {
-			auto predicate = TableFilterToSQL(*child, column, column_type, required);
-			// One unconstrained branch makes the whole disjunction unconstrained.
+			auto predicate = TableFilterToSQL(*child, column);
+			// An optional branch accepts every row, and so does the whole disjunction.
 			if (predicate.empty()) {
 				return "";
 			}
@@ -145,47 +117,18 @@ string TableFilterToSQL(const TableFilter &filter, const string &column, const L
 		}
 		return StringUtil::Format("(%s)", StringUtil::Join(predicates, " OR "));
 	}
-	case TableFilterType::STRUCT_EXTRACT: {
-		auto &struct_filter = filter.Cast<StructFilter>();
-		auto child_column = struct_filter.child_name.empty()
-		                        ? StringUtil::Format("struct_extract_at(%s, %llu)", column, struct_filter.child_idx + 1)
-		                        : StringUtil::Format("struct_extract(%s, %s)", column,
-		                                             KeywordHelper::WriteQuoted(struct_filter.child_name, '\''));
-		return TableFilterToSQL(*struct_filter.child_filter, child_column,
-		                        StructType::GetChildType(column_type, struct_filter.child_idx), required);
-	}
-	case TableFilterType::IN_FILTER: {
-		vector<string> literals;
-		for (auto &value : filter.Cast<InFilter>().values) {
-			string literal;
-			if (!TryFilterLiteral(value, column_type, literal)) {
-				return UntranslatableFilter(filter, column, required);
-			}
-			literals.emplace_back(std::move(literal));
-		}
-		return StringUtil::Format("%s IN (%s)", FilterOperand(column, column_type), StringUtil::Join(literals, ", "));
-	}
 	case TableFilterType::OPTIONAL_FILTER:
-		return TableFilterToSQL(*filter.Cast<OptionalFilter>().child_filter, column, column_type,
-		                        /*required=*/false);
-	case TableFilterType::DYNAMIC_FILTER: {
-		auto &filter_data = *filter.Cast<DynamicFilter>().filter_data;
-		lock_guard<mutex> guard(filter_data.lock);
-		// An unset dynamic filter accepts every row.
-		if (!filter_data.initialized || filter_data.filter == nullptr) {
-			return "";
-		}
-		return TableFilterToSQL(*filter_data.filter, column, column_type, required);
-	}
+		return "";
 	default:
-		return UntranslatableFilter(filter, column, required);
+		throw InternalException("Distributed table scan cannot push down table filter %s", filter.ToString(column));
 	}
 }
 
 // Builds a remote query returning exactly the requested columns in output order, with pushed-down filters applied.
-// Filter keys index into `column_ids`.
+// Filter keys index into `filter_column_ids`, which may include columns that are not returned.
 string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<column_t> &column_ids,
-                    optional_ptr<TableFilterSet> filters, vector<LogicalType> &types) {
+                    const vector<column_t> &filter_column_ids, optional_ptr<TableFilterSet> filters,
+                    vector<LogicalType> &types) {
 	const auto virtual_columns = bind_data.table.GetVirtualColumns();
 	vector<string> select_list;
 	for (auto column_id : column_ids) {
@@ -208,8 +151,12 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 	vector<string> predicates;
 	for (auto &entry : filters->filters) {
 		LogicalType type;
-		auto column = GetScanColumn(bind_data, virtual_columns, column_ids[entry.first], type);
-		auto predicate = TableFilterToSQL(*entry.second, column, type, /*required=*/true);
+		auto column = GetScanColumn(bind_data, virtual_columns, filter_column_ids[entry.first], type);
+		// Only join filters reach here for unsupported types; the join re-checks those rows anyway.
+		if (!SupportsFilterPushdown(type)) {
+			continue;
+		}
+		auto predicate = TableFilterToSQL(*entry.second, column);
 		if (!predicate.empty()) {
 			predicates.emplace_back(std::move(predicate));
 		}
@@ -253,6 +200,8 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	TableFunction function("distributed_scan", {}, Execute, Bind, InitGlobal, InitLocal);
 	function.projection_pushdown = true;
 	function.filter_pushdown = true;
+	function.filter_prune = true;
+	function.supports_pushdown_type = DistributedTableScanSupportsPushdownType;
 	function.get_bind_info = GetBindInfo;
 	function.serialize = SerializeDistributedTableScan;
 	function.deserialize = DeserializeDistributedTableScan;
@@ -279,15 +228,22 @@ unique_ptr<LocalTableFunctionState> DistributedTableScanFunction::InitLocal(Exec
                                                                             GlobalTableFunctionState *global_state) {
 	auto &bind_data = input.bind_data->Cast<DistributedTableScanBindData>();
 	auto local_state = make_uniq<DistributedTableScanLocalState>();
-	local_state->column_ids = input.column_ids;
+	if (!input.projection_ids.empty()) {
+		// With filter pruning, the output follows `projection_ids`, which may reorder or drop filter-only columns.
+		for (auto projection_id : input.projection_ids) {
+			local_state->column_ids.emplace_back(input.column_ids[projection_id]);
+		}
+	} else {
+		local_state->column_ids = input.column_ids;
+	}
 	if (local_state->column_ids.empty()) {
 		for (idx_t col_idx = 0; col_idx < bind_data.table.GetColumns().LogicalColumnCount(); ++col_idx) {
 			local_state->column_ids.emplace_back(col_idx);
 		}
 	}
 	// Filters include join filters pushed from the build side, which are only known once the scan starts.
-	local_state->scan_sql =
-	    BuildScanSQL(bind_data, local_state->column_ids, input.filters, local_state->expected_types);
+	local_state->scan_sql = BuildScanSQL(bind_data, local_state->column_ids, input.column_ids, input.filters,
+	                                     local_state->expected_types);
 	return std::move(local_state);
 }
 
@@ -312,7 +268,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	}
 
 	auto data_chunk = local_state.result->Fetch();
-
 	// No more data, and mark as finished.
 	if (data_chunk == nullptr || data_chunk->size() == 0) {
 		output.SetCardinality(0);

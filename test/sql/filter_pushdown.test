@@ -134,7 +134,7 @@ SELECT f.id, d.label, f.feeling FROM dh.facts f JOIN dh.dims d ON f.id = d.id WH
 3	three	sad
 9000	nine thousand	sad
 
-# The join's key range on an ENUM column follows declaration order: ['sad', 'happy'] includes 'ok'.
+# A join on an ENUM column, whose declaration order differs from alphabetical order.
 statement ok
 CREATE TABLE dh.mood_scores (feeling dh.mood, score INTEGER);
 
@@ -160,11 +160,17 @@ SELECT count(*) > 0 FROM duckherder_get_query_execution_stats() WHERE sql LIKE '
 ----
 true
 
-# Inside a join, the remote scan carries both its own filter and the key range from the other join side.
+# Inside a join, the remote scan still carries its own filter.
 query I
-SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT%FROM%dims% WHERE %id >= %id <= %"label" != CAST(''four'' AS VARCHAR)';
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT%FROM%dims% WHERE "label" != CAST(''four'' AS VARCHAR)';
 ----
 1
+
+# Filters on ENUM and STRUCT columns are evaluated locally.
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '% WHERE %feeling%' OR sql LIKE '% WHERE %rec%';
+----
+0
 
 statement ok
 DETACH dh;
