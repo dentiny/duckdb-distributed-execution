@@ -10,18 +10,54 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/parallel/pipeline.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
-#include "duckdb/planner/operator/logical_filter.hpp"
-#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_distinct.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "server/driver/query_utils.hpp"
 #include "server/driver/worker_manager.hpp"
 
 namespace duckdb {
+
+namespace {
+
+class WorkerDispatchTask : public BaseExecutorTask {
+public:
+	WorkerDispatchTask(TaskExecutor &executor, WorkerNodeClient &client_p, const vector<idx_t> &task_indices_p,
+	                   const vector<distributed::ExecutePartitionRequest> &requests_p,
+	                   vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &result_streams_p,
+	                   vector<arrow::Status> &task_statuses_p)
+	    : BaseExecutorTask(executor), client(client_p), task_indices(task_indices_p), requests(requests_p),
+	      result_streams(result_streams_p), task_statuses(task_statuses_p) {
+	}
+
+	void ExecuteTask() override {
+		for (auto task_idx : task_indices) {
+			task_statuses[task_idx] = client.ExecutePartition(requests[task_idx], result_streams[task_idx]);
+			if (!task_statuses[task_idx].ok()) {
+				return;
+			}
+		}
+	}
+
+	string TaskType() const override {
+		return "WorkerDispatchTask";
+	}
+
+private:
+	WorkerNodeClient &client;
+	const vector<idx_t> &task_indices;
+	const vector<distributed::ExecutePartitionRequest> &requests;
+	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &result_streams;
+	vector<arrow::Status> &task_statuses;
+};
+
+} // namespace
 
 DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p,
                                          distributed::StorageConfig storage_config_p)
@@ -149,57 +185,50 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	}
 
 	// Phase 4: Distribute tasks to workers。
-	// Workers may receive multiple tasks and execute them sequentially or in parallel。
-	// This is the bridge from task-based to worker-based execution。
-	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> result_streams;
+	vector<distributed::ExecutePartitionRequest> requests(tasks.size());
+	for (idx_t task_idx = 0; task_idx < tasks.size(); ++task_idx) {
+		auto &task = tasks[task_idx];
+		auto &req = requests[task_idx];
+		req.set_sql(task_sqls[task_idx]);
+		req.set_partition_id(task.task_id);
+		req.set_total_partitions(task.total_tasks);
+		req.set_serialized_plan(serialized_task_plans[task_idx]);
+		*req.mutable_storage_config() = storage_config;
+		for (const auto &name : names) {
+			req.add_column_names(name);
+		}
+		for (const auto &type_bytes : serialized_types) {
+			req.add_column_types(type_bytes);
+		}
+	}
 
-	// Execute tasks on workers with round-robin assignment.
+	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> result_streams(tasks.size());
+	vector<arrow::Status> task_statuses(tasks.size());
+	TaskExecutor executor(*conn.context);
 	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
-		auto *worker = workers[worker_id];
-		auto &task_indices = worker_to_tasks[worker_id];
-
-		if (task_indices.empty()) {
+		if (worker_to_tasks[worker_id].empty()) {
 			continue;
 		}
+		executor.ScheduleTask(make_uniq<WorkerDispatchTask>(executor, *workers[worker_id]->client,
+		                                                    worker_to_tasks[worker_id], requests, result_streams,
+		                                                    task_statuses));
+	}
+	executor.WorkOnTasks();
 
-		// For now, send tasks sequentially to each worker
-		// Future optimization: batch multiple tasks in single request
-		for (auto task_idx : task_indices) {
-			auto &task = tasks[task_idx];
-
-			// Send task information.
-			distributed::ExecutePartitionRequest req;
-			req.set_sql(task_sqls[task_idx]);
-			req.set_partition_id(task.task_id);
-			req.set_total_partitions(task.total_tasks);
-			req.set_serialized_plan(serialized_task_plans[task_idx]);
-			*req.mutable_storage_config() = storage_config;
-			for (const auto &name : names) {
-				req.add_column_names(name);
-			}
-			for (const auto &type_bytes : serialized_types) {
-				req.add_column_types(type_bytes);
-			}
-
-			// Execute task on worker.
-			std::unique_ptr<arrow::flight::FlightStreamReader> stream;
-			auto status = worker->client->ExecutePartition(req, stream);
+	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
+		for (auto task_idx : worker_to_tasks[worker_id]) {
+			const auto &status = task_statuses[task_idx];
 			if (!status.ok()) {
 				// Merging the remaining partitions would silently drop this task's rows.
 				DUCKDB_LOG_WARNING(db_instance,
 				                   StringUtil::Format("Worker %s failed executing task %llu, falling back to local "
 				                                      "execution: %s",
-				                                      worker->worker_id, static_cast<long long unsigned>(task.task_id),
+				                                      workers[worker_id]->worker_id,
+				                                      static_cast<long long unsigned>(tasks[task_idx].task_id),
 				                                      status.ToString()));
 				return exec_result;
 			}
-
-			result_streams.emplace_back(std::move(stream));
 		}
-	}
-
-	if (result_streams.empty()) {
-		return exec_result;
 	}
 
 	// Phase 5: Combine results.
