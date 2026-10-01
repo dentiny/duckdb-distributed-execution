@@ -3,7 +3,10 @@
 #include "client.pb.h"
 #include "duckdb.hpp"
 #include "duckdb/common/shared_ptr.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 #include "storage_config.pb.h"
+
+#include <arrow/result.h>
 
 namespace duckdb {
 
@@ -19,15 +22,16 @@ public:
 	// The object storage database is opened for its first client.
 	explicit ServedDatabase(distributed::StorageConfig config_p);
 
-	// Admit a client with its own connection. Throws if the client would be the database's second writer.
-	shared_ptr<ClientRegistration> AddClient(distributed::ClientRole role, WorkerManager &worker_manager);
+	// Admit a client with its own connection.
+	arrow::Result<shared_ptr<ClientRegistration>> AddClient(distributed::ClientRole role,
+	                                                        WorkerManager &worker_manager);
 	void RemoveClient(distributed::ClientRole role);
 	bool HasClients() const;
 	bool IsDefault() const;
 
 private:
 	const distributed::StorageConfig config;
-	shared_ptr<ObjectStorageDatabase> database;
+	unique_ptr<ObjectStorageDatabase> database;
 	bool has_writer = false;
 	idx_t reader_count = 0;
 };

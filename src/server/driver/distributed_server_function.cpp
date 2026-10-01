@@ -7,6 +7,7 @@
 #include "utils/no_destructor.hpp"
 #include "utils/thread_utils.hpp"
 
+#include <iostream>
 #include <thread>
 
 namespace duckdb {
@@ -87,12 +88,12 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 
 	// Start server in background thread.
-	server_state.server_thread = make_uniq<std::thread>([server_ptr = server_state.test_server.get(), port]() {
+	server_state.server_thread = make_uniq<std::thread>([server_ptr = server_state.test_server.get()]() {
 		SetThreadName("LocalDuckSrv");
 
 		auto serve_status = server_ptr->Serve();
 		if (!serve_status.ok()) {
-			throw IOException(StringUtil::Format("Failed to start driver node: %s", serve_status.ToString()));
+			std::cerr << "Driver node stopped with an error: " << serve_status.ToString() << std::endl;
 		}
 	});
 
@@ -161,7 +162,10 @@ void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	string worker_id = worker_id_data[0].GetString();
 	string location = location_data[0].GetString();
 
-	server_state.test_server->RegisterWorker(worker_id, location);
+	auto status = server_state.test_server->RegisterWorker(worker_id, location);
+	if (!status.ok()) {
+		throw IOException(StringUtil::Format("Failed to register worker: %s", status.ToString()));
+	}
 	result.Reference(Value(SUCCESS));
 }
 
@@ -180,7 +184,10 @@ void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &re
 	string driver_id = driver_id_data[0].GetString();
 	string location = location_data[0].GetString();
 
-	server_state.test_server->RegisterOrReplaceDriver(driver_id, location);
+	auto status = server_state.test_server->RegisterOrReplaceDriver(driver_id, location);
+	if (!status.ok()) {
+		throw IOException(StringUtil::Format("Failed to register driver: %s", status.ToString()));
+	}
 	result.Reference(Value(SUCCESS));
 }
 
@@ -228,7 +235,8 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 		SetThreadName("StandaloneWkr");
 		auto serve_status = worker_ptr->Serve();
 		if (!serve_status.ok()) {
-			throw IOException(StringUtil::Format("Failed to start worker node: %s", serve_status.ToString()));
+			std::cerr << "Worker node on port " << port << " stopped with an error: " << serve_status.ToString()
+			          << std::endl;
 		}
 	});
 

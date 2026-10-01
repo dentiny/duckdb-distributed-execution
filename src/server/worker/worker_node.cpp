@@ -2,7 +2,6 @@
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
-#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
@@ -159,13 +158,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	if (req.storage_config().storage_case() != distributed::StorageConfig::kLocal) {
 		return arrow::Status::Invalid("Workers can execute only on shared local object storage");
 	}
-	unique_ptr<Connection> task_conn;
-	try {
-		task_conn = GetOrOpenObjectStorageDatabase(req.storage_config()).Connect();
-	} catch (const std::exception &ex) {
-		return arrow::Status::IOError(StringUtil::Format("Worker %s failed to attach %s: %s", worker_id,
-		                                                 req.storage_config().database_uri(), ErrorData(ex).Message()));
-	}
+	ARROW_ASSIGN_OR_RAISE(auto object_storage_database, GetOrOpenObjectStorageDatabase(req.storage_config()));
+	ARROW_ASSIGN_OR_RAISE(auto task_conn, object_storage_database->Connect());
 
 	// Execute the pipeline task with state tracking
 	unique_ptr<QueryResult> result;
@@ -275,15 +269,21 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 	return arrow::Status::OK();
 }
 
-ObjectStorageDatabase &WorkerNode::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config) {
+arrow::Result<ObjectStorageDatabase *>
+WorkerNode::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config) {
 	const concurrency::lock_guard<concurrency::mutex> lock(object_storage_mutex);
 	auto &instance = object_storage_databases[ObjectStorageDatabase::GetKey(config)];
 	if (!instance) {
-		instance = make_uniq<ObjectStorageDatabase>(config, AccessMode::READ_ONLY);
+		auto database_result = ObjectStorageDatabase::Create(config, AccessMode::READ_ONLY);
+		if (!database_result.ok()) {
+			return arrow::Status::IOError("Worker ", worker_id, " failed to attach ", config.database_uri(), ": ",
+			                              database_result.status().message());
+		}
+		instance = std::move(database_result).ValueOrDie();
 		DUCKDB_LOG_DEBUG(*instance->GetInstance().instance,
 		                 StringUtil::Format("Worker %s attached %s", worker_id, config.database_uri()));
 	}
-	return *instance;
+	return instance.get();
 }
 
 arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, Connection &result_conn,

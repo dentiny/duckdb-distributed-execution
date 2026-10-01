@@ -1,6 +1,5 @@
 #include "server/driver/served_database.hpp"
 
-#include "duckdb/common/exception.hpp"
 #include "server/driver/client_registration.hpp"
 #include "server/object_storage_database.hpp"
 
@@ -9,15 +8,25 @@ namespace duckdb {
 ServedDatabase::ServedDatabase(distributed::StorageConfig config_p) : config(std::move(config_p)) {
 }
 
-shared_ptr<ClientRegistration> ServedDatabase::AddClient(distributed::ClientRole role, WorkerManager &worker_manager) {
+arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distributed::ClientRole role,
+                                                                        WorkerManager &worker_manager) {
 	const bool writable = role == distributed::CLIENT_ROLE_READ_WRITE;
 	if (writable && has_writer) {
-		throw InvalidInputException("Database %s already has a writable Duckherder client", config.database_uri());
+		return arrow::Status::Invalid("Database ", config.database_uri(), " already has a writable Duckherder client");
 	}
 	if (!database) {
-		database = make_shared_ptr<ObjectStorageDatabase>(config, AccessMode::READ_WRITE);
+		auto database_result = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
+		if (!database_result.ok()) {
+			return database_result.status();
+		}
+		database = std::move(database_result).ValueOrDie();
 	}
-	auto registration = make_shared_ptr<ClientRegistration>(database, worker_manager, role, config);
+	auto connection_result = database->Connect();
+	if (!connection_result.ok()) {
+		return connection_result.status();
+	}
+	auto registration = make_shared_ptr<ClientRegistration>(*database, std::move(connection_result).ValueOrDie(),
+	                                                        worker_manager, role, config);
 	if (writable) {
 		has_writer = true;
 	} else {

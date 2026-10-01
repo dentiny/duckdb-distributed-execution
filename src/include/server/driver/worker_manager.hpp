@@ -9,6 +9,8 @@
 #include "server/worker/worker_node.hpp"
 #include "utils/mutex.hpp"
 
+#include <arrow/status.h>
+
 namespace duckdb {
 
 struct WorkerInfo {
@@ -31,11 +33,11 @@ public:
 	}
 
 	// Register a single external worker node.
-	void RegisterWorker(const string &worker_id, const string &location);
+	arrow::Status RegisterWorker(const string &worker_id, const string &location);
 
 	// Register or replace the driver node.
 	// Unlike workers, only one driver node can be registered at a time.
-	void RegisterOrReplaceDriver(const string &driver_id, const string &location);
+	arrow::Status RegisterOrReplaceDriver(const string &driver_id, const string &location);
 
 	// Get all available workers.
 	vector<WorkerInfo *> GetAvailableWorkers();
@@ -45,7 +47,7 @@ public:
 
 	// Start a number of local worker nodes in background threads.
 	// Only used for local testing and dev.
-	void StartLocalWorkers(idx_t num_workers);
+	arrow::Status StartLocalWorkers(idx_t num_workers);
 
 private:
 	mutable concurrency::mutex mu;

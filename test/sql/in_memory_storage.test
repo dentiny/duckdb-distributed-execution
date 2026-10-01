@@ -106,18 +106,21 @@ DETACH replacement_writer;
 statement ok con1
 DETACH named_reader;
 
-statement ok con3
-ATTACH 'localhost:8842/memory.db' AS fresh_database (TYPE duckherder);
-
-statement error con3
-SELECT * FROM fresh_database.items;
-----
-<REGEX>:.*Table with name items does not exist.*
-
-# The server retains the default in-memory database after its final client leaves.
+# Release the default database's owning connection before inspecting catalogs from con3.
 statement ok
 DETACH default_db;
 
+statement ok con3
+ATTACH 'localhost:8842/memory.db' AS fresh_database (TYPE duckherder, READ_ONLY);
+
+query I con3
+SELECT count(*)
+FROM duckdb_tables()
+WHERE database_name = 'fresh_database' AND table_name = 'items';
+----
+0
+
+# The server retains the default in-memory database after its final client leaves.
 statement ok con4
 ATTACH 'localhost:8842' AS restored_default (TYPE duckherder, READ_ONLY);
 

@@ -7,16 +7,19 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "storage_config.pb.h"
 
+#include <arrow/result.h>
+
 namespace duckdb {
 
 // One DuckDB instance configured for one object storage database. Control nodes and workers use this common wrapper
 // with different access modes.
 class ObjectStorageDatabase {
 public:
-	ObjectStorageDatabase(const distributed::StorageConfig &config, AccessMode access_mode);
+	static arrow::Result<unique_ptr<ObjectStorageDatabase>> Create(const distributed::StorageConfig &config,
+	                                                               AccessMode access_mode);
 
 	// Create an independent session whose default catalog is this object storage database.
-	unique_ptr<Connection> Connect() const;
+	arrow::Result<unique_ptr<Connection>> Connect() const;
 
 	DuckDB &GetInstance() const;
 	const shared_ptr<DuckDB> &GetSharedInstance() const;
@@ -30,6 +33,8 @@ public:
 	static string GetKey(const distributed::StorageConfig &config);
 
 private:
+	explicit ObjectStorageDatabase(shared_ptr<DuckDB> instance_p);
+
 	shared_ptr<DuckDB> instance;
 };
 

@@ -5,6 +5,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/types/uuid.hpp"
@@ -103,12 +104,8 @@ arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
 	// Start local workers.
 	if (num_workers > 0) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Starting %llu local workers", num_workers));
-		try {
-			worker_manager->StartLocalWorkers(num_workers);
-			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Started %llu workers", num_workers));
-		} catch (std::exception &e) {
-			return arrow::Status::IOError("Failed to start workers: " + string(e.what()));
-		}
+		ARROW_RETURN_NOT_OK(worker_manager->StartLocalWorkers(num_workers));
+		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Started %llu workers", num_workers));
 	}
 
 	// Start the server.
@@ -150,18 +147,18 @@ string DistributedFlightServer::GetLocation() const {
 	return StringUtil::Format("grpc://%s:%d", host, port);
 }
 
-void DistributedFlightServer::RegisterWorker(const string &worker_id, const string &location) {
+arrow::Status DistributedFlightServer::RegisterWorker(const string &worker_id, const string &location) {
 	if (!worker_manager) {
-		throw InternalException("WorkerManager not initialized");
+		return arrow::Status::Invalid("WorkerManager not initialized");
 	}
-	worker_manager->RegisterWorker(worker_id, location);
+	return worker_manager->RegisterWorker(worker_id, location);
 }
 
-void DistributedFlightServer::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
+arrow::Status DistributedFlightServer::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
 	if (!worker_manager) {
-		throw InternalException("WorkerManager not initialized");
+		return arrow::Status::Invalid("WorkerManager not initialized");
 	}
-	worker_manager->RegisterOrReplaceDriver(driver_id, location);
+	return worker_manager->RegisterOrReplaceDriver(driver_id, location);
 }
 
 idx_t DistributedFlightServer::GetWorkerCount() const {
@@ -171,11 +168,11 @@ idx_t DistributedFlightServer::GetWorkerCount() const {
 	return worker_manager->GetWorkerCount();
 }
 
-void DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
+arrow::Status DistributedFlightServer::StartLocalWorkers(idx_t num_workers) {
 	if (!worker_manager) {
-		throw InternalException("WorkerManager not initialized");
+		return arrow::Status::Invalid("WorkerManager not initialized");
 	}
-	worker_manager->StartLocalWorkers(num_workers);
+	return worker_manager->StartLocalWorkers(num_workers);
 }
 
 DistributedFlightServerTestState &DistributedFlightServer::GetTestStateForTesting() {
@@ -323,16 +320,16 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 	}
 
 	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
-	try {
-		clients.emplace(client_id, database->AddClient(req.role(), *worker_manager));
-	} catch (const std::exception &ex) {
-		if (!database->HasClients()) {
+	auto registration = database->AddClient(req.role(), *worker_manager);
+	if (!registration.ok()) {
+		if (!database->HasClients() && !database->IsDefault()) {
 			databases.erase(storage_key);
 		}
 		resp.set_success(false);
-		resp.set_error_message(ErrorData(ex).Message());
+		resp.set_error_message(registration.status().message());
 		return arrow::Status::OK();
 	}
+	clients.emplace(client_id, std::move(registration).ValueOrDie());
 	resp.set_success(true);
 	resp.mutable_register_client()->set_client_id(client_id);
 	return arrow::Status::OK();
@@ -687,10 +684,22 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	}
 	const auto &client_id = descriptor.path[0];
 	const auto &table_name = descriptor.path[1];
+	uint64_t transaction_id;
+	uint64_t request_sequence;
+	int32_t transaction_mode;
+	if (!TryCast::Operation<string_t, uint64_t>(string_t(descriptor.path[2]), transaction_id) ||
+	    !TryCast::Operation<string_t, uint64_t>(string_t(descriptor.path[3]), request_sequence) ||
+	    !TryCast::Operation<string_t, int32_t>(string_t(descriptor.path[4]), transaction_mode)) {
+		return arrow::Status::Invalid("DoPut transaction metadata must contain valid integers");
+	}
+	if (transaction_mode != distributed::TRANSACTION_MODE_AUTOCOMMIT &&
+	    transaction_mode != distributed::TRANSACTION_MODE_EXPLICIT) {
+		return arrow::Status::Invalid("DoPut transaction mode must be AUTOCOMMIT or EXPLICIT");
+	}
 	distributed::DistributedRequest request_identity;
-	request_identity.set_transaction_id(std::stoull(descriptor.path[2]));
-	request_identity.set_request_sequence(std::stoull(descriptor.path[3]));
-	request_identity.set_transaction_mode(static_cast<distributed::TransactionMode>(std::stoi(descriptor.path[4])));
+	request_identity.set_transaction_id(transaction_id);
+	request_identity.set_request_sequence(request_sequence);
+	request_identity.set_transaction_mode(static_cast<distributed::TransactionMode>(transaction_mode));
 	const concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients_mutex);
 	shared_ptr<ClientRegistration> registration;
 	if (!LookupClient(client_id, registration)) {
@@ -811,7 +820,7 @@ arrow::Status DistributedFlightServer::HandleLoadExtension(const distributed::Lo
 	auto &db_instance = *db->instance;
 
 	// Execute INSTALL first.
-	string sql = "INSTALL " + req.extension_name();
+	string sql = "FORCE INSTALL " + req.extension_name();
 	if (!req.repository().empty() || !req.version().empty()) {
 		if (!req.repository().empty()) {
 			sql += " FROM '" + req.repository() + "'";

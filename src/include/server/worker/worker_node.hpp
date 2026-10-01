@@ -51,7 +51,7 @@ private:
 
 	// Return this worker's read-only instance for the configuration, attaching it on first use.
 	// The instance is a snapshot from that first attach; later writes are not visible through it.
-	ObjectStorageDatabase &GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config);
+	arrow::Result<ObjectStorageDatabase *> GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config);
 
 	string worker_id;
 	string host;

@@ -5,7 +5,7 @@
 
 namespace duckdb {
 
-void WorkerManager::RegisterWorker(const string &worker_id, const string &location) {
+arrow::Status WorkerManager::RegisterWorker(const string &worker_id, const string &location) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	auto &db_instance = *db.instance;
 
@@ -14,14 +14,16 @@ void WorkerManager::RegisterWorker(const string &worker_id, const string &locati
 	// Connect to the worker.
 	auto status = worker_info->client->Connect();
 	if (!status.ok()) {
-		throw IOException("Failed to connect to worker %s at %s: %s", worker_id, location, status.ToString());
+		return arrow::Status::IOError("Failed to connect to worker ", worker_id, " at ", location, ": ",
+		                              status.ToString());
 	}
 
 	workers.emplace_back(std::move(worker_info));
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully registered worker '%s' at '%s'", worker_id, location);
+	return arrow::Status::OK();
 }
 
-void WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
+arrow::Status WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	auto &db_instance = *db.instance;
 
@@ -36,7 +38,8 @@ void WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const strin
 	// Connect to the driver.
 	auto status = new_driver->client->Connect();
 	if (!status.ok()) {
-		throw IOException("Failed to connect to driver %s at %s: %s", driver_id, location, status.ToString());
+		return arrow::Status::IOError("Failed to connect to driver ", driver_id, " at ", location, ": ",
+		                              status.ToString());
 	}
 
 	// Replace the existing driver node.
@@ -50,6 +53,7 @@ void WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const strin
 		                 "Workers may need to be re-registered with the new driver if coordination is required.",
 		                 workers.size());
 	}
+	return arrow::Status::OK();
 }
 
 vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {
@@ -67,7 +71,7 @@ idx_t WorkerManager::GetWorkerCount() const {
 	return workers.size();
 }
 
-void WorkerManager::StartLocalWorkers(idx_t num_workers) {
+arrow::Status WorkerManager::StartLocalWorkers(idx_t num_workers) {
 	concurrency::lock_guard<concurrency::mutex> lock(mu);
 	auto &db_instance = *db.instance;
 
@@ -76,7 +80,7 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 	for (idx_t idx = 0; idx < num_workers; ++idx) {
 		int port = GetAvailablePort(next_local_worker_port);
 		if (port < 0) {
-			throw IOException("Failed to find available port for workers");
+			return arrow::Status::IOError("Failed to find available port for workers");
 		}
 
 		string worker_id = StringUtil::Format("worker_%llu", next_local_worker_id++);
@@ -84,15 +88,15 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 
 		auto status = worker->Start();
 		if (!status.ok()) {
-			throw IOException("Failed to start worker %s: %s", worker_id, status.ToString());
+			return arrow::Status::IOError("Failed to start worker ", worker_id, ": ", status.ToString());
 		}
 
 		string location = worker->GetLocation();
 		auto worker_info = make_uniq<WorkerInfo>(worker_id, location);
 		auto connect_status = worker_info->client->Connect();
 		if (!connect_status.ok()) {
-			throw IOException("Failed to connect to worker %s at %s: %s", worker_id, location,
-			                  connect_status.ToString());
+			return arrow::Status::IOError("Failed to connect to worker ", worker_id, " at ", location, ": ",
+			                              connect_status.ToString());
 		}
 		workers.emplace_back(std::move(worker_info));
 
@@ -105,6 +109,7 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully started %llu local workers (total workers: %llu)", num_workers,
 	                 workers.size());
+	return arrow::Status::OK();
 }
 
 } // namespace duckdb

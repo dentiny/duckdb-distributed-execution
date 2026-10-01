@@ -30,7 +30,7 @@ enum class ClientRequestTransport : uint8_t { NONE, ACTION, DO_GET, DO_PUT };
 
 // Owns the Control Node resources and bounded transaction replay state for one registered client.
 struct ClientRegistration {
-	ClientRegistration(shared_ptr<ObjectStorageDatabase> db, WorkerManager &worker_manager,
+	ClientRegistration(ObjectStorageDatabase &db, unique_ptr<Connection> connection_p, WorkerManager &worker_manager,
 	                   distributed::ClientRole role_p, const distributed::StorageConfig &storage_config);
 	~ClientRegistration();
 
