@@ -12,6 +12,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -42,6 +43,32 @@ unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deseriali
 virtual_column_map_t GetDistributedTableScanVirtualColumns(ClientContext &context,
                                                            optional_ptr<FunctionData> bind_data) {
 	return bind_data->Cast<DistributedTableScanBindData>().table.GetVirtualColumns();
+}
+
+// Builds a remote query returning exactly the requested columns, in output order.
+string BuildProjectedScanSQL(const DistributedTableScanBindData &bind_data, const vector<column_t> &column_ids,
+                             vector<LogicalType> &types) {
+	const auto virtual_columns = bind_data.table.GetVirtualColumns();
+	vector<string> select_list;
+	for (auto column_id : column_ids) {
+		if (column_id == COLUMN_IDENTIFIER_EMPTY) {
+			// No column is referenced (e.g. count(*)), so only the row count matters.
+			select_list.emplace_back("NULL::BOOLEAN");
+			types.emplace_back(LogicalType::BOOLEAN);
+		} else if (IsVirtualColumn(column_id)) {
+			auto entry = virtual_columns.find(column_id);
+			if (entry == virtual_columns.end()) {
+				throw InternalException("Distributed table scan received unregistered virtual column %llu", column_id);
+			}
+			select_list.emplace_back(KeywordHelper::WriteOptionallyQuoted(entry->second.name));
+			types.emplace_back(entry->second.type);
+		} else {
+			auto &column = bind_data.table.GetColumn(LogicalIndex(column_id));
+			select_list.emplace_back(KeywordHelper::WriteOptionallyQuoted(column.Name()));
+			types.emplace_back(column.Type());
+		}
+	}
+	return StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), bind_data.remote_table_name);
 }
 
 } // namespace
@@ -100,6 +127,12 @@ unique_ptr<LocalTableFunctionState> DistributedTableScanFunction::InitLocal(Exec
                                                                             GlobalTableFunctionState *global_state) {
 	auto local_state = make_uniq<DistributedTableScanLocalState>();
 	local_state->column_ids = input.column_ids;
+	if (local_state->column_ids.empty()) {
+		auto &bind_data = input.bind_data->Cast<DistributedTableScanBindData>();
+		for (idx_t col_idx = 0; col_idx < bind_data.table.GetColumns().LogicalColumnCount(); ++col_idx) {
+			local_state->column_ids.emplace_back(col_idx);
+		}
+	}
 	return std::move(local_state);
 }
 
@@ -112,16 +145,10 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	// Get the expected types from the table schema to handle special types like ENUM.
-	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
-	auto includes_rowid = std::find(local_state.column_ids.begin(), local_state.column_ids.end(),
-	                                COLUMN_IDENTIFIER_ROW_ID) != local_state.column_ids.end();
 	if (!local_state.result) {
-		auto scan_source = bind_data.remote_table_name;
-		if (includes_rowid) {
-			expected_types.insert(expected_types.begin(), LogicalType::ROW_TYPE);
-			scan_source = StringUtil::Format("SELECT rowid, * FROM %s", bind_data.remote_table_name);
-		}
+		// Expected types come from the table schema to handle special types like ENUM.
+		vector<LogicalType> expected_types;
+		auto scan_source = BuildProjectedScanSQL(bind_data, local_state.column_ids, expected_types);
 		// Paging with LIMIT/OFFSET re-reads the remaining table per chunk and has no stable row order.
 		auto &client = GetDistributedClient(context, bind_data.table);
 		local_state.result = client.ScanTable(scan_source, NO_QUERY_LIMIT, NO_QUERY_OFFSET, &expected_types);
@@ -140,29 +167,14 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		return;
 	}
 
-	// Handle projection pushdown: copy data from fetched chunk to output.
-	// Note: We use Copy instead of Reference to handle column reordering correctly.
-	// The output DataChunk schema is determined by the query projection, while data_chunk has the table's natural
-	// column order.
+	// The remote query already returns the projected columns in output order.
 	output.SetCardinality(data_chunk->size());
-
-	// If there's no projection, just copy all columns in order.
-	if (local_state.column_ids.empty()) {
-		for (idx_t col_idx = 0; col_idx < std::min(output.ColumnCount(), data_chunk->ColumnCount()); ++col_idx) {
-			VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(),
-			                       /*source_offset=*/0, /*target_offset=*/0);
+	for (idx_t col_idx = 0; col_idx < output.ColumnCount() && col_idx < data_chunk->ColumnCount(); ++col_idx) {
+		if (local_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
+			continue;
 		}
-	}
-	// Otherwise, perform projection pushdown, and copy only requested columns in the correct order.
-	else {
-		for (idx_t out_idx = 0; out_idx < output.ColumnCount() && out_idx < local_state.column_ids.size(); ++out_idx) {
-			auto col_idx = local_state.column_ids[out_idx];
-			auto source_idx = col_idx == COLUMN_IDENTIFIER_ROW_ID ? 0 : col_idx + (includes_rowid ? 1 : 0);
-			if (source_idx < data_chunk->ColumnCount()) {
-				VectorOperations::Copy(data_chunk->data[source_idx], output.data[out_idx], data_chunk->size(),
-				                       /*source_offset=*/0, /*target_offset=*/0);
-			}
-		}
+		VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(),
+		                       /*source_offset=*/0, /*target_offset=*/0);
 	}
 }
 

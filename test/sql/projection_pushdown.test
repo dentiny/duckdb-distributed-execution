@@ -1,0 +1,68 @@
+# name: test/sql/projection_pushdown.test
+# description: Remote table scans fetch only the projected columns
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8865, 2);
+
+statement ok
+ATTACH 'localhost:8865' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TYPE dh.mood AS ENUM ('sad', 'ok', 'happy');
+
+statement ok
+CREATE TABLE dh.proj_wide (id INTEGER, payload VARCHAR, "select" INTEGER, "Mixed Case" VARCHAR, feeling dh.mood);
+
+statement ok
+INSERT INTO dh.proj_wide SELECT i, repeat('x', 100), i * 2, 'm' || i, (['sad', 'ok', 'happy'])[i % 3 + 1]::dh.mood FROM range(5000) t(i);
+
+# Columns in a different order than the table, including names that need quoting.
+query III
+SELECT "Mixed Case", "select", id FROM dh.proj_wide WHERE id IN (0, 4999) ORDER BY id;
+----
+m0	0	0
+m4999	9998	4999
+
+query I
+SELECT feeling FROM dh.proj_wide WHERE id = 2;
+----
+happy
+
+# No column referenced.
+query I
+SELECT count(*) FROM dh.proj_wide;
+----
+5000
+
+# rowid mixed with regular columns.
+query III
+SELECT id, rowid = id, "select" FROM dh.proj_wide WHERE id = 7;
+----
+7	true	14
+
+query II
+SELECT count(*), count(DISTINCT rowid) FROM dh.proj_wide;
+----
+5000	5000
+
+# The server only receives the projected columns, never SELECT *.
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT * FROM%proj_wide%';
+----
+0
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%proj_wide%' AND sql LIKE '%payload%';
+----
+0
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();
