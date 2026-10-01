@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-import "storage.proto";
+import "storage_config.proto";
 
 enum ClientRole {
   CLIENT_ROLE_UNSPECIFIED = 0;

@@ -8,7 +8,7 @@
 #include "server/driver/query_plan_analyzer.hpp"
 #include "server/driver/result_merger.hpp"
 #include "server/driver/task_partitioner.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 
 #include <arrow/flight/api.h>
 #include <arrow/record_batch.h>

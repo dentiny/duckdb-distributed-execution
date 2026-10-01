@@ -10,7 +10,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 #include "utils/mutex.hpp"
 
 namespace duckdb {

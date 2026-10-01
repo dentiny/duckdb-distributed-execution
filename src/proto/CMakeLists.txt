@@ -6,7 +6,7 @@ set(PROTO_FILES
     dml.proto
     error.proto
     query.proto
-    storage.proto
+    storage_config.proto
     transaction.proto
     worker.proto
     distributed.proto)

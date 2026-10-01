@@ -4,7 +4,7 @@
 #include "distributed.pb.h"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 #include "transaction.pb.h"
 
 namespace duckdb {
@@ -31,7 +31,7 @@ arrow::Status ValidateRequest(const distributed::RegisterClientRequest &request)
 
 arrow::Status ValidateRequest(const distributed::StorageConfig &config) {
 	if (config.database_uri().empty()) {
-		if (!config.backend().empty() || !config.root().empty()) {
+		if (config.storage_case() != distributed::StorageConfig::STORAGE_NOT_SET) {
 			return arrow::Status::Invalid("Object storage settings require a database");
 		}
 		return arrow::Status::OK();
@@ -40,11 +40,11 @@ arrow::Status ValidateRequest(const distributed::StorageConfig &config) {
 	    config.database_uri().size() == string(OBJFS_SCHEME).size()) {
 		return arrow::Status::Invalid("Object storage database must be a named duckdb_objfs:// URI");
 	}
-	// Memory backends are private to one DuckDB instance, so workers could never see the control node's data.
-	if (config.backend() != "local") {
-		return arrow::Status::Invalid("Object storage backend must be 'local'");
+	if (config.storage_case() != distributed::StorageConfig::kLocal) {
+		// In-memory stores are private to one DuckDB instance, so workers could never see the control node's data.
+		return arrow::Status::Invalid("Duckherder currently supports only local object storage");
 	}
-	if (config.root().empty() || !LocalFileSystem().IsPathAbsolute(config.root())) {
+	if (config.local().root().empty() || !LocalFileSystem().IsPathAbsolute(config.local().root())) {
 		return arrow::Status::Invalid("Local object storage root must be an absolute path");
 	}
 	return arrow::Status::OK();

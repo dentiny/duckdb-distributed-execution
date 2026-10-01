@@ -10,7 +10,7 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 #include "utils/mutex.hpp"
 
 #include <arrow/flight/api.h>

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-import "storage.proto";
+import "storage_config.proto";
 
 // Execute a partition on a worker node.
 message ExecutePartitionRequest {

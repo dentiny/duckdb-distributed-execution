@@ -4,7 +4,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/main/client_context_state.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 
 namespace duckdb {
 

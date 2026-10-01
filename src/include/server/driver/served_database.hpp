@@ -3,7 +3,7 @@
 #include "client.pb.h"
 #include "duckdb.hpp"
 #include "duckdb/common/shared_ptr.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 
 namespace duckdb {
 

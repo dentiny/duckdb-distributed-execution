@@ -1,7 +1,7 @@
 #pragma once
 
 #include "client.pb.h"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 #include "transaction.pb.h"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/shared_ptr.hpp"

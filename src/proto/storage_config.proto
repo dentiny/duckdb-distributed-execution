@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package duckdb.distributed;
+
+message InMemoryStorage {
+}
+
+message LocalStorage {
+  // Absolute directory visible at the same path to the control node and all workers.
+  string root = 1;
+}
+
+message S3Storage {
+  string bucket = 1;
+  // Key prefix inside the bucket.
+  string root = 2;
+  string endpoint = 3;
+  string region = 4;
+  string secret_name = 5;
+}
+
+// Object storage database selected by a client attachment. Each distinct configuration is opened as its own
+// DuckDB instance on the control node and on every worker.
+message StorageConfig {
+  // DuckDB database URI using duckdb_objfs://. Empty selects the control node's built-in Duckling catalog.
+  string database_uri = 1;
+
+  oneof storage {
+    InMemoryStorage in_memory = 2;
+    LocalStorage local = 3;
+    S3Storage s3 = 4;
+  }
+}

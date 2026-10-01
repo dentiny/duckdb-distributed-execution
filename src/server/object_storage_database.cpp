@@ -17,6 +17,23 @@ void ExecuteOrThrow(Connection &conn, const string &sql) {
 	}
 }
 
+void ConfigureObjectStorage(Connection &conn, const distributed::StorageConfig &config) {
+	switch (config.storage_case()) {
+	case distributed::StorageConfig::kInMemory:
+		ExecuteOrThrow(conn, "SET GLOBAL duckdb_objfs_backend = 'memory'");
+		return;
+	case distributed::StorageConfig::kLocal:
+		ExecuteOrThrow(conn, "SET GLOBAL duckdb_objfs_backend = 'local'");
+		ExecuteOrThrow(conn, StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s",
+		                                       KeywordHelper::WriteQuoted(config.local().root())));
+		return;
+	case distributed::StorageConfig::kS3:
+		throw NotImplementedException("Duckherder does not support S3 object storage yet");
+	default:
+		throw InvalidInputException("Object storage configuration must specify a storage type");
+	}
+}
+
 } // namespace
 
 bool HasObjectStorage(const distributed::StorageConfig &config) {
@@ -32,10 +49,7 @@ unique_ptr<DuckDB> OpenObjectStorageDatabase(const distributed::StorageConfig &c
 	db->LoadStaticExtension<CoreFunctionsExtension>();
 	Connection conn(*db);
 	ExecuteOrThrow(conn, "LOAD duckdb_object_storage");
-	ExecuteOrThrow(
-	    conn, StringUtil::Format("SET GLOBAL duckdb_objfs_backend = %s", KeywordHelper::WriteQuoted(config.backend())));
-	ExecuteOrThrow(conn,
-	               StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s", KeywordHelper::WriteQuoted(config.root())));
+	ConfigureObjectStorage(conn, config);
 	ExecuteOrThrow(conn, StringUtil::Format("ATTACH %s AS %s%s", KeywordHelper::WriteQuoted(config.database_uri()),
 	                                        OBJECT_STORAGE_CATALOG,
 	                                        access_mode == AccessMode::READ_ONLY ? " (READ_ONLY)" : ""));

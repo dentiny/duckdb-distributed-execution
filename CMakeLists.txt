@@ -31,7 +31,7 @@ set(PROTO_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/dml.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/error.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/query.proto
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/storage.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/storage_config.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/transaction.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/worker.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/src/proto/distributed.proto)

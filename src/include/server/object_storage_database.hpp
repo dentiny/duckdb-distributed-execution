@@ -4,7 +4,7 @@
 #include "duckdb/common/enums/access_mode.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include "storage.pb.h"
+#include "storage_config.pb.h"
 
 namespace duckdb {
 
@@ -14,7 +14,9 @@ inline constexpr const char *OBJECT_STORAGE_CATALOG = "object_db";
 // Return true if the configuration selects an object storage database instead of the Duckling catalog.
 bool HasObjectStorage(const distributed::StorageConfig &config);
 
-// Stable identity of a storage configuration; equal keys refer to the same database.
+// Map key used by control nodes and workers to reuse the DuckDB instance for one object storage database. The full
+// serialized configuration is included, so the same database URI under a different backend or root gets a separate
+// instance.
 string GetStorageKey(const distributed::StorageConfig &config);
 
 // Create a DuckDB instance dedicated to one validated storage configuration, with the database attached as
