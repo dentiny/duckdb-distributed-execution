@@ -1,0 +1,44 @@
+# name: test/sql/remote_scan_single_request.test
+# description: A client scan of a multi-chunk remote table issues a single server request
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8862, 2);
+
+statement ok
+ATTACH 'localhost:8862' AS dh (TYPE duckherder);
+
+# 10,000 rows span several 2,048-row chunks.
+statement ok
+CREATE TABLE dh.scan_once AS SELECT i AS id FROM range(10000) t(i);
+
+query II
+SELECT count(*), count(DISTINCT id) FROM dh.scan_once;
+----
+10000	10000
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%scan_once%' AND sql NOT LIKE 'CREATE%';
+----
+1
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%scan_once%OFFSET%';
+----
+0
+
+# Scans that need rowid still read every row exactly once.
+query II
+SELECT count(*), count(DISTINCT rowid) FROM dh.scan_once;
+----
+10000	10000
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

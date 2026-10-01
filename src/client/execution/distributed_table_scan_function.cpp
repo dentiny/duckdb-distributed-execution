@@ -53,11 +53,12 @@ struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 };
 
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
-	DistributedTableScanLocalState() : finished(false), offset(0) {
+	DistributedTableScanLocalState() : finished(false) {
 	}
 	bool finished;
 	vector<column_t> column_ids;
-	idx_t offset; // Track current offset for fetching data
+	// The whole remote scan result, fetched once and drained one chunk per Execute call.
+	unique_ptr<QueryResult> result;
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
@@ -115,19 +116,22 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	auto expected_types = bind_data.table.GetColumns().GetColumnTypes();
 	auto includes_rowid = std::find(local_state.column_ids.begin(), local_state.column_ids.end(),
 	                                COLUMN_IDENTIFIER_ROW_ID) != local_state.column_ids.end();
-	auto scan_source = bind_data.remote_table_name;
-	if (includes_rowid) {
-		expected_types.insert(expected_types.begin(), LogicalType::ROW_TYPE);
-		scan_source = StringUtil::Format("SELECT rowid, * FROM %s", bind_data.remote_table_name);
-	}
-	auto &client = GetDistributedClient(context, bind_data.table);
-	auto result = client.ScanTable(scan_source, /*limit=*/output.GetCapacity(), local_state.offset, &expected_types);
-	if (result->HasError()) {
-		throw Exception(ExceptionType::INTERNAL,
-		                StringUtil::Format("Distributed table scan error: %s", result->GetError()));
+	if (!local_state.result) {
+		auto scan_source = bind_data.remote_table_name;
+		if (includes_rowid) {
+			expected_types.insert(expected_types.begin(), LogicalType::ROW_TYPE);
+			scan_source = StringUtil::Format("SELECT rowid, * FROM %s", bind_data.remote_table_name);
+		}
+		// Paging with LIMIT/OFFSET re-reads the remaining table per chunk and has no stable row order.
+		auto &client = GetDistributedClient(context, bind_data.table);
+		local_state.result = client.ScanTable(scan_source, NO_QUERY_LIMIT, NO_QUERY_OFFSET, &expected_types);
+		if (local_state.result->HasError()) {
+			throw Exception(ExceptionType::INTERNAL,
+			                StringUtil::Format("Distributed table scan error: %s", local_state.result->GetError()));
+		}
 	}
 
-	auto data_chunk = result->Fetch();
+	auto data_chunk = local_state.result->Fetch();
 
 	// No more data, and mark as finished.
 	if (data_chunk == nullptr || data_chunk->size() == 0) {
@@ -160,7 +164,6 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 			}
 		}
 	}
-	local_state.offset += data_chunk->size();
 }
 
 } // namespace duckdb

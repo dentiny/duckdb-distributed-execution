@@ -900,7 +900,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
 	}
 
-	if (req.limit() != NO_QUERY_LIMIT && req.limit() != STANDARD_VECTOR_SIZE) {
+	if (req.limit() != NO_QUERY_LIMIT) {
 		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
 	}
 	if (req.offset() != NO_QUERY_OFFSET) {
