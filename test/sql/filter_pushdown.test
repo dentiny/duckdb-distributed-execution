@@ -1,0 +1,173 @@
+# name: test/sql/filter_pushdown.test
+# description: Remote table scans push filters to the server, including join filters from the build side
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8867, 2);
+
+statement ok
+ATTACH 'localhost:8867' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TYPE dh.mood AS ENUM ('sad', 'ok', 'happy');
+
+statement ok
+CREATE TABLE dh.facts (
+    id INTEGER,
+    str VARCHAR,
+    feeling dh.mood,
+    ts TIMESTAMP,
+    bytes BLOB,
+    rec STRUCT(a INTEGER, b VARCHAR)
+);
+
+statement ok
+INSERT INTO dh.facts
+SELECT
+    i,
+    CASE WHEN i % 10 = 0 THEN NULL WHEN i = 7 THEN 'it''s' ELSE 'v' || i END,
+    (['sad', 'ok', 'happy'])[i % 3 + 1]::dh.mood,
+    TIMESTAMP '2024-01-01' + INTERVAL (i) SECOND,
+    ('b' || (i % 10)::VARCHAR)::BLOB,
+    {'a': i, 'b': 's' || i}
+FROM range(10000) t(i);
+
+statement ok
+CREATE TABLE dh.dims (id INTEGER, label VARCHAR);
+
+statement ok
+INSERT INTO dh.dims VALUES (3, 'three'), (4, 'four'), (9000, 'nine thousand');
+
+query II
+SELECT id, str FROM dh.facts WHERE id = 7;
+----
+7	it's
+
+query I
+SELECT id FROM dh.facts WHERE str = 'it''s';
+----
+7
+
+query I
+SELECT count(*) FROM dh.facts WHERE str IS NULL;
+----
+1000
+
+query I
+SELECT id FROM dh.facts WHERE id = 1 OR id = 5 ORDER BY id;
+----
+1
+5
+
+query I
+SELECT id FROM dh.facts WHERE id IN (2, 40, 9999) ORDER BY id;
+----
+2
+40
+9999
+
+query I
+SELECT count(*) FROM dh.facts WHERE feeling = 'happy' AND id < 30;
+----
+10
+
+# ENUMs order by declaration ('sad' < 'ok' < 'happy'), not alphabetically.
+query I
+SELECT count(*) FROM dh.facts WHERE feeling > 'ok' AND id < 30;
+----
+10
+
+query I
+SELECT count(*) FROM dh.facts WHERE feeling <= 'ok' AND id < 30;
+----
+20
+
+statement ok
+CREATE TABLE dh.floats (f FLOAT);
+
+statement ok
+INSERT INTO dh.floats VALUES (0.1), (0.2), (0.3);
+
+query I
+SELECT f FROM dh.floats WHERE f = 0.1::FLOAT;
+----
+0.1
+
+query I
+SELECT id FROM dh.facts WHERE ts = TIMESTAMP '2024-01-01 00:01:40';
+----
+100
+
+query I
+SELECT count(*) FROM dh.facts WHERE bytes = 'b3'::BLOB;
+----
+1000
+
+query I
+SELECT id FROM dh.facts WHERE rec.a = 42;
+----
+42
+
+query I
+SELECT id FROM dh.facts WHERE rowid = 123;
+----
+123
+
+# Join against a local table.
+statement ok
+CREATE TABLE local_keys AS SELECT * FROM (VALUES (3), (4)) t(id);
+
+query II
+SELECT f.id, f.str FROM dh.facts f JOIN local_keys k ON f.id = k.id ORDER BY f.id;
+----
+3	v3
+4	v4
+
+# Join between two remote tables, with a filter on one side.
+query III
+SELECT f.id, d.label, f.feeling FROM dh.facts f JOIN dh.dims d ON f.id = d.id WHERE d.label <> 'four' ORDER BY f.id;
+----
+3	three	sad
+9000	nine thousand	sad
+
+# The join's key range on an ENUM column follows declaration order: ['sad', 'happy'] includes 'ok'.
+statement ok
+CREATE TABLE dh.mood_scores (feeling dh.mood, score INTEGER);
+
+statement ok
+INSERT INTO dh.mood_scores VALUES ('ok', 1), ('happy', 2), ('sad', 3);
+
+statement ok
+CREATE TABLE dh.mood_keys (feeling dh.mood);
+
+statement ok
+INSERT INTO dh.mood_keys VALUES ('sad'), ('ok'), ('happy');
+
+query II
+SELECT s.feeling, s.score FROM dh.mood_scores s JOIN dh.mood_keys k ON s.feeling = k.feeling ORDER BY s.score;
+----
+ok	1
+happy	2
+sad	3
+
+# Every filtered scan carried its predicate to the server.
+query I
+SELECT count(*) > 0 FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT%FROM%facts% WHERE %';
+----
+true
+
+# Inside a join, the remote scan carries both its own filter and the key range from the other join side.
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT%FROM%dims% WHERE %id >= %id <= %"label" != CAST(''four'' AS VARCHAR)';
+----
+1
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();
