@@ -21,13 +21,11 @@ message S3Storage {
   string root = 2;
   string endpoint = 3;
   string region = 4;
-  reserved 5;
-  reserved "secret_name";
-  string key_id = 6;
-  string secret = 7;
-  string session_token = 8;
-  optional bool use_ssl = 9;
-  S3UrlStyle url_style = 10;
+  string key_id = 5;
+  string secret = 6;
+  string session_token = 7;
+  optional bool use_ssl = 8;
+  S3UrlStyle url_style = 9;
 }
 
 // Object storage database selected by a client attachment. Each distinct database and storage location is opened as

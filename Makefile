@@ -109,13 +109,13 @@ DUCKDB_BIN=./build/$(1)/duckdb bash scripts/local-rustfs.sh test
 ./build/$(1)/test/unittest "test/sql/*"
 endef
 
-test_debug_s3:
+test_debug_s3: debug
 	@$(call RUN_S3_TESTS,debug)
 
-test_reldebug_s3:
+test_reldebug_s3: reldebug
 	@$(call RUN_S3_TESTS,reldebug)
 
-test_release_s3:
+test_release_s3: release
 	@$(call RUN_S3_TESTS,release)
 
 S3_TEST_TARGETS := test_debug_s3 test_reldebug_s3 test_release_s3

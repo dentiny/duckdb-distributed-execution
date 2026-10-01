@@ -300,46 +300,70 @@ and can run an extension write/read smoke test:
 ./scripts/local-rustfs.sh reset   # deletes the test data
 ```
 
-Use the target matching the desired build to execute the RustFS write/read smoke test followed by every SQL test under
-`test/sql`:
+### Accessing Local RustFS
+
+The helper uses these defaults:
+
+- S3 API endpoint: `http://127.0.0.1:19000`
+- Web console: `http://127.0.0.1:19001`
+- Bucket: `duckherder`
+- Root prefix: `duckherder-test`
+- Access key: `rustfsadmin`
+- Secret key: `rustfsadmin`
+- Region: `us-east-1`
+- URL style: path-style
+
+Open the web console and sign in with the access and secret keys above, or use any S3-compatible client. For example,
+with the AWS CLI:
 
 ```bash
-make test_debug_s3
-make test_reldebug_s3
-make test_release_s3
+AWS_ACCESS_KEY_ID=rustfsadmin \
+AWS_SECRET_ACCESS_KEY=rustfsadmin \
+AWS_DEFAULT_REGION=us-east-1 \
+aws --endpoint-url http://127.0.0.1:19000 s3 ls s3://duckherder/duckherder-test/
 ```
 
-The default endpoint is `127.0.0.1:19000`, bucket is `duckherder`, root prefix is `duckherder-test`, and credentials
-are `rustfsadmin`/`rustfsadmin`. The test target creates the bucket before running and writes each test database under
-that root prefix. All settings can be overridden with `RUSTFS_*` environment variables; run the script without
-arguments to see the available commands.
+Run `./scripts/local-rustfs.sh status` at any time to print the active endpoint, bucket, root, credentials, and matching
+DuckDB secret SQL. All settings can be overridden with `RUSTFS_*` environment variables. The same overrides must be
+used for subsequent `start`, `status`, `test`, and `stop` commands.
 
-Distributed S3 attachments resolve a standard DuckDB `TYPE S3` secret on the client. Load an extension that
-registers that secret type, create the secret, and select the bucket and prefix with `DATA_PATH`:
+### Configuring the DuckDB S3 Secret
+
+Load an extension that registers DuckDB's `S3` secret type, then create a config-provider secret whose scope covers
+the bucket and root prefix:
 
 ```sql
 LOAD cache_httpfs;
 
-CREATE SECRET distributed_storage (
+CREATE OR REPLACE SECRET local_rustfs (
     TYPE S3,
     PROVIDER CONFIG,
-    KEY_ID 'access-key',
-    SECRET 'secret-key',
+    KEY_ID 'rustfsadmin',
+    SECRET 'rustfsadmin',
     REGION 'us-east-1',
-    ENDPOINT '127.0.0.1:9000',
+    ENDPOINT '127.0.0.1:19000',
     USE_SSL false,
     URL_STYLE 'path',
-    SCOPE 's3://my-bucket/duckherder'
-);
-
-ATTACH 'localhost:8815/database.db' AS dh (
-    TYPE duckherder,
-    DATA_PATH 's3://my-bucket/duckherder',
-    SECRET 'distributed_storage'
+    SCOPE 's3://duckherder/duckherder-test'
 );
 ```
 
-The client resolves the secret and sends the required S3 configuration to the control node and workers, which
+The `ENDPOINT` must not include `http://`; `USE_SSL false` selects HTTP. `URL_STYLE 'path'` is required for this local
+endpoint. The `DATA_PATH` must fall within the secret's `SCOPE`.
+
+To use this storage through Duckherder, start a control node and attach a named database:
+
+```sql
+SELECT duckherder_start_local_server(8815);
+
+ATTACH 'localhost:8815/database.db' AS dh (
+    TYPE duckherder,
+    DATA_PATH 's3://duckherder/duckherder-test/manual',
+    SECRET 'local_rustfs'
+);
+```
+
+Duckherder resolves the secret and sends the required S3 configuration to the control node and workers, which
 create temporary S3 secrets before initializing `duckdb_object_storage`. The current Flight transport does not
 encrypt these credentials; use S3 attachments only on a trusted network until TLS transport is supported.
 
