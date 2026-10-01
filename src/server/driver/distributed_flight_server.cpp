@@ -9,12 +9,10 @@
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "duckdb/main/config.hpp"
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "query_common.hpp"
-#include "server/driver/duckling_storage.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "transaction_constants.hpp"
@@ -140,20 +138,9 @@ void DistributedFlightServer::Initialize() {
 		query_history.clear();
 	}
 
-	// Register the Duckling storage extension.
-	DBConfig config;
-	StorageExtension::Register(config, "duckling", make_shared_ptr<DucklingStorageExtension>());
-
-	db = make_shared_ptr<DuckDB>(nullptr, &config);
+	db = make_shared_ptr<DuckDB>(nullptr, nullptr);
 	// Loadable extensions use DuckDB's dummy loader, so initialize core functions explicitly.
 	db->LoadStaticExtension<CoreFunctionsExtension>();
-	Connection bootstrap_conn(*db);
-
-	// Attach duckling storage extension.
-	auto result = bootstrap_conn.Query("ATTACH DATABASE ':memory:' AS duckling (TYPE duckling);");
-	if (result->HasError()) {
-		throw InternalException(StringUtil::Format("Failed to attach Duckling: %s", result->GetError()));
-	}
 
 	// Initialize the worker manager. Each client registration owns its connection-bound executor.
 	worker_manager = make_uniq<WorkerManager>(*db);
@@ -294,7 +281,7 @@ void DistributedFlightServer::RemoveClient(unordered_map<string, shared_ptr<Clie
 	auto database = databases.find(entry->second->database_key);
 	D_ASSERT(database != databases.end());
 	database->second->RemoveClient(entry->second->role);
-	if (!database->second->HasClients()) {
+	if (!database->second->HasClients() && !database->second->IsDefault()) {
 		databases.erase(database);
 	}
 	clients.erase(entry);
@@ -328,11 +315,11 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 	}
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	PruneExpiredClients();
-	const auto &storage_config = req.storage_config();
-	auto &database = databases[ObjectStorageDatabase::GetKey(storage_config)];
+	auto storage_config = ObjectStorageDatabase::ResolveConfig(req.storage_config());
+	auto storage_key = ObjectStorageDatabase::GetKey(storage_config);
+	auto &database = databases[storage_key];
 	if (!database) {
-		database = ObjectStorageDatabase::IsConfigured(storage_config) ? make_uniq<ServedDatabase>(storage_config)
-		                                                               : make_uniq<ServedDatabase>(db);
+		database = make_uniq<ServedDatabase>(storage_config);
 	}
 
 	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
@@ -340,7 +327,7 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 		clients.emplace(client_id, database->AddClient(req.role(), *worker_manager));
 	} catch (const std::exception &ex) {
 		if (!database->HasClients()) {
-			databases.erase(ObjectStorageDatabase::GetKey(storage_config));
+			databases.erase(storage_key);
 		}
 		resp.set_success(false);
 		resp.set_error_message(ErrorData(ex).Message());

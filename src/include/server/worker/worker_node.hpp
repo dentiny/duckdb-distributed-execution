@@ -16,7 +16,7 @@ namespace duckdb {
 // Simple worker node that executes queries on partitioned data.
 class WorkerNode : public arrow::flight::FlightServerBase {
 public:
-	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0, DuckDB *shared_db = nullptr);
+	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0);
 	~WorkerNode() override = default;
 
 	arrow::Status Start();
@@ -56,8 +56,7 @@ private:
 	string worker_id;
 	string host;
 	int port;
-	DuckDB *db;
-	unique_ptr<DuckDB> owned_db;
+	unique_ptr<DuckDB> db;
 	unique_ptr<Connection> conn;
 
 	concurrency::mutex object_storage_mutex;

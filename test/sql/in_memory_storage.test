@@ -1,0 +1,130 @@
+# name: test/sql/in_memory_storage.test
+# description: Default and named in-memory databases share one control-node instance per database
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8842, 2);
+
+# Omitting the database name selects the default in-memory database.
+statement ok
+ATTACH 'localhost:8842' AS default_db (TYPE duckherder);
+
+statement ok
+CREATE TABLE default_db.items (id INTEGER);
+
+statement ok
+INSERT INTO default_db.items VALUES (1);
+
+# Omitting DATA_PATH on a named database selects a separate in-memory database.
+statement ok
+ATTACH 'localhost:8842/memory.db' AS named_db (TYPE duckherder);
+
+statement ok
+CREATE TABLE named_db.items (id INTEGER);
+
+statement ok
+INSERT INTO named_db.items VALUES (10);
+
+query I
+SELECT sum(id) FROM default_db.items;
+----
+1
+
+query I
+SELECT sum(id) FROM named_db.items;
+----
+10
+
+# The explicit name "default" is an ordinary named database, separate from the internal default database.
+statement ok con1
+ATTACH 'localhost:8842/default' AS second_default_writer (TYPE duckherder);
+
+statement ok con1
+CREATE TABLE second_default_writer.separate_items (id INTEGER);
+
+statement ok con1
+DETACH second_default_writer;
+
+# Connections with different roles share the named database instance.
+statement ok con1
+ATTACH 'localhost:8842/memory.db' AS named_reader (TYPE duckherder, READ_ONLY);
+
+query I con1
+SELECT sum(id) FROM named_reader.items;
+----
+10
+
+statement ok
+INSERT INTO named_db.items VALUES (20);
+
+query I con1
+SELECT sum(id) FROM named_reader.items;
+----
+30
+
+statement error con1
+INSERT INTO named_reader.items VALUES (40);
+----
+<REGEX>:.*read-only.*
+
+statement error con2
+ATTACH 'localhost:8842/memory.db' AS second_named_writer (TYPE duckherder);
+----
+<REGEX>:.*already has a writable Duckherder client.*
+
+# In-memory data is private to the control node, so reads do not run on workers.
+query I
+SELECT bool_and(execution_mode = 'LOCAL')
+FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE '%items%';
+----
+true
+
+# A replacement writer reuses the instance retained by the reader.
+statement ok
+DETACH named_db;
+
+statement ok con2
+ATTACH 'localhost:8842/memory.db' AS replacement_writer (TYPE duckherder);
+
+statement ok con2
+INSERT INTO replacement_writer.items VALUES (30);
+
+query I con1
+SELECT sum(id) FROM named_reader.items;
+----
+60
+
+# A named in-memory database is released after its final client leaves.
+statement ok con2
+DETACH replacement_writer;
+
+statement ok con1
+DETACH named_reader;
+
+statement ok con3
+ATTACH 'localhost:8842/memory.db' AS fresh_database (TYPE duckherder);
+
+statement error con3
+SELECT * FROM fresh_database.items;
+----
+<REGEX>:.*Table with name items does not exist.*
+
+# The server retains the default in-memory database after its final client leaves.
+statement ok
+DETACH default_db;
+
+statement ok con4
+ATTACH 'localhost:8842' AS restored_default (TYPE duckherder, READ_ONLY);
+
+query I con4
+SELECT sum(id) FROM restored_default.items;
+----
+1
+
+statement ok
+SELECT duckherder_stop_local_server();

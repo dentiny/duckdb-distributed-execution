@@ -30,9 +30,6 @@ enum class ClientRequestTransport : uint8_t { NONE, ACTION, DO_GET, DO_PUT };
 
 // Owns the Control Node resources and bounded transaction replay state for one registered client.
 struct ClientRegistration {
-	// db is either the Duckling instance or the instance dedicated to storage_config.
-	ClientRegistration(shared_ptr<DuckDB> db, WorkerManager &worker_manager, distributed::ClientRole role_p,
-	                   const distributed::StorageConfig &storage_config);
 	ClientRegistration(shared_ptr<ObjectStorageDatabase> db, WorkerManager &worker_manager,
 	                   distributed::ClientRole role_p, const distributed::StorageConfig &storage_config);
 	~ClientRegistration();

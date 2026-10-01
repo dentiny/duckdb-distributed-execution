@@ -4,12 +4,14 @@
 
 require duckherder
 
+require duckdb_object_storage
+
 # Start distributed server and workers in background thread
 statement ok
 SELECT duckherder_start_local_server(8834, 4);
 
 statement ok
-ATTACH DATABASE 'localhost:8834' AS dh (TYPE duckherder);
+ATTACH DATABASE 'localhost:8834/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 USE dh;
@@ -26,6 +28,18 @@ INSERT INTO distributed_basic_table VALUES
     (2, 'world'),
     (3, 'distributed'),
     (4, 'duckdb');
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH DATABASE 'localhost:8834/database.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
 
 query IT
 SELECT id, value FROM distributed_basic_table ORDER BY id;

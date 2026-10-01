@@ -11,6 +11,7 @@ namespace duckdb {
 namespace {
 
 constexpr const char *OBJECT_STORAGE_CATALOG = "object_db";
+constexpr const char *DEFAULT_DATABASE_URI = "duckdb_objfs://__duckherder_internal_default__";
 
 void ExecuteOrThrow(Connection &conn, const string &sql) {
 	auto result = conn.Query(sql);
@@ -38,8 +39,18 @@ void ConfigureObjectStorage(Connection &conn, const distributed::StorageConfig &
 
 } // namespace
 
-bool ObjectStorageDatabase::IsConfigured(const distributed::StorageConfig &config) {
-	return !config.database_uri().empty();
+distributed::StorageConfig ObjectStorageDatabase::ResolveConfig(const distributed::StorageConfig &config) {
+	if (!config.database_uri().empty()) {
+		return config;
+	}
+	distributed::StorageConfig result;
+	result.set_database_uri(DEFAULT_DATABASE_URI);
+	result.mutable_in_memory();
+	return result;
+}
+
+bool ObjectStorageDatabase::IsDefaultURI(const string &database_uri) {
+	return database_uri == DEFAULT_DATABASE_URI;
 }
 
 string ObjectStorageDatabase::GetKey(const distributed::StorageConfig &config) {

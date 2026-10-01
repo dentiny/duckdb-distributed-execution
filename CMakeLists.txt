@@ -87,10 +87,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/distributed_flight_server_test_state.cpp
     src/server/driver/distributed_server_function.cpp
     src/server/driver/distributed_server_main.cpp
-    src/server/driver/duckling_storage.cpp
     src/server/driver/worker_node_client.cpp
-    src/server/driver/duckling_transaction.cpp
-    src/server/driver/duckling_transaction_manager.cpp
     src/server/driver/partition_sql_generator.cpp
     src/server/driver/plan_serializer.cpp
     src/server/driver/query_plan_analyzer.cpp

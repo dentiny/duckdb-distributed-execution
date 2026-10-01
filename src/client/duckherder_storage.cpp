@@ -33,14 +33,14 @@ distributed::StorageConfig ExtractStorageConfig(const string &database_name, Att
 		}
 		return config;
 	}
-	if (data_path.empty()) {
-		throw InvalidInputException("Duckherder ATTACH of database '%s' requires DATA_PATH", database_name);
-	}
-	if (data_path.find("://") != string::npos) {
-		throw NotImplementedException("Duckherder DATA_PATH only supports local paths yet, got '%s'", data_path);
-	}
 	config.set_database_uri(StringUtil::Format("duckdb_objfs://%s", database_name));
-	config.mutable_local()->set_root(data_path);
+	if (data_path.empty()) {
+		config.mutable_in_memory();
+	} else if (data_path.find("://") != string::npos) {
+		throw NotImplementedException("Duckherder DATA_PATH only supports local paths yet, got '%s'", data_path);
+	} else {
+		config.mutable_local()->set_root(data_path);
+	}
 	return config;
 }
 

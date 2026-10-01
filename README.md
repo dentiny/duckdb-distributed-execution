@@ -25,7 +25,7 @@ Feel free to play around with it, give me feedback, and ping me for feature requ
 
 Duckherder implements a client-server architecture with distributed query execution:
 - **Client (Duckherder)**: Coordinates queries, manages remote table references, and initiates distributed execution
-- **Server (Duckling)**: Consists of two components:
+- **Server**: Consists of two components:
   - **Driver Node**: Analyzes queries, creates partition plans, and coordinates worker execution
   - **Worker Nodes**: Execute partitioned queries on local data and return results via Arrow Flight
 - **Distributed Executor**: Runs on the driver node, partitions queries based on DuckDB's physical plan analysis, and distributes tasks to workers
@@ -559,9 +559,9 @@ through local execution on the Driver/Control Node.
   DuckDB's ALTER path. Foreign keys declared by `CREATE TABLE` are supported.
 - Full Arrow transport for `UNION`, `BIT`, `BIGNUM`, and non-string dictionary types.
   Unsupported values may be converted to `VARCHAR` or rejected.
-- A persistent default Duckling database and server restart recovery. The default server database is in memory.
-- Authentication, authorization, connection pooling, multiple server-side DuckDB instances, automatic worker
-  replacement, dynamic worker scaling, query result caching, and query resource-consumption tracking.
+- Persistence for the default in-memory object-storage database and server restart recovery.
+- Authentication, authorization, connection pooling, automatic worker replacement, dynamic worker scaling, query
+  result caching, and query resource-consumption tracking.
 
 ### Supported, but Not Distributed
 

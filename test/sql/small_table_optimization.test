@@ -7,12 +7,14 @@
 
 require duckherder
 
+require duckdb_object_storage
+
 # Start distributed server with 4 workers
 statement ok
 SELECT duckherder_start_local_server(8819, 4);
 
 statement ok
-ATTACH DATABASE 'localhost:8819' AS dh (TYPE duckherder);
+ATTACH DATABASE 'localhost:8819/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 USE dh;
@@ -41,6 +43,48 @@ SELECT
     END
 FROM range(100) t(i);
 
+# Test 2: Small table (1,000 rows) - should NOT distribute
+statement ok
+DROP TABLE IF EXISTS small_table;
+
+statement ok
+CREATE TABLE small_table (
+    id INTEGER,
+    value INTEGER
+);
+
+statement ok
+INSERT INTO small_table
+SELECT i, i * 100
+FROM range(1000) t(i);
+
+# Test 3: Medium-small table (10,000 rows) - should NOT distribute
+statement ok
+DROP TABLE IF EXISTS medium_small_table;
+
+statement ok
+CREATE TABLE medium_small_table (
+    id INTEGER,
+    value INTEGER
+);
+
+statement ok
+INSERT INTO medium_small_table
+SELECT i, i * 10
+FROM range(10000) t(i);
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH DATABASE 'localhost:8819/database.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
+
 # Verify all rows are accessible
 query I
 SELECT COUNT(*) FROM tiny_table;
@@ -63,21 +107,6 @@ SELECT id, value, category FROM tiny_table WHERE id = 99;
 ----
 99	990	A
 
-# Test 2: Small table (1,000 rows) - should NOT distribute
-statement ok
-DROP TABLE IF EXISTS small_table;
-
-statement ok
-CREATE TABLE small_table (
-    id INTEGER,
-    value INTEGER
-);
-
-statement ok
-INSERT INTO small_table 
-SELECT i, i * 100
-FROM range(1000) t(i);
-
 query I
 SELECT COUNT(*) FROM small_table;
 ----
@@ -88,21 +117,6 @@ query I
 SELECT SUM(value) FROM small_table;
 ----
 49950000
-
-# Test 3: Medium-small table (10,000 rows) - should NOT distribute
-statement ok
-DROP TABLE IF EXISTS medium_small_table;
-
-statement ok
-CREATE TABLE medium_small_table (
-    id INTEGER,
-    value INTEGER
-);
-
-statement ok
-INSERT INTO medium_small_table 
-SELECT i, i * 10
-FROM range(10000) t(i);
 
 query I
 SELECT COUNT(*) FROM medium_small_table;

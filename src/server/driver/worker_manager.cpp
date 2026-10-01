@@ -80,7 +80,7 @@ void WorkerManager::StartLocalWorkers(idx_t num_workers) {
 		}
 
 		string worker_id = StringUtil::Format("worker_%llu", next_local_worker_id++);
-		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", port, &db);
+		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", port);
 
 		auto status = worker->Start();
 		if (!status.ok()) {

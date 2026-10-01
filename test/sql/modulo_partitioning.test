@@ -7,12 +7,14 @@
 
 require duckherder
 
+require duckdb_object_storage
+
 # Start distributed server with 4 workers
 statement ok
 SELECT duckherder_start_local_server(8824, 4);
 
 statement ok
-ATTACH DATABASE 'localhost:8824' AS dh (TYPE duckherder);
+ATTACH DATABASE 'localhost:8824/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 USE dh;
@@ -32,6 +34,18 @@ INSERT INTO partition_test VALUES
     (4, 400, 'A'),
     (5, 500, 'B'),
     (6, 600, 'C');
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH DATABASE 'localhost:8824/database.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
 
 # Test 1: Basic select
 query III

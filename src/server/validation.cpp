@@ -4,6 +4,7 @@
 #include "distributed.pb.h"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "server/object_storage_database.hpp"
 #include "storage_config.pb.h"
 #include "transaction.pb.h"
 
@@ -40,14 +41,22 @@ arrow::Status ValidateRequest(const distributed::StorageConfig &config) {
 	    config.database_uri().size() == string(OBJFS_SCHEME).size()) {
 		return arrow::Status::Invalid("Object storage database must be a named duckdb_objfs:// URI");
 	}
-	if (config.storage_case() != distributed::StorageConfig::kLocal) {
-		// In-memory stores are private to one DuckDB instance, so workers could never see the control node's data.
-		return arrow::Status::Invalid("Duckherder currently supports only local object storage");
+	if (ObjectStorageDatabase::IsDefaultURI(config.database_uri())) {
+		return arrow::Status::Invalid("Object storage database name is reserved for the server's default database");
 	}
-	if (config.local().root().empty() || !LocalFileSystem().IsPathAbsolute(config.local().root())) {
-		return arrow::Status::Invalid("Local object storage root must be an absolute path");
+	switch (config.storage_case()) {
+	case distributed::StorageConfig::kInMemory:
+		return arrow::Status::OK();
+	case distributed::StorageConfig::kLocal:
+		if (config.local().root().empty() || !LocalFileSystem().IsPathAbsolute(config.local().root())) {
+			return arrow::Status::Invalid("Local object storage root must be an absolute path");
+		}
+		return arrow::Status::OK();
+	case distributed::StorageConfig::kS3:
+		return arrow::Status::Invalid("Duckherder does not support S3 object storage yet");
+	default:
+		return arrow::Status::Invalid("Object storage database must specify a storage type");
 	}
-	return arrow::Status::OK();
 }
 
 arrow::Status ValidateRequest(const distributed::TransactionRequest &request) {

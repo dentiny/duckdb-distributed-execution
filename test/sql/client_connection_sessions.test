@@ -4,12 +4,14 @@
 
 require duckherder
 
+require duckdb_object_storage
+
 statement ok
 SELECT duckherder_start_local_server(8843);
 
 # READ_WRITE is the default and belongs to the attaching connection.
 statement ok
-ATTACH 'localhost:8843' AS dh (TYPE duckherder);
+ATTACH 'localhost:8843/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 CREATE TABLE dh.connection_owned_table (id INTEGER);
@@ -33,7 +35,7 @@ DETACH dh;
 
 # An explicit READ_ONLY attachment gives each connection its own registration.
 statement ok
-ATTACH 'localhost:8843' AS dh (TYPE duckherder, client_role 'read_only');
+ATTACH 'localhost:8843/database.db' AS dh (TYPE duckherder, client_role 'read_only', DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 query I con1
 SELECT count(*) >= 0 FROM duckherder_get_query_execution_stats();

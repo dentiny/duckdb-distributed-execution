@@ -21,9 +21,10 @@ public:
 	DuckDB &GetInstance() const;
 	const shared_ptr<DuckDB> &GetSharedInstance() const;
 
-	// Return true if the configuration selects object storage instead of the Duckling catalog.
-	// TODO(hjiang): remove duckling catalog support.
-	static bool IsConfigured(const distributed::StorageConfig &config);
+	// Resolve an empty client configuration to the server's default in-memory database.
+	static distributed::StorageConfig ResolveConfig(const distributed::StorageConfig &config);
+	// Return whether the URI is reserved for the server-owned default in-memory database.
+	static bool IsDefaultURI(const string &database_uri);
 	// Map key used by control nodes and workers to reuse the instance for one configuration. The full serialized
 	// configuration distinguishes the same database URI under different storage backends or roots.
 	static string GetKey(const distributed::StorageConfig &config);

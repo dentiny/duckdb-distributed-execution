@@ -4,12 +4,14 @@
 
 require duckherder
 
+require duckdb_object_storage
+
 # Start distributed server with 4 workers to leverage parallelism
 statement ok
 SELECT duckherder_start_local_server(8827, 4);
 
 statement ok
-ATTACH DATABASE 'localhost:8827' AS dh (TYPE duckherder);
+ATTACH DATABASE 'localhost:8827/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 USE dh;
@@ -28,6 +30,18 @@ INSERT INTO parallel_test VALUES
     (3, 'food', 300),
     (4, 'books', 400),
     (5, 'electronics', 500);
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH DATABASE 'localhost:8827/database.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
 
 # Test 1: Basic select
 query III

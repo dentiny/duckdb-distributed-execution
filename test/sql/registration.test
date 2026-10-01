@@ -4,11 +4,13 @@
 
 require duckherder
 
+require duckdb_object_storage
+
 statement ok
 SELECT duckherder_start_local_server(8822);
 
 statement ok
-ATTACH DATABASE 'localhost:8822' AS dh (TYPE duckherder);
+ATTACH DATABASE 'localhost:8822/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 USE dh;
@@ -32,7 +34,7 @@ statement ok
 DETACH dh;
 
 statement ok
-ATTACH DATABASE 'localhost:8822' AS dh (TYPE duckherder);
+ATTACH DATABASE 'localhost:8822/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 query I
 SELECT * FROM dh.registration_test_table;

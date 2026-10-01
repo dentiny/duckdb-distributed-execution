@@ -75,8 +75,7 @@ int main(int argc, char *argv[]) {
 
 	try {
 		// Create and start worker node.
-		// Pass nullptr for shared_db to create an independent database instance.
-		g_worker = std::make_unique<WorkerNode>(worker_id, host, port, nullptr);
+		g_worker = std::make_unique<WorkerNode>(worker_id, host, port);
 
 		auto status = g_worker->Start();
 		if (!status.ok()) {

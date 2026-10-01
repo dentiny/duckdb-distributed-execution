@@ -21,7 +21,8 @@ message S3Storage {
 // Object storage database selected by a client attachment. Each distinct configuration is opened as its own
 // DuckDB instance on the control node and on every worker.
 message StorageConfig {
-  // DuckDB database URI using duckdb_objfs://. Empty selects the control node's built-in Duckling catalog.
+  // DuckDB database URI using duckdb_objfs://. An entirely empty configuration selects the server's default
+  // in-memory database.
   string database_uri = 1;
 
   oneof storage {

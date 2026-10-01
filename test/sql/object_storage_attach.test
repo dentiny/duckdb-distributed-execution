@@ -10,14 +10,26 @@ statement ok
 SELECT duckherder_start_local_server(8839, 2);
 
 statement error
-ATTACH 'localhost:8839' AS missing_database (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs');
+ATTACH 'localhost:8839' AS missing_database (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs');
 ----
 <REGEX>:.*DATA_PATH requires a database name.*
 
-statement error
-ATTACH 'localhost:8839/a.db' AS missing_data_path (TYPE duckherder);
+statement ok
+ATTACH 'localhost:8839/memory.db' AS memory_db (TYPE duckherder);
+
+statement ok
+CREATE TABLE memory_db.items (id INTEGER);
+
+statement ok
+INSERT INTO memory_db.items VALUES (42);
+
+query I
+SELECT sum(id) FROM memory_db.items;
 ----
-<REGEX>:.*requires DATA_PATH.*
+42
+
+statement ok
+DETACH memory_db;
 
 statement error
 ATTACH 'localhost:8839/a.db' AS relative_root (TYPE duckherder, DATA_PATH 'relative/objfs');
@@ -30,12 +42,12 @@ ATTACH 'localhost:8839/a.db' AS s3_path (TYPE duckherder, DATA_PATH 's3://my-buc
 <REGEX>:.*only supports local paths yet.*
 
 statement error
-ATTACH 'localhost:8839/a.db' AS with_secret (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs', SECRET 'prod_s3');
+ATTACH 'localhost:8839/a.db' AS with_secret (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs', SECRET 'prod_s3');
 ----
 <REGEX>:.*does not support SECRET yet.*
 
 statement ok
-ATTACH 'localhost:8839/a.db' AS writer_a (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8839/a.db' AS writer_a (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 CREATE OR REPLACE TABLE writer_a.items (id INTEGER, value VARCHAR);
@@ -62,13 +74,13 @@ true
 
 # One writable client per database.
 statement error con1
-ATTACH 'localhost:8839/a.db' AS second_writer_a (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8839/a.db' AS second_writer_a (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 ----
 <REGEX>:.*already has a writable Duckherder client.*
 
-# Other databases get their own writer, and the Duckling catalog keeps its own writer slot.
+# Other databases get their own writer, and the default in-memory database keeps its own writer slot.
 statement ok con1
-ATTACH 'localhost:8839/b.db' AS writer_b (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8839/b.db' AS writer_b (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok con1
 CREATE OR REPLACE TABLE writer_b.items (id INTEGER);
@@ -77,13 +89,13 @@ statement ok con1
 INSERT INTO writer_b.items VALUES (100);
 
 statement ok con2
-ATTACH 'localhost:8839' AS duckling_writer (TYPE duckherder);
+ATTACH 'localhost:8839' AS default_writer (TYPE duckherder);
 
 # Readers share the database's instance on the control node, and each worker serves them from its read-only instance.
 # Worker instances are snapshots taken the first time the worker opens the database and are not refreshed,
 # so every write to a database in this test happens before its first read.
 statement ok con3
-ATTACH 'localhost:8839/a.db' AS reader_a (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8839/a.db' AS reader_a (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 query II con3
 SELECT count(*), sum(id) FROM reader_a.items;
@@ -102,7 +114,7 @@ INSERT INTO reader_a.items VALUES (5, 'five');
 <REGEX>:.*read-only.*
 
 statement ok con4
-ATTACH 'localhost:8839/b.db' AS reader_b (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8839/b.db' AS reader_b (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 query I con4
 SELECT sum(id) FROM reader_b.items;
@@ -112,7 +124,7 @@ SELECT sum(id) FROM reader_b.items;
 # The same database name under another root is a different database, so it gets its own instances and ObjFS
 # settings on the control node and on every worker.
 statement ok con5
-ATTACH 'localhost:8839/a.db' AS writer_other_root (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}_other');
+ATTACH 'localhost:8839/a.db' AS writer_other_root (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}_other');
 
 statement ok con5
 CREATE OR REPLACE TABLE writer_other_root.items (id INTEGER, value VARCHAR);
@@ -121,7 +133,7 @@ statement ok con5
 INSERT INTO writer_other_root.items VALUES (1000, 'other');
 
 statement ok con6
-ATTACH 'localhost:8839/a.db' AS reader_other_root (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}_other');
+ATTACH 'localhost:8839/a.db' AS reader_other_root (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}_other');
 
 query IT con6
 SELECT id, value FROM reader_other_root.items;
@@ -146,7 +158,7 @@ statement ok
 DETACH writer_a;
 
 statement ok con1
-ATTACH 'localhost:8839/a.db' AS writer_a (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8839/a.db' AS writer_a (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 query I con1
 SELECT count(*) FROM writer_a.items;

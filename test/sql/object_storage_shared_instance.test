@@ -11,7 +11,7 @@ statement ok
 SELECT duckherder_start_local_server(8841);
 
 statement ok
-ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 CREATE OR REPLACE TABLE writer.items (id INTEGER);
@@ -24,7 +24,7 @@ DETACH writer;
 
 # A reader attached before the writer still sees the writer's commits.
 statement ok con1
-ATTACH 'localhost:8841/shared.db' AS reader (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8841/shared.db' AS reader (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 query I con1
 SELECT sum(id) FROM reader.items;
@@ -32,7 +32,7 @@ SELECT sum(id) FROM reader.items;
 1
 
 statement ok
-ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 INSERT INTO writer.items VALUES (2);
@@ -52,7 +52,7 @@ statement ok
 DETACH writer;
 
 statement ok con2
-ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
 
 statement ok con2
 INSERT INTO writer.items VALUES (8);

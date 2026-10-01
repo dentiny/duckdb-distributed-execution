@@ -7,7 +7,7 @@ namespace duckdb {
 struct RemoteEndpoint {
 	string host;
 	int port;
-	// Object storage database selected by 'host:port/database_name'; empty selects the Duckling catalog.
+	// Object storage database selected by 'host:port/database_name'; empty selects the default in-memory database.
 	string database_name;
 };
 

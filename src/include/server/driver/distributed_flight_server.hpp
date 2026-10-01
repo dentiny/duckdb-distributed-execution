@@ -186,14 +186,14 @@ private:
 
 	string host;
 	int port;
-	// Duckling instance, shared with local workers.
+	// Server-owned utility instance used for logging and worker management.
 	shared_ptr<DuckDB> db;
 	unique_ptr<WorkerManager> worker_manager;
 
 	mutable concurrency::shared_mutex clients_mutex;
 	// Keyed by client id.
 	unordered_map<string, shared_ptr<ClientRegistration>> clients DUCKDB_GUARDED_BY(clients_mutex);
-	// Databases with attached clients, keyed by GetStorageKey; the empty key is the Duckling catalog.
+	// Databases with attached clients, keyed by ObjectStorageDatabase::GetKey.
 	unordered_map<string, unique_ptr<ServedDatabase>> databases DUCKDB_GUARDED_BY(clients_mutex);
 	DistributedFlightServerTestState test_state;
 
