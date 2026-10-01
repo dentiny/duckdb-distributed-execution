@@ -17,6 +17,7 @@
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "transaction_constants.hpp"
+#include "utils/network_utils.hpp"
 #include "utils/remote_error.hpp"
 #include "utils/time_utils.hpp"
 
@@ -90,6 +91,7 @@ arrow::Status DistributedFlightServer::Start() {
 	ARROW_ASSIGN_OR_RAISE(location, arrow::flight::Location::ForGrpcTcp(host, port));
 
 	arrow::flight::FlightServerOptions options(location);
+	DisablePortSharing(options);
 	ARROW_RETURN_NOT_OK(Init(options));
 
 	auto &db_instance = *db->instance.get();
@@ -101,15 +103,16 @@ arrow::Status DistributedFlightServer::Start() {
 arrow::Status DistributedFlightServer::StartWithWorkers(idx_t num_workers) {
 	auto &db_instance = *db->instance.get();
 
+	// Bind the server port first so local workers pick other ports.
+	ARROW_RETURN_NOT_OK(Start());
+
 	// Start local workers.
 	if (num_workers > 0) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Starting %llu local workers", num_workers));
 		ARROW_RETURN_NOT_OK(worker_manager->StartLocalWorkers(num_workers));
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Started %llu workers", num_workers));
 	}
-
-	// Start the server.
-	return Start();
+	return arrow::Status::OK();
 }
 
 void DistributedFlightServer::Shutdown() {

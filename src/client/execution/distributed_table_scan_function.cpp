@@ -298,8 +298,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		local_state.result =
 		    client.ScanTable(local_state.scan_sql, NO_QUERY_LIMIT, NO_QUERY_OFFSET, &local_state.expected_types);
 		if (local_state.result->HasError()) {
-			throw Exception(ExceptionType::INTERNAL,
-			                StringUtil::Format("Distributed table scan error: %s", local_state.result->GetError()));
+			local_state.result->ThrowError("Distributed table scan error: ");
 		}
 	}
 

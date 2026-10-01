@@ -1,0 +1,25 @@
+# name: test/sql/remote_scan_error.test
+# description: A query error on the server fails the remote scan without invalidating the client database
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8870, 2);
+
+statement ok
+ATTACH 'localhost:8870' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.t AS SELECT 'x' || i::VARCHAR AS s FROM range(10) t(i);
+
+# The aggregate is pushed to the server, where the cast fails while executing.
+statement error
+SELECT sum(CAST(s AS INTEGER)) FROM dh.t;
+----
+IO Error: Distributed table scan error: Invalid: Query error: Conversion Error: Could not convert string 'x
+
+query I
+SELECT count(*) FROM dh.t;
+----
+10

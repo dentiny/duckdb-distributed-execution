@@ -19,6 +19,7 @@
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "server/worker/worker_node.hpp"
+#include "utils/network_utils.hpp"
 
 #include <arrow/array.h>
 #include <arrow/c/bridge.h>
@@ -39,6 +40,7 @@ arrow::Status WorkerNode::Start() {
 	ARROW_ASSIGN_OR_RAISE(location, arrow::flight::Location::ForGrpcTcp(host, port));
 
 	arrow::flight::FlightServerOptions options(location);
+	DisablePortSharing(options);
 	ARROW_RETURN_NOT_OK(Init(options));
 
 	auto &db_instance = *db->instance.get();
@@ -104,7 +106,13 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	// Execute the partition and return results.
 	distributed::DistributedResponse response;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
-	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
+	// DuckDB reports errors such as out of memory by throwing, and an exception escaping a Flight handler aborts the
+	// process.
+	try {
+		ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
+	} catch (const std::exception &ex) {
+		return arrow::Status::UnknownError(StringUtil::Format("Worker task exception: %s", ex.what()));
+	}
 
 	if (!reader) {
 		return arrow::Status::Invalid("Failed to create RecordBatchReader: execution produced no reader");

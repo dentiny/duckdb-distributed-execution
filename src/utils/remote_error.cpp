@@ -32,6 +32,12 @@ ErrorData FromRemoteError(const distributed::RemoteError &remote_error) {
 		extra_info.emplace(entry.first, entry.second);
 	}
 	auto type = FromRemoteExceptionType(remote_error.exception_type());
+	// An internal or fatal error invalidates the server's database, not the local one, which DuckDB would also
+	// invalidate when the error passes through local execution.
+	if (type == ExceptionType::INTERNAL || Exception::InvalidatesDatabase(type)) {
+		return ErrorData(IOException(extra_info, "Remote %s Error: %s", Exception::ExceptionTypeToString(type),
+		                             remote_error.message()));
+	}
 	return ErrorData(Exception(extra_info, type, remote_error.message()));
 }
 
