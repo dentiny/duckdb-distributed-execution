@@ -30,6 +30,8 @@ void SerializeDistributedTableScan(Serializer &serializer, const optional_ptr<Fu
 	serializer.WriteProperty(102, "table", data.table.name);
 	serializer.WriteProperty(103, "server_url", data.server_url);
 	serializer.WriteProperty(104, "remote_table_name", data.remote_table_name);
+	serializer.WritePropertyWithDefault(105, "pushed_query", data.pushed_query);
+	serializer.WritePropertyWithDefault(106, "pushed_types", data.pushed_types);
 }
 
 unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deserializer, TableFunction &function) {
@@ -40,12 +42,21 @@ unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deseriali
 	auto remote_table_name = deserializer.ReadProperty<string>(104, "remote_table_name");
 	auto &table_entry =
 	    Catalog::GetEntry<TableCatalogEntry>(deserializer.Get<ClientContext &>(), catalog, schema, table);
-	return make_uniq<DistributedTableScanBindData>(table_entry, std::move(server_url), std::move(remote_table_name));
+	auto result =
+	    make_uniq<DistributedTableScanBindData>(table_entry, std::move(server_url), std::move(remote_table_name));
+	result->pushed_query = deserializer.ReadPropertyWithDefault<string>(105, "pushed_query");
+	result->pushed_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(106, "pushed_types");
+	return std::move(result);
 }
 
 // Without an estimate, every remote table looks like one row, so joins may build hash tables on the larger side.
 unique_ptr<NodeStatistics> DistributedTableScanCardinality(ClientContext &context, const FunctionData *bind_data_p) {
-	auto &table = bind_data_p->Cast<DistributedTableScanBindData>().table;
+	auto &bind_data = bind_data_p->Cast<DistributedTableScanBindData>();
+	// A pushed-down query returns aggregated rows, not table rows.
+	if (!bind_data.pushed_query.empty()) {
+		return nullptr;
+	}
+	auto &table = bind_data.table;
 	auto &catalog = table.schema.catalog.Cast<DuckherderCatalog>();
 	auto estimate = catalog.GetEstimatedCardinality(table.schema.name, table.name);
 	if (!estimate.IsValid()) {
@@ -59,7 +70,6 @@ virtual_column_map_t GetDistributedTableScanVirtualColumns(ClientContext &contex
 	return bind_data->Cast<DistributedTableScanBindData>().table.GetVirtualColumns();
 }
 
-// Returns the quoted name and type of a physical or virtual table column.
 string GetScanColumn(const DistributedTableScanBindData &bind_data, const virtual_column_map_t &virtual_columns,
                      column_t column_id, LogicalType &type) {
 	if (IsVirtualColumn(column_id)) {
@@ -75,22 +85,17 @@ string GetScanColumn(const DistributedTableScanBindData &bind_data, const virtua
 	return KeywordHelper::WriteOptionallyQuoted(column.Name());
 }
 
-// ENUMs order by declaration but would compare as strings against a remote literal, and aliased or nested types may
-// not render as valid remote SQL. Filters on these columns are evaluated locally instead.
-bool SupportsFilterPushdown(const LogicalType &type) {
+} // namespace
+
+string GetRemoteColumn(const DistributedTableScanBindData &bind_data, column_t column_id, LogicalType &type) {
+	return GetScanColumn(bind_data, bind_data.table.GetVirtualColumns(), column_id, type);
+}
+
+bool SupportsRemoteFilterPushdown(const LogicalType &type) {
 	return type.id() != LogicalTypeId::ENUM && !type.HasAlias() && !type.IsNested();
 }
 
-bool DistributedTableScanSupportsPushdownType(const FunctionData &bind_data_p, idx_t column_id) {
-	auto &bind_data = bind_data_p.Cast<DistributedTableScanBindData>();
-	LogicalType type;
-	GetScanColumn(bind_data, bind_data.table.GetVirtualColumns(), column_id, type);
-	return SupportsFilterPushdown(type);
-}
-
-// Translates a table filter into a SQL predicate on `column`.
-// Returns an empty string for optional filters, which only prune data and are not needed for correctness.
-string TableFilterToSQL(const TableFilter &filter, const string &column) {
+string RemoteFilterToSQL(const TableFilter &filter, const string &column) {
 	switch (filter.filter_type) {
 	case TableFilterType::CONSTANT_COMPARISON: {
 		auto &constant_filter = filter.Cast<ConstantFilter>();
@@ -107,7 +112,7 @@ string TableFilterToSQL(const TableFilter &filter, const string &column) {
 	case TableFilterType::CONJUNCTION_AND: {
 		vector<string> predicates;
 		for (auto &child : filter.Cast<ConjunctionAndFilter>().child_filters) {
-			auto predicate = TableFilterToSQL(*child, column);
+			auto predicate = RemoteFilterToSQL(*child, column);
 			if (!predicate.empty()) {
 				predicates.emplace_back(std::move(predicate));
 			}
@@ -120,7 +125,7 @@ string TableFilterToSQL(const TableFilter &filter, const string &column) {
 	case TableFilterType::CONJUNCTION_OR: {
 		vector<string> predicates;
 		for (auto &child : filter.Cast<ConjunctionOrFilter>().child_filters) {
-			auto predicate = TableFilterToSQL(*child, column);
+			auto predicate = RemoteFilterToSQL(*child, column);
 			// An optional branch accepts every row, and so does the whole disjunction.
 			if (predicate.empty()) {
 				return "";
@@ -134,6 +139,14 @@ string TableFilterToSQL(const TableFilter &filter, const string &column) {
 	default:
 		throw InternalException("Distributed table scan cannot push down table filter %s", filter.ToString(column));
 	}
+}
+
+namespace {
+
+bool DistributedTableScanSupportsPushdownType(const FunctionData &bind_data_p, idx_t column_id) {
+	LogicalType type;
+	GetRemoteColumn(bind_data_p.Cast<DistributedTableScanBindData>(), column_id, type);
+	return SupportsRemoteFilterPushdown(type);
 }
 
 // Builds a remote query returning exactly the requested columns in output order, with pushed-down filters applied.
@@ -165,10 +178,10 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 		LogicalType type;
 		auto column = GetScanColumn(bind_data, virtual_columns, filter_column_ids[entry.first], type);
 		// Only join filters reach here for unsupported types; the join re-checks those rows anyway.
-		if (!SupportsFilterPushdown(type)) {
+		if (!SupportsRemoteFilterPushdown(type)) {
 			continue;
 		}
-		auto predicate = TableFilterToSQL(*entry.second, column);
+		auto predicate = RemoteFilterToSQL(*entry.second, column);
 		if (!predicate.empty()) {
 			predicates.emplace_back(std::move(predicate));
 		}
@@ -200,12 +213,16 @@ struct DistributedTableScanLocalState : public LocalTableFunctionState {
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
-	return make_uniq<DistributedTableScanBindData>(table, server_url, remote_table_name);
+	auto result = make_uniq<DistributedTableScanBindData>(table, server_url, remote_table_name);
+	result->pushed_query = pushed_query;
+	result->pushed_types = pushed_types;
+	return std::move(result);
 }
 
 bool DistributedTableScanBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<DistributedTableScanBindData>();
-	return &other.table == &table && other.server_url == server_url && other.remote_table_name == remote_table_name;
+	return &other.table == &table && other.server_url == server_url && other.remote_table_name == remote_table_name &&
+	       other.pushed_query == pushed_query && other.pushed_types == pushed_types;
 }
 
 TableFunction DistributedTableScanFunction::GetFunction() {
@@ -241,6 +258,12 @@ unique_ptr<LocalTableFunctionState> DistributedTableScanFunction::InitLocal(Exec
                                                                             GlobalTableFunctionState *global_state) {
 	auto &bind_data = input.bind_data->Cast<DistributedTableScanBindData>();
 	auto local_state = make_uniq<DistributedTableScanLocalState>();
+	if (!bind_data.pushed_query.empty()) {
+		local_state->column_ids = input.column_ids;
+		local_state->scan_sql = bind_data.pushed_query;
+		local_state->expected_types = bind_data.pushed_types;
+		return std::move(local_state);
+	}
 	if (!input.projection_ids.empty()) {
 		// With filter pruning, the output follows `projection_ids`, which may reorder or drop filter-only columns.
 		for (auto projection_id : input.projection_ids) {

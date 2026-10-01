@@ -79,6 +79,13 @@ SELECT COUNT(*) FROM group_by_table WHERE id > 100000;
 ----
 99999
 
+# Aggregates above are pushed to the server as one query; a plain scan is partitioned by row group.
+query I
+SELECT id FROM group_by_table WHERE id > 199997 ORDER BY id;
+----
+199998
+199999
+
 # Verify distributed execution happened with correct mode
 # With 200K rows (2 row groups) and 4 workers, should use ROW_GROUP_PARTITION
 query I

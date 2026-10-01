@@ -1,0 +1,139 @@
+# name: test/sql/aggregate_pushdown.test
+# description: Aggregates over remote tables are computed on the server when they translate safely to SQL
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8869, 2);
+
+statement ok
+ATTACH 'localhost:8869' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TYPE dh.mood AS ENUM ('sad', 'ok', 'happy');
+
+statement ok
+CREATE TABLE dh.sales (
+    id INTEGER,
+    region VARCHAR,
+    amount DECIMAL(10, 2),
+    feeling dh.mood
+);
+
+statement ok
+INSERT INTO dh.sales
+SELECT
+    i,
+    CASE WHEN i % 10 = 0 THEN NULL ELSE 'r' || (i % 3)::VARCHAR END,
+    (i % 100) / 4,
+    (['sad', 'ok', 'happy'])[i % 3 + 1]::dh.mood
+FROM range(1000) t(i);
+
+statement ok
+CREATE TABLE local_sales AS SELECT * FROM dh.sales;
+
+# Grouped aggregates, including the NULL group.
+query IIIIII
+SELECT region, count(*), count(amount), sum(amount), min(id), max(id) FROM dh.sales GROUP BY region ORDER BY region NULLS LAST;
+----
+r0	300	300	3750.75	3	999
+r1	300	300	3749.25	1	997
+r2	300	300	3750.00	2	998
+NULL	100	100	1125.00	0	990
+
+query I
+SELECT count(*) = 0 FROM (
+    SELECT region, count(*), count(amount), sum(amount), min(id), max(id), avg(amount) FROM dh.sales GROUP BY region
+    EXCEPT
+    SELECT region, count(*), count(amount), sum(amount), min(id), max(id), avg(amount) FROM local_sales GROUP BY region
+);
+----
+true
+
+# Filters are part of the remote query.
+query II
+SELECT region, sum(amount) FROM dh.sales WHERE id >= 500 AND region <> 'r1' GROUP BY region ORDER BY region NULLS LAST;
+----
+r0	1875.00
+r2	1875.75
+
+# Ungrouped aggregates return one row, even when no rows match.
+query IIII
+SELECT count(*), sum(amount), min(region), avg(id) FROM dh.sales WHERE id > 5000;
+----
+0	NULL	NULL	NULL
+
+# HAVING and ORDER BY above the pushed aggregate.
+query II
+SELECT region, count(*) AS n FROM dh.sales GROUP BY region HAVING n < 200;
+----
+NULL	100
+
+# Pushed aggregates inside a join.
+query II
+SELECT a.region, a.n + b.n FROM
+    (SELECT region, count(*) AS n FROM dh.sales GROUP BY region) a
+    JOIN (SELECT region, count(*) AS n FROM dh.sales WHERE id < 30 GROUP BY region) b USING (region)
+ORDER BY a.region;
+----
+r0	309
+r1	309
+r2	309
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT %count(*)% FROM %sales% GROUP BY 1';
+----
+5
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE 'SELECT region, sum(amount) FROM %sales% WHERE % GROUP BY 1';
+----
+1
+
+# Cases that are not pushed down are still computed locally.
+query II
+SELECT id % 4 AS k, sum(amount * 2) FROM dh.sales WHERE id >= 500 AND region <> 'r1' GROUP BY k ORDER BY k;
+----
+0	1686.00
+1	2041.50
+2	1632.00
+3	2142.00
+
+query I
+SELECT count(DISTINCT region) FROM dh.sales;
+----
+3
+
+query II
+SELECT feeling, count(*) FROM dh.sales GROUP BY feeling ORDER BY feeling;
+----
+sad	334
+ok	333
+happy	333
+
+query I
+SELECT count(*) FROM dh.sales WHERE feeling > 'ok';
+----
+334
+
+query I
+SELECT sum(amount) FILTER (WHERE id < 10) FROM dh.sales;
+----
+11.25
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE '%DISTINCT%' OR sql LIKE '%feeling%GROUP BY%' OR sql LIKE '%FILTER%' OR sql LIKE '%count(*)%feeling%'
+    OR sql LIKE '%sum(%amount%*%';
+----
+0
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

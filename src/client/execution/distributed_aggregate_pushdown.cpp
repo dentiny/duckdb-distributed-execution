@@ -1,0 +1,187 @@
+#include "client/execution/distributed_aggregate_pushdown.hpp"
+
+#include "client/execution/distributed_table_scan_function.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/optimizer/column_binding_replacer.hpp"
+#include "duckdb/optimizer/optimizer.hpp"
+#include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/column_binding_map.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/operator/logical_aggregate.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+
+namespace duckdb {
+
+namespace {
+
+bool IsPushableAggregate(const string &name) {
+	return name == "count_star" || name == "count" || name == "sum" || name == "min" || name == "max" || name == "avg";
+}
+
+// Returns the remote column `expr` refers to, or an empty string if it is not a plain column of the scan.
+//
+// TODO(hjiang): Push down groups and aggregate arguments computed by a projection above the scan, e.g.
+// `max(length(payload))` or `sum(amount * 2)`.
+string RenderColumn(const column_binding_map_t<string> &columns, const Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+		return "";
+	}
+	auto entry = columns.find(expr.Cast<BoundColumnRefExpression>().binding);
+	return entry == columns.end() ? "" : entry->second;
+}
+
+string RenderAggregate(const column_binding_map_t<string> &columns, const Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_AGGREGATE) {
+		return "";
+	}
+	auto &aggregate = expr.Cast<BoundAggregateExpression>();
+	auto &name = aggregate.function.name;
+	if (aggregate.IsDistinct() || aggregate.filter || aggregate.order_bys || !IsPushableAggregate(name)) {
+		return "";
+	}
+	if (name == "count_star") {
+		return "count(*)";
+	}
+	if (aggregate.children.size() != 1) {
+		return "";
+	}
+	auto column = RenderColumn(columns, *aggregate.children[0]);
+	return column.empty() ? "" : StringUtil::Format("%s(%s)", name, column);
+}
+
+// Returns a remote scan computing `aggregate` on the server, or nullptr if the aggregate cannot be pushed down.
+unique_ptr<LogicalOperator> TryPushdownAggregate(Binder &binder, LogicalAggregate &aggregate,
+                                                 vector<ReplacementBinding> &replacements) {
+	if (aggregate.grouping_sets.size() > 1 || !aggregate.grouping_functions.empty()) {
+		return nullptr;
+	}
+	if (!aggregate.grouping_sets.empty() && aggregate.grouping_sets[0].size() != aggregate.groups.size()) {
+		return nullptr;
+	}
+	if (aggregate.children[0]->type != LogicalOperatorType::LOGICAL_GET) {
+		return nullptr;
+	}
+	auto &get = aggregate.children[0]->Cast<LogicalGet>();
+	if (get.function.name != "distributed_scan" || get.extra_info.sample_options) {
+		return nullptr;
+	}
+	auto &bind_data = get.bind_data->Cast<DistributedTableScanBindData>();
+	if (!bind_data.pushed_query.empty()) {
+		return nullptr;
+	}
+
+	column_binding_map_t<string> columns;
+	auto &column_ids = get.GetColumnIds();
+	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
+		auto column_id = column_ids[idx].GetPrimaryIndex();
+		if (column_id == COLUMN_IDENTIFIER_EMPTY || column_ids[idx].HasChildren()) {
+			continue;
+		}
+		LogicalType type;
+		columns.emplace(ColumnBinding(get.table_index, idx), GetRemoteColumn(bind_data, column_id, type));
+	}
+
+	vector<string> predicates;
+	for (auto &entry : get.table_filters.filters) {
+		LogicalType type;
+		auto column = GetRemoteColumn(bind_data, entry.first, type);
+		if (!SupportsRemoteFilterPushdown(type)) {
+			return nullptr;
+		}
+		auto predicate = RemoteFilterToSQL(*entry.second, column);
+		if (!predicate.empty()) {
+			predicates.emplace_back(std::move(predicate));
+		}
+	}
+
+	vector<string> select_list;
+	vector<string> group_by;
+	vector<LogicalType> types;
+	vector<string> names;
+	for (auto &group : aggregate.groups) {
+		auto sql = RenderColumn(columns, *group);
+		if (sql.empty() || !SupportsRemoteFilterPushdown(group->return_type)) {
+			return nullptr;
+		}
+		select_list.emplace_back(std::move(sql));
+		group_by.emplace_back(std::to_string(group_by.size() + 1));
+		types.emplace_back(group->return_type);
+		names.emplace_back(group->GetName());
+	}
+	for (auto &expr : aggregate.expressions) {
+		auto sql = RenderAggregate(columns, *expr);
+		if (sql.empty() || !SupportsRemoteFilterPushdown(expr->return_type)) {
+			return nullptr;
+		}
+		select_list.emplace_back(std::move(sql));
+		types.emplace_back(expr->return_type);
+		names.emplace_back(expr->GetName());
+	}
+
+	auto query =
+	    StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), bind_data.remote_table_name);
+	if (!predicates.empty()) {
+		query += " WHERE " + StringUtil::Join(predicates, " AND ");
+	}
+	if (!group_by.empty()) {
+		query += " GROUP BY " + StringUtil::Join(group_by, ", ");
+	}
+
+	auto pushed_bind_data = unique_ptr_cast<FunctionData, DistributedTableScanBindData>(bind_data.Copy());
+	pushed_bind_data->pushed_query = std::move(query);
+	pushed_bind_data->pushed_types = types;
+
+	const auto table_index = binder.GenerateTableIndex();
+	auto result =
+	    make_uniq<LogicalGet>(table_index, get.function, std::move(pushed_bind_data), types, std::move(names));
+	vector<ColumnIndex> result_column_ids;
+	for (idx_t idx = 0; idx < types.size(); ++idx) {
+		result_column_ids.emplace_back(idx);
+	}
+	result->SetColumnIds(std::move(result_column_ids));
+
+	const auto group_count = aggregate.groups.size();
+	for (idx_t idx = 0; idx < group_count; ++idx) {
+		replacements.emplace_back(ColumnBinding(aggregate.group_index, idx), ColumnBinding(table_index, idx));
+	}
+	for (idx_t idx = 0; idx < aggregate.expressions.size(); ++idx) {
+		replacements.emplace_back(ColumnBinding(aggregate.aggregate_index, idx),
+		                          ColumnBinding(table_index, group_count + idx));
+	}
+	return std::move(result);
+}
+
+void PushdownAggregates(Binder &binder, unique_ptr<LogicalOperator> &op, vector<ReplacementBinding> &replacements) {
+	for (auto &child : op->children) {
+		PushdownAggregates(binder, child, replacements);
+	}
+	if (op->type != LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+		return;
+	}
+	auto pushed = TryPushdownAggregate(binder, op->Cast<LogicalAggregate>(), replacements);
+	if (pushed) {
+		op = std::move(pushed);
+	}
+}
+
+void OptimizeDistributedAggregates(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	vector<ReplacementBinding> replacements;
+	PushdownAggregates(input.optimizer.binder, plan, replacements);
+	if (replacements.empty()) {
+		return;
+	}
+	ColumnBindingReplacer replacer;
+	replacer.replacement_bindings = std::move(replacements);
+	replacer.VisitOperator(*plan);
+}
+
+} // namespace
+
+OptimizerExtension GetDistributedAggregatePushdownExtension() {
+	OptimizerExtension extension;
+	extension.optimize_function = OptimizeDistributedAggregates;
+	return extension;
+}
+
+} // namespace duckdb

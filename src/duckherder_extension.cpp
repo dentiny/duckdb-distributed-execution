@@ -1,5 +1,6 @@
 #define DUCKDB_EXTENSION_MAIN
 
+#include "client/execution/distributed_aggregate_pushdown.hpp"
 #include "client/execution/logical_remote_alter_table.hpp"
 #include "client/execution/logical_remote_create_index.hpp"
 #include "duckdb.hpp"
@@ -19,6 +20,7 @@ void LoadInternal(ExtensionLoader &loader) {
 	StorageExtension::Register(config, "duckherder", make_shared_ptr<DuckherderStorageExtension>());
 	OperatorExtension::Register(config, GetRemoteAlterTableOperatorExtension());
 	OperatorExtension::Register(config, GetRemoteCreateIndexOperatorExtension());
+	OptimizerExtension::Register(config, GetDistributedAggregatePushdownExtension());
 	config.AddExtensionOption(RETRY_MAX_ATTEMPTS_SETTING, "Maximum number of attempts for retryable Duckherder RPCs",
 	                          LogicalType::UBIGINT, Value::UBIGINT(DEFAULT_RETRY_MAX_ATTEMPTS), nullptr,
 	                          SetScope::GLOBAL);

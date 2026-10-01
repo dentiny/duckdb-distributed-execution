@@ -50,6 +50,7 @@ set(UTIL_SOURCES
     src/utils/thread_utils.cpp src/utils/time_utils.cpp)
 
 set(CLIENT_EXECUTION_SOURCES
+    src/client/execution/distributed_aggregate_pushdown.cpp
     src/client/execution/distributed_alter_table.cpp
     src/client/execution/distributed_client.cpp
     src/client/execution/distributed_create_index.cpp
