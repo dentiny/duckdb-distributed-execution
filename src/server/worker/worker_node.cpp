@@ -1,6 +1,7 @@
 #include "core_functions_extension.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
+#include "duckdb/common/arrow/arrow_util.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
@@ -10,9 +11,11 @@
 #include "duckdb/execution/executor.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/chunk_scan_state/query_result.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
+#include "duckdb/storage/storage_info.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "server/worker/worker_node.hpp"
@@ -318,18 +321,16 @@ arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, Connection &re
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	idx_t count = 0;
 
-	// Fetch and convert each chunk from the query result
-	// Each chunk represents a batch of rows processed by this worker node
+	// Batches of a row group instead of one vector each, since every Arrow batch costs per-message overhead on each
+	// hop back to the client.
+	auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
+	QueryResultChunkScanState scan_state(result);
 	while (true) {
-		auto chunk = result.Fetch();
-		if (!chunk || chunk->size() == 0) {
+		ArrowArray arrow_array;
+		if (ArrowUtil::FetchChunk(scan_state, client_properties, DEFAULT_ROW_GROUP_SIZE, &arrow_array,
+		                          extension_types) == 0) {
 			break;
 		}
-
-		ArrowArray arrow_array;
-		auto extension_types =
-		    ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
-		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_properties, extension_types);
 
 		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
 		if (!batch_result.ok()) {
