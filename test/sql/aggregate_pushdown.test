@@ -94,7 +94,7 @@ WHERE sql LIKE 'SELECT region, sum(amount) FROM %sales% WHERE % GROUP BY 1';
 ----
 1
 
-# Cases that are not pushed down are still computed locally.
+# Expressions over columns are part of the remote query.
 query II
 SELECT id % 4 AS k, sum(amount * 2) FROM dh.sales WHERE id >= 500 AND region <> 'r1' GROUP BY k ORDER BY k;
 ----
@@ -102,6 +102,33 @@ SELECT id % 4 AS k, sum(amount * 2) FROM dh.sales WHERE id >= 500 AND region <> 
 1	2041.50
 2	1632.00
 3	2142.00
+
+query III
+SELECT upper(region) AS r, max(length(region || id::VARCHAR)), min(TRY_CAST(id AS TINYINT)) FROM dh.sales GROUP BY r ORDER BY r NULLS LAST;
+----
+R0	5	3
+R1	5	1
+R2	5	2
+NULL	NULL	0
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE '%sum((amount * %GROUP BY 1' OR sql LIKE '%upper(region)%length(%TRY_CAST(%GROUP BY 1';
+----
+2
+
+# Cases that are not pushed down are still computed locally.
+query I
+SELECT count(*) FROM (SELECT sum(random()) FROM dh.sales);
+----
+1
+
+query II
+SELECT feeling::VARCHAR AS f, count(*) FROM dh.sales GROUP BY f ORDER BY f;
+----
+happy	333
+ok	333
+sad	334
 
 query I
 SELECT count(DISTINCT region) FROM dh.sales;
@@ -128,7 +155,7 @@ SELECT sum(amount) FILTER (WHERE id < 10) FROM dh.sales;
 query I
 SELECT count(*) FROM duckherder_get_query_execution_stats()
 WHERE sql LIKE '%DISTINCT%' OR sql LIKE '%feeling%GROUP BY%' OR sql LIKE '%FILTER%' OR sql LIKE '%count(*)%feeling%'
-    OR sql LIKE '%sum(%amount%*%';
+    OR sql LIKE '%random()%' OR sql LIKE '%CAST(feeling%';
 ----
 0
 
