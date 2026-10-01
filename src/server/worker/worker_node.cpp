@@ -170,10 +170,10 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	// Object storage tasks run on their own session of this worker's instance for that database.
 	unique_ptr<Connection> object_storage_conn;
-	if (HasObjectStorage(req.storage_config())) {
+	if (ObjectStorageDatabase::IsConfigured(req.storage_config())) {
 		ARROW_RETURN_NOT_OK(ValidateRequest(req.storage_config()));
 		try {
-			object_storage_conn = ConnectObjectStorageDatabase(GetOrOpenObjectStorageDatabase(req.storage_config()));
+			object_storage_conn = GetOrOpenObjectStorageDatabase(req.storage_config()).Connect();
 		} catch (const std::exception &ex) {
 			return arrow::Status::IOError(StringUtil::Format("Worker %s failed to attach %s: %s", worker_id,
 			                                                 req.storage_config().database_uri(),
@@ -290,12 +290,12 @@ arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartit
 	return arrow::Status::OK();
 }
 
-DuckDB &WorkerNode::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config) {
+ObjectStorageDatabase &WorkerNode::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config) {
 	const concurrency::lock_guard<concurrency::mutex> lock(object_storage_mutex);
-	auto &instance = object_storage_databases[GetStorageKey(config)];
+	auto &instance = object_storage_databases[ObjectStorageDatabase::GetKey(config)];
 	if (!instance) {
-		instance = OpenObjectStorageDatabase(config, AccessMode::READ_ONLY);
-		DUCKDB_LOG_DEBUG(*instance->instance,
+		instance = make_uniq<ObjectStorageDatabase>(config, AccessMode::READ_ONLY);
+		DUCKDB_LOG_DEBUG(*instance->GetInstance().instance,
 		                 StringUtil::Format("Worker %s attached %s", worker_id, config.database_uri()));
 	}
 	return *instance;

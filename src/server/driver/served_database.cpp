@@ -6,7 +6,7 @@
 
 namespace duckdb {
 
-ServedDatabase::ServedDatabase(shared_ptr<DuckDB> duckling) : instance(std::move(duckling)) {
+ServedDatabase::ServedDatabase(shared_ptr<DuckDB> duckling) : duckling_instance(std::move(duckling)) {
 }
 
 ServedDatabase::ServedDatabase(distributed::StorageConfig config_p) : config(std::move(config_p)) {
@@ -16,12 +16,17 @@ shared_ptr<ClientRegistration> ServedDatabase::AddClient(distributed::ClientRole
 	const bool writable = role == distributed::CLIENT_ROLE_READ_WRITE;
 	if (writable && has_writer) {
 		throw InvalidInputException("Database %s already has a writable Duckherder client",
-		                            HasObjectStorage(config) ? config.database_uri() : "duckling");
+		                            ObjectStorageDatabase::IsConfigured(config) ? config.database_uri() : "duckling");
 	}
-	if (!instance) {
-		instance = OpenObjectStorageDatabase(config, AccessMode::READ_WRITE);
+	shared_ptr<ClientRegistration> registration;
+	if (ObjectStorageDatabase::IsConfigured(config)) {
+		if (!object_storage_database) {
+			object_storage_database = make_shared_ptr<ObjectStorageDatabase>(config, AccessMode::READ_WRITE);
+		}
+		registration = make_shared_ptr<ClientRegistration>(object_storage_database, worker_manager, role, config);
+	} else {
+		registration = make_shared_ptr<ClientRegistration>(duckling_instance, worker_manager, role, config);
 	}
-	auto registration = make_shared_ptr<ClientRegistration>(instance, worker_manager, role, config);
 	if (writable) {
 		has_writer = true;
 	} else {

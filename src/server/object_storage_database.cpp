@@ -10,6 +10,8 @@ namespace duckdb {
 
 namespace {
 
+constexpr const char *OBJECT_STORAGE_CATALOG = "object_db";
+
 void ExecuteOrThrow(Connection &conn, const string &sql) {
 	auto result = conn.Query(sql);
 	if (result->HasError()) {
@@ -25,7 +27,7 @@ void ConfigureObjectStorage(Connection &conn, const distributed::StorageConfig &
 	case distributed::StorageConfig::kLocal:
 		ExecuteOrThrow(conn, "SET GLOBAL duckdb_objfs_backend = 'local'");
 		ExecuteOrThrow(conn, StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s",
-		                                       KeywordHelper::WriteQuoted(config.local().root())));
+		                                        KeywordHelper::WriteQuoted(config.local().root())));
 		return;
 	case distributed::StorageConfig::kS3:
 		throw NotImplementedException("Duckherder does not support S3 object storage yet");
@@ -36,30 +38,37 @@ void ConfigureObjectStorage(Connection &conn, const distributed::StorageConfig &
 
 } // namespace
 
-bool HasObjectStorage(const distributed::StorageConfig &config) {
+bool ObjectStorageDatabase::IsConfigured(const distributed::StorageConfig &config) {
 	return !config.database_uri().empty();
 }
 
-string GetStorageKey(const distributed::StorageConfig &config) {
+string ObjectStorageDatabase::GetKey(const distributed::StorageConfig &config) {
 	return config.SerializeAsString();
 }
 
-unique_ptr<DuckDB> OpenObjectStorageDatabase(const distributed::StorageConfig &config, AccessMode access_mode) {
-	auto db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
-	db->LoadStaticExtension<CoreFunctionsExtension>();
-	Connection conn(*db);
+ObjectStorageDatabase::ObjectStorageDatabase(const distributed::StorageConfig &config, AccessMode access_mode)
+    : instance(make_shared_ptr<DuckDB>(/*path=*/nullptr, /*config=*/nullptr)) {
+	instance->LoadStaticExtension<CoreFunctionsExtension>();
+	Connection conn(*instance);
 	ExecuteOrThrow(conn, "LOAD duckdb_object_storage");
 	ConfigureObjectStorage(conn, config);
 	ExecuteOrThrow(conn, StringUtil::Format("ATTACH %s AS %s%s", KeywordHelper::WriteQuoted(config.database_uri()),
 	                                        OBJECT_STORAGE_CATALOG,
 	                                        access_mode == AccessMode::READ_ONLY ? " (READ_ONLY)" : ""));
-	return db;
 }
 
-unique_ptr<Connection> ConnectObjectStorageDatabase(DuckDB &db) {
-	auto conn = make_uniq<Connection>(db);
+unique_ptr<Connection> ObjectStorageDatabase::Connect() const {
+	auto conn = make_uniq<Connection>(*instance);
 	ExecuteOrThrow(*conn, StringUtil::Format("USE %s", OBJECT_STORAGE_CATALOG));
 	return conn;
+}
+
+DuckDB &ObjectStorageDatabase::GetInstance() const {
+	return *instance;
+}
+
+const shared_ptr<DuckDB> &ObjectStorageDatabase::GetSharedInstance() const {
+	return instance;
 }
 
 } // namespace duckdb

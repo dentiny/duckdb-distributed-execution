@@ -5,6 +5,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "server/object_storage_database.hpp"
 #include "utils/mutex.hpp"
 
 #include <arrow/flight/api.h>
@@ -50,7 +51,7 @@ private:
 
 	// Return this worker's read-only instance for the configuration, attaching it on first use.
 	// The instance is a snapshot from that first attach; later writes are not visible through it.
-	DuckDB &GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config);
+	ObjectStorageDatabase &GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &config);
 
 	string worker_id;
 	string host;
@@ -60,8 +61,9 @@ private:
 	unique_ptr<Connection> conn;
 
 	concurrency::mutex object_storage_mutex;
-	// Keyed by GetStorageKey. Instances stay attached for the worker's lifetime.
-	unordered_map<string, unique_ptr<DuckDB>> object_storage_databases DUCKDB_GUARDED_BY(object_storage_mutex);
+	// Keyed by ObjectStorageDatabase::GetKey. Instances stay attached for the worker's lifetime.
+	unordered_map<string, unique_ptr<ObjectStorageDatabase>>
+	    object_storage_databases DUCKDB_GUARDED_BY(object_storage_mutex);
 };
 
 } // namespace duckdb

@@ -329,10 +329,10 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients_mutex);
 	PruneExpiredClients();
 	const auto &storage_config = req.storage_config();
-	auto &database = databases[GetStorageKey(storage_config)];
+	auto &database = databases[ObjectStorageDatabase::GetKey(storage_config)];
 	if (!database) {
-		database = HasObjectStorage(storage_config) ? make_uniq<ServedDatabase>(storage_config)
-		                                            : make_uniq<ServedDatabase>(db);
+		database = ObjectStorageDatabase::IsConfigured(storage_config) ? make_uniq<ServedDatabase>(storage_config)
+		                                                               : make_uniq<ServedDatabase>(db);
 	}
 
 	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
@@ -340,7 +340,7 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 		clients.emplace(client_id, database->AddClient(req.role(), *worker_manager));
 	} catch (const std::exception &ex) {
 		if (!database->HasClients()) {
-			databases.erase(GetStorageKey(storage_config));
+			databases.erase(ObjectStorageDatabase::GetKey(storage_config));
 		}
 		resp.set_success(false);
 		resp.set_error_message(ErrorData(ex).Message());

@@ -23,6 +23,7 @@ namespace duckdb {
 class Connection;
 class DistributedExecutor;
 class DuckDB;
+class ObjectStorageDatabase;
 class WorkerManager;
 
 enum class ClientRequestTransport : uint8_t { NONE, ACTION, DO_GET, DO_PUT };
@@ -32,10 +33,12 @@ struct ClientRegistration {
 	// db is either the Duckling instance or the instance dedicated to storage_config.
 	ClientRegistration(shared_ptr<DuckDB> db, WorkerManager &worker_manager, distributed::ClientRole role_p,
 	                   const distributed::StorageConfig &storage_config);
+	ClientRegistration(shared_ptr<ObjectStorageDatabase> db, WorkerManager &worker_manager,
+	                   distributed::ClientRole role_p, const distributed::StorageConfig &storage_config);
 	~ClientRegistration();
 
 	distributed::ClientRole role;
-	// GetStorageKey of the database this client is attached to.
+	// ObjectStorageDatabase::GetKey of the database this client is attached to.
 	const string database_key;
 	// Declared before the connection so the instance outlives every session opened on it.
 	shared_ptr<DuckDB> database;

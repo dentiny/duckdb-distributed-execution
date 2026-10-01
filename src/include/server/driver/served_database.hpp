@@ -8,6 +8,7 @@
 namespace duckdb {
 
 struct ClientRegistration;
+class ObjectStorageDatabase;
 class WorkerManager;
 
 // One database served by the control node, with any number of read-only clients and at most one writable client. Like
@@ -27,7 +28,8 @@ public:
 
 private:
 	const distributed::StorageConfig config;
-	shared_ptr<DuckDB> instance;
+	shared_ptr<DuckDB> duckling_instance;
+	shared_ptr<ObjectStorageDatabase> object_storage_database;
 	bool has_writer = false;
 	idx_t reader_count = 0;
 };

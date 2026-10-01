@@ -2,8 +2,7 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-message InMemoryStorage {
-}
+message InMemoryStorage {}
 
 message LocalStorage {
   // Absolute directory visible at the same path to the control node and all workers.
