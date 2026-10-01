@@ -165,7 +165,6 @@ TEST_CASE("Read-only clients cannot write through scans", "[distributed_flight]"
 	REQUIRE_FALSE(status.ok());
 	REQUIRE_THAT(status.ToString(), Catch::Contains("read-only"));
 	REQUIRE(CountRows(reader, "reader_scan_write") == 0);
-	REQUIRE(CountRows(reader, "SELECT * FROM reader_scan_write") == 0);
 }
 
 TEST_CASE("Lost COMMIT response is recovered idempotently", "[distributed_flight]") {

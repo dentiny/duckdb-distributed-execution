@@ -293,7 +293,7 @@ void DistributedFlightServer::PruneExpiredClients() {
 void DistributedFlightServer::RemoveClient(unordered_map<string, shared_ptr<ClientRegistration>>::iterator entry) {
 	auto database = databases.find(entry->second->database_key);
 	D_ASSERT(database != databases.end());
-	database->second->RemoveClient(entry->first);
+	database->second->RemoveClient(entry->second->role);
 	if (!database->second->HasClients()) {
 		databases.erase(database);
 	}
@@ -337,7 +337,7 @@ arrow::Status DistributedFlightServer::HandleRegisterClient(const distributed::R
 
 	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
 	try {
-		clients.emplace(client_id, database->AddClient(client_id, req.role(), *worker_manager));
+		clients.emplace(client_id, database->AddClient(req.role(), *worker_manager));
 	} catch (const std::exception &ex) {
 		if (!database->HasClients()) {
 			databases.erase(GetStorageKey(storage_config));

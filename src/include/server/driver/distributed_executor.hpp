@@ -85,7 +85,6 @@ struct DistributedExecutionResult {
 // Distributed executor that partitions data and sends to workers.
 class DistributedExecutor {
 public:
-	// storage_config_p selects the database workers read; empty means workers share the Duckling instance.
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p,
 	                    distributed::StorageConfig storage_config_p);
 
