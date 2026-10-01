@@ -253,25 +253,33 @@ ScalarFunction GetStartLocalServerFunction() {
 	                                 /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
 	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer);
 	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
+	start_func.SetVolatile();
 	return start_func;
 }
 
 ScalarFunction GetStopLocalServerFunction() {
-	return ScalarFunction("duckherder_stop_local_server",
-	                      /*arguments=*/ {},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StopLocalServer);
+	auto stop_func = ScalarFunction("duckherder_stop_local_server",
+	                                /*arguments=*/ {},
+	                                /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StopLocalServer);
+	stop_func.SetVolatile();
+	return stop_func;
 }
 
 ScalarFunction GetWorkerCountFunction() {
-	return ScalarFunction("duckherder_get_worker_count",
-	                      /*arguments=*/ {},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BIGINT}, GetWorkerCount);
+	auto count_func = ScalarFunction("duckherder_get_worker_count",
+	                                 /*arguments=*/ {},
+	                                 /*return_type=*/LogicalType {LogicalTypeId::BIGINT}, GetWorkerCount);
+	count_func.SetVolatile();
+	return count_func;
 }
 
 ScalarFunction GetRegisterWorkerFunction() {
-	return ScalarFunction("duckherder_register_worker",
-	                      /*arguments=*/ {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, RegisterWorker);
+	auto register_func =
+	    ScalarFunction("duckherder_register_worker",
+	                   /*arguments=*/ {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}},
+	                   /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, RegisterWorker);
+	register_func.SetVolatile();
+	return register_func;
 }
 
 ScalarFunction GetStartStandaloneWorkerFunction() {
@@ -279,13 +287,17 @@ ScalarFunction GetStartStandaloneWorkerFunction() {
 	                                 /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
 	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartStandaloneWorker);
 	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
+	start_func.SetVolatile();
 	return start_func;
 }
 
 ScalarFunction GetRegisterOrReplaceDriverFunction() {
-	return ScalarFunction("duckherder_register_or_replace_driver",
-	                      /*arguments=*/ {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}},
-	                      /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, RegisterOrReplaceDriver);
+	auto register_func =
+	    ScalarFunction("duckherder_register_or_replace_driver",
+	                   /*arguments=*/ {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}},
+	                   /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, RegisterOrReplaceDriver);
+	register_func.SetVolatile();
+	return register_func;
 }
 
 } // namespace duckdb
