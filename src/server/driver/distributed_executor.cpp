@@ -203,7 +203,7 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	}
 
 	// Phase 5: Combine results.
-	auto result = result_merger->CollectAndMergeResults(result_streams, names, types, query_analysis);
+	auto result = result_merger->CollectAndMergeResults(result_streams, names, types);
 
 	// Calculate worker execution time (from start to end of worker operations)
 	exec_result.result = std::move(result);

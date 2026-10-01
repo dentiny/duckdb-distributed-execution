@@ -1087,9 +1087,6 @@ DistributedFlightServer::HandleGetQueryExecutionStats(const distributed::GetQuer
 		case QueryExecutionMode::DELEGATED:
 			query_info->set_execution_mode("DELEGATED");
 			break;
-		case QueryExecutionMode::NATURAL_PARTITION:
-			query_info->set_execution_mode("NATURAL_PARTITION");
-			break;
 		case QueryExecutionMode::ROW_GROUP_PARTITION:
 			query_info->set_execution_mode("ROW_GROUP_PARTITION");
 			break;
