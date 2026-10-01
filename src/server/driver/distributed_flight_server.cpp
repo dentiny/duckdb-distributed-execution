@@ -926,13 +926,17 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 
 	// Try distributed execution first if workers are available.
 	unique_ptr<QueryResult> result;
+	bool distributed = false;
 	if (registration.distributed_executor != nullptr && worker_manager != nullptr &&
 	    worker_manager->GetWorkerCount() > 0) {
 		auto exec_result = registration.distributed_executor->ExecuteDistributed(sql);
 
-		if (exec_result.result != nullptr) {
+		if (exec_result.result != nullptr || exec_result.arrow_schema != nullptr) {
 			// Query was executed in distributed mode
+			distributed = true;
 			result = std::move(exec_result.result);
+			schema = std::move(exec_result.arrow_schema);
+			batches = std::move(exec_result.arrow_batches);
 			query_info.num_workers_used = exec_result.num_workers_used;
 			query_info.num_tasks_generated = exec_result.num_tasks;
 
@@ -950,7 +954,7 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	}
 
 	// Fall back to local execution if not distributed.
-	if (result == nullptr) {
+	if (!distributed) {
 		result = registration.connection->Query(sql);
 		query_info.execution_mode = QueryExecutionMode::LOCAL;
 		query_info.num_workers_used = 0;
@@ -964,6 +968,10 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	// Record all successful query executions (both distributed and local)
 	RecordQueryExecution(std::move(query_info));
 
+	// Worker batches are already in the response format.
+	if (result == nullptr) {
+		return arrow::Status::OK();
+	}
 	if (result->HasError()) {
 		return arrow::Status::Invalid("Query error: " + result->GetError());
 	}

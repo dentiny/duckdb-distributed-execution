@@ -1,8 +1,8 @@
 #pragma once
 
 #include "duckdb.hpp"
-#include "duckdb/main/connection.hpp"
 #include "duckdb/common/types.hpp"
+#include "duckdb/main/connection.hpp"
 #include <arrow/flight/client.h>
 #include <memory>
 
@@ -13,9 +13,12 @@ class ResultMerger {
 public:
 	explicit ResultMerger(Connection &conn_p);
 
-	// Collect and merge results from worker streams (simple concatenation).
-	unique_ptr<QueryResult> CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
-	                                               const vector<string> &names, const vector<LogicalType> &types);
+	// Concatenate worker result batches without decoding them.
+	// Fails if a worker batch does not match the schema the driver would produce for this result.
+	arrow::Status CollectResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
+	                             const vector<string> &names, const vector<LogicalType> &types,
+	                             std::shared_ptr<arrow::Schema> &schema,
+	                             vector<std::shared_ptr<arrow::RecordBatch>> &batches);
 
 private:
 	Connection &conn;

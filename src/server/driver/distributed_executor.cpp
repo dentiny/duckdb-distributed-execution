@@ -232,10 +232,17 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	}
 
 	// Phase 5: Combine results.
-	auto result = result_merger->CollectAndMergeResults(result_streams, names, types);
-
-	// Calculate worker execution time (from start to end of worker operations)
-	exec_result.result = std::move(result);
+	std::shared_ptr<arrow::Schema> schema;
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	auto collect_status = result_merger->CollectResults(result_streams, names, types, schema, batches);
+	if (!collect_status.ok()) {
+		DUCKDB_LOG_WARNING(db_instance, StringUtil::Format("Failed collecting worker results, falling back to local "
+		                                                   "execution: %s",
+		                                                   collect_status.ToString()));
+		return exec_result;
+	}
+	exec_result.arrow_schema = std::move(schema);
+	exec_result.arrow_batches = std::move(batches);
 	return exec_result;
 }
 
