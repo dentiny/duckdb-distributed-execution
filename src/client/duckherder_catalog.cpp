@@ -169,17 +169,17 @@ void DuckherderCatalog::LoadRemoteCatalog(ClientContext &context) {
 	// Fetch one ordered snapshot so concurrent remote DDL cannot leave a partially discovered catalog.
 	ForEachRow(client,
 	           "SELECT 0 AS entry_order, schema_name, NULL::VARCHAR AS entry_name, NULL::VARCHAR AS sql, "
-	           "NULL::VARCHAR[] AS labels FROM duckdb_schemas() "
+	           "NULL::VARCHAR[] AS labels, NULL::BIGINT AS estimated_size FROM duckdb_schemas() "
 	           "WHERE database_name = current_database() AND schema_name <> 'main' AND NOT internal "
 	           "UNION ALL "
-	           "SELECT 1, schema_name, type_name, NULL::VARCHAR, labels FROM duckdb_types() "
+	           "SELECT 1, schema_name, type_name, NULL::VARCHAR, labels, NULL::BIGINT FROM duckdb_types() "
 	           "WHERE database_name = current_database() AND NOT internal AND labels IS NOT NULL "
 	           "UNION ALL "
-	           "SELECT 2, schema_name, table_name, sql, NULL::VARCHAR[] FROM duckdb_tables() "
+	           "SELECT 2, schema_name, table_name, sql, NULL::VARCHAR[], estimated_size FROM duckdb_tables() "
 	           "WHERE database_name = current_database() AND NOT internal "
 	           "ORDER BY entry_order, schema_name, entry_name",
 	           {LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	            LogicalType::LIST(LogicalType::VARCHAR)},
+	            LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BIGINT},
 	           [&](DataChunk &chunk, idx_t row_idx) {
 		           auto entry_order = chunk.GetValue(0, row_idx).GetValue<int32_t>();
 		           auto schema_name = chunk.GetValue(1, row_idx).GetValue<string>();
@@ -216,7 +216,23 @@ void DuckherderCatalog::LoadRemoteCatalog(ClientContext &context) {
 		           auto binder = Binder::CreateBinder(context);
 		           auto bound_info = binder->BindCreateTableInfo(std::move(info), schema);
 		           schema.CreateTableLocal(transaction, *bound_info);
+
+		           auto estimated_size = chunk.GetValue(5, row_idx);
+		           if (!estimated_size.IsNull()) {
+			           concurrency::lock_guard<concurrency::mutex> lck(table_cardinalities_mu);
+			           table_cardinalities[QualifiedRemoteName(schema_name, entry_name)] =
+			               estimated_size.GetValue<idx_t>();
+		           }
 	           });
+}
+
+optional_idx DuckherderCatalog::GetEstimatedCardinality(const string &schema_name, const string &table_name) const {
+	concurrency::lock_guard<concurrency::mutex> lck(table_cardinalities_mu);
+	auto entry = table_cardinalities.find(QualifiedRemoteName(schema_name, table_name));
+	if (entry == table_cardinalities.end()) {
+		return optional_idx();
+	}
+	return entry->second;
 }
 
 optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchemaLocal(CatalogTransaction transaction,

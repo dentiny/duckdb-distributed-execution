@@ -4,6 +4,8 @@
 #include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
@@ -66,6 +68,9 @@ public:
 	// Get the remote session owned by this DuckDB connection.
 	DistributedClient &GetClient(ClientContext &context);
 
+	// Returns the remote row count captured when the catalog was loaded, if known.
+	optional_idx GetEstimatedCardinality(const string &schema_name, const string &table_name) const;
+
 private:
 	friend class DuckherderPragmas;
 	friend class DuckherderSchemaCatalogEntry;
@@ -105,6 +110,11 @@ private:
 	// Explicit routing overrides registered through the compatibility pragmas.
 	mutable concurrency::mutex remote_tables_mu;
 	RemoteTableMap remote_tables DUCKDB_GUARDED_BY(remote_tables_mu);
+
+	// Maps from a qualified remote table name to its row count when the catalog was loaded.
+	// Only guides join ordering, so it is not refreshed on later writes.
+	mutable concurrency::mutex table_cardinalities_mu;
+	case_insensitive_map_t<idx_t> table_cardinalities DUCKDB_GUARDED_BY(table_cardinalities_mu);
 };
 
 } // namespace duckdb

@@ -1,0 +1,48 @@
+# name: test/sql/remote_scan_cardinality.test
+# description: Remote table scans report the row counts loaded with the catalog, so joins build on the smaller side
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8868, 2);
+
+statement ok
+ATTACH 'localhost:8868/cardinality.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+CREATE TABLE dh.big AS SELECT i AS id, 'c' || (i % 10)::VARCHAR AS cat FROM range(5000) t(i);
+
+statement ok
+CREATE TABLE dh.small AS SELECT 'c' || i::VARCHAR AS cat, 'name' || i::VARCHAR AS name FROM range(10) t(i);
+
+# Row counts are captured when the catalog is loaded on attach.
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH 'localhost:8868/cardinality.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+query II
+EXPLAIN SELECT id FROM dh.big;
+----
+physical_plan	<REGEX>:.*~5,000 rows.*
+
+query II
+EXPLAIN SELECT name FROM dh.small;
+----
+physical_plan	<REGEX>:.*~10 rows.*
+
+query II
+SELECT s.name, count(*) FROM dh.big b JOIN dh.small s ON b.cat = s.cat GROUP BY s.name ORDER BY s.name LIMIT 2;
+----
+name0	500
+name1	500
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

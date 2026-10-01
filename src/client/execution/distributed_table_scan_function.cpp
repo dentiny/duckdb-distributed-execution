@@ -1,5 +1,6 @@
 #include "client/execution/distributed_table_scan_function.hpp"
 
+#include "client/duckherder_catalog.hpp"
 #include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -40,6 +41,17 @@ unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deseriali
 	auto &table_entry =
 	    Catalog::GetEntry<TableCatalogEntry>(deserializer.Get<ClientContext &>(), catalog, schema, table);
 	return make_uniq<DistributedTableScanBindData>(table_entry, std::move(server_url), std::move(remote_table_name));
+}
+
+// Without an estimate, every remote table looks like one row, so joins may build hash tables on the larger side.
+unique_ptr<NodeStatistics> DistributedTableScanCardinality(ClientContext &context, const FunctionData *bind_data_p) {
+	auto &table = bind_data_p->Cast<DistributedTableScanBindData>().table;
+	auto &catalog = table.schema.catalog.Cast<DuckherderCatalog>();
+	auto estimate = catalog.GetEstimatedCardinality(table.schema.name, table.name);
+	if (!estimate.IsValid()) {
+		return nullptr;
+	}
+	return make_uniq<NodeStatistics>(estimate.GetIndex(), estimate.GetIndex());
 }
 
 virtual_column_map_t GetDistributedTableScanVirtualColumns(ClientContext &context,
@@ -202,6 +214,7 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	function.filter_pushdown = true;
 	function.filter_prune = true;
 	function.supports_pushdown_type = DistributedTableScanSupportsPushdownType;
+	function.cardinality = DistributedTableScanCardinality;
 	function.get_bind_info = GetBindInfo;
 	function.serialize = SerializeDistributedTableScan;
 	function.deserialize = DeserializeDistributedTableScan;
@@ -242,8 +255,8 @@ unique_ptr<LocalTableFunctionState> DistributedTableScanFunction::InitLocal(Exec
 		}
 	}
 	// Filters include join filters pushed from the build side, which are only known once the scan starts.
-	local_state->scan_sql = BuildScanSQL(bind_data, local_state->column_ids, input.column_ids, input.filters,
-	                                     local_state->expected_types);
+	local_state->scan_sql =
+	    BuildScanSQL(bind_data, local_state->column_ids, input.column_ids, input.filters, local_state->expected_types);
 	return std::move(local_state);
 }
 
