@@ -14,7 +14,7 @@ public:
 	explicit ResultMerger(Connection &conn_p);
 
 	// Concatenate worker result batches without decoding them.
-	// Fails if a worker batch does not match the schema the driver would produce for this result.
+	// Returns an invalid status if a worker batch does not match the schema the driver would produce for this result.
 	arrow::Status CollectResults(vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
 	                             const vector<string> &names, const vector<LogicalType> &types,
 	                             std::shared_ptr<arrow::Schema> &schema,

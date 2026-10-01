@@ -235,6 +235,11 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	std::shared_ptr<arrow::Schema> schema;
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	auto collect_status = result_merger->CollectResults(result_streams, names, types, schema, batches);
+	if (collect_status.IsInvalid()) {
+		exec_result.result = make_uniq<MaterializedQueryResult>(ErrorData(
+		    InternalException(StringUtil::Format("Failed collecting worker results: %s", collect_status.ToString()))));
+		return exec_result;
+	}
 	if (!collect_status.ok()) {
 		DUCKDB_LOG_WARNING(db_instance, StringUtil::Format("Failed collecting worker results, falling back to local "
 		                                                   "execution: %s",

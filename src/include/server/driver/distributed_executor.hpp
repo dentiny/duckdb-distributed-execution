@@ -48,7 +48,7 @@ enum class PartitionStrategy {
 
 // Result structure containing query result and execution metadata.
 struct DistributedExecutionResult {
-	// Set when the query fails before dispatch, e.g. a prepare error.
+	// Set when the query fails, e.g. a prepare error or a worker result schema mismatch.
 	unique_ptr<QueryResult> result;
 	// Set when workers executed the query; batches are forwarded to the client without decoding.
 	std::shared_ptr<arrow::Schema> arrow_schema;
