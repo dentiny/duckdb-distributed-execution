@@ -130,9 +130,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	// The partial query scans the same table with the same filters, so it is partitioned with the original plan.
 	const string &execution_sql = partitioned_aggregation ? query_analysis.partial_sql : sql;
 
-	// Analyze pipeline complexity
-	QueryPlanAnalyzer::PipelineInfo pipeline_info = plan_analyzer->AnalyzePipelines(*logical_plan);
-
 	// Phase 2: Extract pipeline tasks and distribute to workers
 	// This replaces the old 1-partition-per-worker approach with flexible task distribution
 	const idx_t partition_workers = query_analysis.has_aggregation && !partitioned_aggregation ? 1 : workers.size();

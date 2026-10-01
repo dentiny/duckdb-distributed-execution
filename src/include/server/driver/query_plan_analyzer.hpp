@@ -15,10 +15,6 @@ public:
 
 	explicit QueryPlanAnalyzer(Connection &conn_p);
 
-	// Query DuckDB's estimated parallelization decision.
-	// Returns the number of parallel tasks DuckDB would naturally create for this query.
-	idx_t QueryEstimatedParallelism(LogicalOperator &logical_plan);
-
 	// Extract row group information for DuckDB-aligned partitioning.
 	struct RowGroupPartitionInfo {
 		// Starting rowids of actual row groups, in storage order.
@@ -31,23 +27,6 @@ public:
 		bool valid = false;
 	};
 	RowGroupPartitionInfo ExtractRowGroupInfo(LogicalOperator &logical_plan);
-
-	// Analyze query pipeline complexity.
-	struct PipelineInfo {
-		// Number of pipelines.
-		idx_t pipeline_count = 0;
-		// Whether pipelines have dependencies.
-		bool has_dependencies = false;
-		// Single pipeline, simple scan.
-		bool is_simple_scan = true;
-		// Has join operators.
-		bool has_joins = false;
-		// Has window, CTE, etc.
-		bool has_complex_operators = false;
-		// Types of each pipeline.
-		vector<string> pipeline_types;
-	};
-	PipelineInfo AnalyzePipelines(LogicalOperator &logical_plan);
 
 	// Merge strategy for distributed query results
 	enum class MergeStrategy {
