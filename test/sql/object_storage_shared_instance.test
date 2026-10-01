@@ -22,58 +22,45 @@ INSERT INTO writer.items VALUES (1);
 statement ok
 DETACH writer;
 
-# With only readers the database is opened read-only.
+# A reader attached before the writer still sees the writer's commits.
 statement ok con1
-ATTACH 'localhost:8841/shared.db' AS early_reader (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
+ATTACH 'localhost:8841/shared.db' AS reader (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
 
 query I con1
-SELECT sum(id) FROM early_reader.items;
+SELECT sum(id) FROM reader.items;
 ----
 1
 
-# A writer joining reopens the database read-write.
 statement ok
 ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
 
 statement ok
 INSERT INTO writer.items VALUES (2);
 
-statement ok con2
-ATTACH 'localhost:8841/shared.db' AS reader (TYPE duckherder, READ_ONLY, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
-
-query I con2
+query I con1
 SELECT sum(id) FROM reader.items;
 ----
 3
 
-# Commits after the reader attached are visible right away.
-statement ok
-INSERT INTO writer.items VALUES (4);
-
-query I con2
-SELECT sum(id) FROM reader.items;
-----
-7
-
-statement error con2
-INSERT INTO reader.items VALUES (8);
+statement error con1
+INSERT INTO reader.items VALUES (4);
 ----
 <REGEX>:.*read-only.*
 
-# The next writer reuses the instance the remaining readers are on.
+# The next writer joins the instance the reader is on.
 statement ok
 DETACH writer;
 
-statement ok con3
+statement ok con2
 ATTACH 'localhost:8841/shared.db' AS writer (TYPE duckherder, DATA_PATH '__BUILD_DIRECTORY__/objfs/{BASE_TEST_NAME}');
 
-statement ok con3
-INSERT INTO writer.items VALUES (16);
+statement ok con2
+INSERT INTO writer.items VALUES (8);
 
-query I con2
+query I con1
 SELECT sum(id) FROM reader.items;
 ----
-23
+11
 
 statement ok
 SELECT duckherder_stop_local_server();

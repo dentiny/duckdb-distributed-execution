@@ -6,7 +6,7 @@
 
 namespace duckdb {
 
-ServedDatabase::ServedDatabase(shared_ptr<DuckDB> duckling) : instance(std::move(duckling)), instance_writable(true) {
+ServedDatabase::ServedDatabase(shared_ptr<DuckDB> duckling) : instance(std::move(duckling)) {
 }
 
 ServedDatabase::ServedDatabase(distributed::StorageConfig config_p) : config(std::move(config_p)) {
@@ -18,9 +18,8 @@ shared_ptr<ClientRegistration> ServedDatabase::AddClient(distributed::ClientRole
 		throw InvalidInputException("Database %s already has a writable Duckherder client",
 		                            HasObjectStorage(config) ? config.database_uri() : "duckling");
 	}
-	if (!instance || (writable && !instance_writable)) {
-		instance = OpenObjectStorageDatabase(config, writable ? AccessMode::READ_WRITE : AccessMode::READ_ONLY);
-		instance_writable = writable;
+	if (!instance) {
+		instance = OpenObjectStorageDatabase(config, AccessMode::READ_WRITE);
 	}
 	auto registration = make_shared_ptr<ClientRegistration>(instance, worker_manager, role, config);
 	if (writable) {
