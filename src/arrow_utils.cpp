@@ -128,7 +128,7 @@ void ConvertArrowArrayToDuckDBVector(ClientContext &context, const std::shared_p
 }
 
 unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType statement_type,
-                                        const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
+                                        vector<std::shared_ptr<arrow::RecordBatch>> batches,
                                         const std::shared_ptr<arrow::Schema> &schema,
                                         const vector<LogicalType> *expected_types) {
 	vector<string> names;
@@ -147,10 +147,11 @@ unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType st
 	}
 
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	for (const auto &batch : batches) {
+	for (auto &batch : batches) {
 		DataChunk chunk;
 		ArrowRecordBatchToDataChunk(context, *batch, chunk, expected_types ? &types : nullptr);
 		collection->Append(chunk);
+		batch.reset();
 	}
 	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
 	                                          ClientProperties());

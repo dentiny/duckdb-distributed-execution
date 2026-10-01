@@ -139,7 +139,8 @@ arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitio
 
 	// Execute task using SQL-based execution.
 	if (!result && !req.sql().empty()) {
-		result = task_conn.Query(req.sql());
+		// Stream the result so it is converted to Arrow as it is produced instead of being materialized first.
+		result = task_conn.SendQuery(req.sql());
 	}
 
 	// Validate result.

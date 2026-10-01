@@ -169,7 +169,8 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 		return MakeErrorResult(status.ToString());
 	}
 	auto schema = batches.empty() ? nullptr : batches[0]->schema();
-	return MakeArrowResult(GetArrowContext(lock), StatementType::SELECT_STATEMENT, batches, schema, expected_types);
+	return MakeArrowResult(GetArrowContext(lock), StatementType::SELECT_STATEMENT, std::move(batches), schema,
+	                       expected_types);
 }
 
 bool DistributedClient::TableExists(const string &table_name) {
@@ -211,7 +212,7 @@ unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, S
 	}
 	auto arrow_batches = batches_result.ValueOrDie();
 	vector<std::shared_ptr<arrow::RecordBatch>> batches(arrow_batches.begin(), arrow_batches.end());
-	return MakeArrowResult(GetArrowContext(lock), statement_type, batches, reader->schema(), expected_types);
+	return MakeArrowResult(GetArrowContext(lock), statement_type, std::move(batches), reader->schema(), expected_types);
 }
 
 unique_ptr<QueryResult> DistributedClient::CommitTransaction() {

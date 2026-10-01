@@ -636,6 +636,9 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	bool replay = false;
 	ARROW_RETURN_NOT_OK(CheckRequestReplay(request, *registration, ClientRequestTransport::DO_GET, signature, replay));
 	if (!replay) {
+		// A new request means the previous result can no longer be replayed, so release it before running this scan.
+		registration->last_query_schema.reset();
+		registration->last_query_batches.clear();
 		std::shared_ptr<arrow::Schema> schema;
 		vector<std::shared_ptr<arrow::RecordBatch>> batches;
 		ARROW_RETURN_NOT_OK(HandleScanTable(request.scan_table(), *registration, schema, batches));
