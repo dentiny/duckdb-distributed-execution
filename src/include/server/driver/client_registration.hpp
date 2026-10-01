@@ -35,7 +35,7 @@ struct ClientRegistration {
 	~ClientRegistration();
 
 	distributed::ClientRole role;
-	// Serialized storage configuration identifying the database this client is attached to.
+	// Storage identity, excluding credentials, for the database this client is attached to.
 	const string database_key;
 	// Declared before the connection so the instance outlives every session opened on it.
 	shared_ptr<DuckDB> database;

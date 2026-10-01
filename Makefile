@@ -23,6 +23,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 DUCKHERDER_UNITTEST_RELEASE := ./build/release/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
 DUCKHERDER_UNITTEST_DEBUG := ./build/debug/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
 DUCKHERDER_UNITTEST_RELDEBUG := ./build/reldebug/extension/$(EXT_NAME)/test/unittest/unittest_$(EXT_NAME)
+RUSTFS_TEST_BUILD_TYPE ?= reldebug
 
 test_release_internal: test_duckherder_release
 test_debug_internal: test_duckherder_debug
@@ -104,5 +105,9 @@ format-all: format
 test-object-storage-s3:
 	bash test/object_storage/run_single_writer_reader_e2e.sh
 
-.PHONY: format-all test-object-storage-s3 test_duckherder_release test_duckherder_debug test_duckherder_reldebug \
-	$(DUCKDB_TEST_TARGETS)
+test-object-storage-rustfs:
+	DUCKDB_BIN=./build/$(RUSTFS_TEST_BUILD_TYPE)/duckdb bash scripts/local-rustfs.sh test
+	./build/$(RUSTFS_TEST_BUILD_TYPE)/test/unittest "test/sql/*"
+
+.PHONY: format-all test-object-storage-s3 test-object-storage-rustfs test_duckherder_release \
+	test_duckherder_debug test_duckherder_reldebug $(DUCKDB_TEST_TARGETS)

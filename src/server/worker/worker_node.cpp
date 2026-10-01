@@ -155,8 +155,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	// Object storage tasks run on their own session of this worker's instance for that database.
 	ARROW_RETURN_NOT_OK(ValidateRequest(req.storage_config()));
-	if (req.storage_config().storage_case() != distributed::StorageConfig::kLocal) {
-		return arrow::Status::Invalid("Workers can execute only on shared local object storage");
+	if (req.storage_config().storage_case() == distributed::StorageConfig::kInMemory) {
+		return arrow::Status::Invalid("Workers cannot execute on control-node in-memory object storage");
 	}
 	ARROW_ASSIGN_OR_RAISE(auto object_storage_database, GetOrOpenObjectStorageDatabase(req.storage_config()));
 	ARROW_ASSIGN_OR_RAISE(auto task_conn, object_storage_database->Connect());

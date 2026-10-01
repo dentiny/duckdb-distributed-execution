@@ -37,14 +37,14 @@ ATTACH 'localhost:8839/a.db' AS relative_root (TYPE duckherder, DATA_PATH 'relat
 <REGEX>:.*root must be an absolute path.*
 
 statement error
-ATTACH 'localhost:8839/a.db' AS s3_path (TYPE duckherder, DATA_PATH 's3://my-bucket/duckdb-data');
+ATTACH 'localhost:8839/a.db' AS s3_path (TYPE duckherder, DATA_PATH 's3://');
 ----
-<REGEX>:.*only supports local paths yet.*
+<REGEX>:.*S3 DATA_PATH must include a bucket.*
 
 statement error
 ATTACH 'localhost:8839/a.db' AS with_secret (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs', SECRET 'prod_s3');
 ----
-<REGEX>:.*does not support SECRET yet.*
+<REGEX>:.*SECRET requires an S3 DATA_PATH.*
 
 statement ok
 ATTACH 'localhost:8839/a.db' AS writer_a (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');

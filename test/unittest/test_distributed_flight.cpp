@@ -3,6 +3,8 @@
 #include "client/transport/distributed_flight_client.hpp"
 #include "distributed.pb.h"
 #include "server/driver/distributed_flight_server.hpp"
+#include "server/object_storage_database.hpp"
+#include "server/validation.hpp"
 #include "utils/no_destructor.hpp"
 
 #include <chrono>
@@ -381,4 +383,30 @@ TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 	REQUIRE(response.has_error());
 	REQUIRE(response.error().exception_type() == distributed::REMOTE_EXCEPTION_PARSER);
 	REQUIRE_FALSE(response.error().message().empty());
+}
+
+TEST_CASE("S3 storage identity excludes credentials", "[distributed_flight][object_storage]") {
+	distributed::StorageConfig first;
+	first.set_database_uri("duckdb_objfs://database.db");
+	auto first_s3 = first.mutable_s3();
+	first_s3->set_bucket("bucket");
+	first_s3->set_root("prefix");
+	first_s3->set_endpoint("localhost:9000");
+	first_s3->set_key_id("first-key");
+	first_s3->set_secret("first-secret");
+	first_s3->set_use_ssl(false);
+	first_s3->set_url_style(distributed::S3_URL_STYLE_PATH);
+	REQUIRE(ValidateRequest(first).ok());
+
+	auto second = first;
+	second.mutable_s3()->set_key_id("second-key");
+	second.mutable_s3()->set_secret("second-secret");
+	REQUIRE(ObjectStorageDatabase::GetKey(first) == ObjectStorageDatabase::GetKey(second));
+
+	second.mutable_s3()->set_endpoint("other-endpoint:9000");
+	REQUIRE(ObjectStorageDatabase::GetKey(first) != ObjectStorageDatabase::GetKey(second));
+
+	auto invalid = first;
+	invalid.mutable_s3()->clear_secret();
+	REQUIRE_FALSE(ValidateRequest(invalid).ok());
 }

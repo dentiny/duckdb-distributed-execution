@@ -9,17 +9,29 @@ message LocalStorage {
   string root = 1;
 }
 
+enum S3UrlStyle {
+  S3_URL_STYLE_UNSPECIFIED = 0;
+  S3_URL_STYLE_PATH = 1;
+  S3_URL_STYLE_VHOST = 2;
+}
+
 message S3Storage {
   string bucket = 1;
   // Key prefix inside the bucket.
   string root = 2;
   string endpoint = 3;
   string region = 4;
-  string secret_name = 5;
+  reserved 5;
+  reserved "secret_name";
+  string key_id = 6;
+  string secret = 7;
+  string session_token = 8;
+  optional bool use_ssl = 9;
+  S3UrlStyle url_style = 10;
 }
 
-// Object storage database selected by a client attachment. Each distinct configuration is opened as its own
-// DuckDB instance on the control node and on every worker.
+// Object storage database selected by a client attachment. Each distinct database and storage location is opened as
+// its own DuckDB instance on the control node and on every worker; credentials initialize but do not identify it.
 message StorageConfig {
   // DuckDB database URI using duckdb_objfs://. An entirely empty configuration selects the server's default
   // in-memory database.

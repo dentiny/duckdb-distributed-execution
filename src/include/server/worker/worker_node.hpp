@@ -60,7 +60,7 @@ private:
 	unique_ptr<Connection> conn;
 
 	concurrency::mutex object_storage_mutex;
-	// Keyed by serialized storage configuration. Instances stay attached for the worker's lifetime.
+	// Keyed by storage identity without credentials. Instances stay attached for the worker's lifetime.
 	//
 	// TODO(hjiang): Evict an instance when the final client detaches. Worker-lifetime caches retain resources, and
 	// their read-only snapshots do not see later writes.

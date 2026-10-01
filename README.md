@@ -290,6 +290,53 @@ See the [S3 single-writer/read-only-reader test](test/object_storage/run_single_
 and [local object-storage test](test/sql/object_storage_single_writer_reader.test)
 for executable examples.
 
+For local S3-compatible testing, the RustFS helper starts a persistent Docker-backed service, creates the test bucket,
+and can run an extension write/read smoke test:
+
+```bash
+./scripts/local-rustfs.sh start   # S3 API :19000, console :19001
+./scripts/local-rustfs.sh test    # write, checkpoint, reattach read-only, query
+./scripts/local-rustfs.sh stop    # keeps the Docker volume
+./scripts/local-rustfs.sh reset   # deletes the test data
+```
+
+Run `make test-object-storage-rustfs` to execute the RustFS write/read smoke test followed by every SQL test under
+`test/sql`. Set `RUSTFS_TEST_BUILD_TYPE=release` to use the release build instead of the default `reldebug` build.
+
+The default endpoint is `127.0.0.1:19000`, bucket is `duckherder`, root prefix is `duckherder-test`, and credentials
+are `rustfsadmin`/`rustfsadmin`. The test target creates the bucket before running and writes each test database under
+that root prefix. All settings can be overridden with `RUSTFS_*` environment variables; run the script without
+arguments to see the available commands.
+
+Distributed S3 attachments resolve a standard DuckDB `TYPE S3` secret on the client. Load an extension that
+registers that secret type, create the secret, and select the bucket and prefix with `DATA_PATH`:
+
+```sql
+LOAD cache_httpfs;
+
+CREATE SECRET distributed_storage (
+    TYPE S3,
+    PROVIDER CONFIG,
+    KEY_ID 'access-key',
+    SECRET 'secret-key',
+    REGION 'us-east-1',
+    ENDPOINT '127.0.0.1:9000',
+    USE_SSL false,
+    URL_STYLE 'path',
+    SCOPE 's3://my-bucket/duckherder'
+);
+
+ATTACH 'localhost:8815/database.db' AS dh (
+    TYPE duckherder,
+    DATA_PATH 's3://my-bucket/duckherder',
+    SECRET 'distributed_storage'
+);
+```
+
+The client resolves the secret and sends the required S3 configuration to the control node and workers, which
+create temporary S3 secrets before initializing `duckdb_object_storage`. The current Flight transport does not
+encrypt these credentials; use S3 attachments only on a trusted network until TLS transport is supported.
+
 ## Usage
 
 ### Local Server Management

@@ -193,8 +193,8 @@ private:
 	mutable concurrency::shared_mutex clients_mutex;
 	// Keyed by client id.
 	unordered_map<string, shared_ptr<ClientRegistration>> clients DUCKDB_GUARDED_BY(clients_mutex);
-	// Control-node databases keyed by serialized storage configuration. The default in-memory database is retained
-	// after its final client leaves.
+	// Control-node databases keyed by storage identity without credentials. The default in-memory database is
+	// retained after its final client leaves.
 	unordered_map<string, unique_ptr<ServedDatabase>> databases DUCKDB_GUARDED_BY(clients_mutex);
 	DistributedFlightServerTestState test_state;
 

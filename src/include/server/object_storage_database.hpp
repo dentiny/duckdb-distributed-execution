@@ -28,8 +28,8 @@ public:
 	static distributed::StorageConfig ResolveConfig(const distributed::StorageConfig &config);
 	// Return whether the URI is reserved for the server-owned default in-memory database.
 	static bool IsDefaultURI(const string &database_uri);
-	// Map key used by control nodes and workers to reuse the instance for one configuration. The full serialized
-	// configuration distinguishes the same database URI under different storage backends or roots.
+	// Stable identity used to reuse one instance for a database and storage location. Credentials are excluded so
+	// different credentials cannot bypass single-writer admission for the same database.
 	static string GetKey(const distributed::StorageConfig &config);
 
 private:

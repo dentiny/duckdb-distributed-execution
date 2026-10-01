@@ -52,8 +52,23 @@ arrow::Status ValidateRequest(const distributed::StorageConfig &config) {
 			return arrow::Status::Invalid("Local object storage root must be an absolute path");
 		}
 		return arrow::Status::OK();
-	case distributed::StorageConfig::kS3:
-		return arrow::Status::Invalid("Duckherder does not support S3 object storage yet");
+	case distributed::StorageConfig::kS3: {
+		const auto &s3 = config.s3();
+		if (s3.bucket().empty()) {
+			return arrow::Status::Invalid("S3 object storage bucket must not be empty");
+		}
+		if (s3.key_id().empty() != s3.secret().empty()) {
+			return arrow::Status::Invalid("S3 key ID and secret must be provided together");
+		}
+		if (!s3.session_token().empty() && s3.key_id().empty()) {
+			return arrow::Status::Invalid("S3 session token requires a key ID and secret");
+		}
+		if (s3.url_style() != distributed::S3_URL_STYLE_UNSPECIFIED &&
+		    s3.url_style() != distributed::S3_URL_STYLE_PATH && s3.url_style() != distributed::S3_URL_STYLE_VHOST) {
+			return arrow::Status::Invalid("S3 URL style must be PATH or VHOST");
+		}
+		return arrow::Status::OK();
+	}
 	default:
 		return arrow::Status::Invalid("Object storage database must specify a storage type");
 	}
