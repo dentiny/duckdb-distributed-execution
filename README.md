@@ -300,8 +300,14 @@ and can run an extension write/read smoke test:
 ./scripts/local-rustfs.sh reset   # deletes the test data
 ```
 
-Run `make test-object-storage-rustfs` to execute the RustFS write/read smoke test followed by every SQL test under
-`test/sql`. Set `RUSTFS_TEST_BUILD_TYPE=release` to use the release build instead of the default `reldebug` build.
+Use the target matching the desired build to execute the RustFS write/read smoke test followed by every SQL test under
+`test/sql`:
+
+```bash
+make test_debug_s3
+make test_reldebug_s3
+make test_release_s3
+```
 
 The default endpoint is `127.0.0.1:19000`, bucket is `duckherder`, root prefix is `duckherder-test`, and credentials
 are `rustfsadmin`/`rustfsadmin`. The test target creates the bucket before running and writes each test database under
