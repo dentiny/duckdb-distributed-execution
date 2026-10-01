@@ -1,14 +1,10 @@
 #pragma once
 
 #include "duckdb.hpp"
-#include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
 namespace duckdb {
-
-// Forward declarations.
-struct PlanPartitionInfo;
 
 // Analyzes DuckDB logical/physical plans to extract information for distributed execution planning.
 class QueryPlanAnalyzer {
@@ -19,18 +15,14 @@ public:
 	// Returns the number of parallel tasks DuckDB would naturally create for this query.
 	idx_t QueryEstimatedParallelism(LogicalOperator &logical_plan);
 
-	// Extract partition information from physical plan.
-	// Analyzes the plan structure to get hints about intelligent partitioning.
-	PlanPartitionInfo ExtractPartitionInfo(LogicalOperator &logical_plan, idx_t num_workers);
-
 	// Extract row group information for DuckDB-aligned partitioning.
 	struct RowGroupPartitionInfo {
-		// Which row groups to scan.
-		vector<idx_t> row_group_ids;
+		// Starting rowids of actual row groups, in storage order.
+		vector<idx_t> row_group_starts;
+		// Exclusive upper rowid bound, including deleted rows.
+		idx_t rowid_end = 0;
 		// Total row groups in table.
 		idx_t total_row_groups = 0;
-		// Approximate rows per row group (typically 122,880).
-		idx_t rows_per_row_group = 0;
 		// Whether row group info is available.
 		bool valid = false;
 	};

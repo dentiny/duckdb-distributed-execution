@@ -944,9 +944,6 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 			case PartitionStrategy::ROW_GROUP_ALIGNED:
 				query_info.execution_mode = QueryExecutionMode::ROW_GROUP_PARTITION;
 				break;
-			case PartitionStrategy::NATURAL:
-				query_info.execution_mode = QueryExecutionMode::NATURAL_PARTITION;
-				break;
 			}
 			query_info.merge_strategy = exec_result.merge_strategy;
 		}

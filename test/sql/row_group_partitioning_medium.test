@@ -2,7 +2,7 @@
 # description: Test ROW GROUP-BASED partitioning with medium dataset (250K rows for faster testing)
 # group: [sql]
 
-# Partitioning method: rowid BETWEEN rg_start AND rg_end (aligned with row group boundaries)
+# Partitioning method: rowid >= rg_start AND rowid < rg_end (aligned with row group boundaries)
 # Dataset: 250,000 rows creating ~2 row groups (2x faster than 500K test)
 # Row group size: 122,880 rows/group, so 250K rows = 2 full groups + partial
 
@@ -144,6 +144,6 @@ SELECT COUNT(DISTINCT id) FROM rg_medium_table;
 # Verify execution mode.
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
-              WHERE sql LIKE '%rg_medium_table%' AND execution_mode = 'NATURAL_PARTITION');
+              WHERE sql LIKE '%rg_medium_table%' AND execution_mode = 'ROW_GROUP_PARTITION');
 ----
 true

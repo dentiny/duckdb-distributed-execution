@@ -3,7 +3,6 @@
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "server/driver/partition_sql_generator.hpp"
 #include "server/driver/plan_serializer.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
 #include "server/driver/result_merger.hpp"
@@ -20,25 +19,6 @@ namespace duckdb {
 class Connection;
 class WorkerManager;
 class LogicalOperator;
-class PhysicalOperator;
-
-// Struct to hold partition information extracted from physical plan.
-struct PlanPartitionInfo {
-	// The type of physical operator.
-	PhysicalOperatorType operator_type = PhysicalOperatorType::INVALID;
-
-	// Estimated cardinality.
-	idx_t estimated_cardinality = 0;
-
-	// Estimated parallelism from duckdb query plan analyzer.
-	idx_t estimated_parallelism = 0;
-
-	// Whether we can use intelligent partitioning for this plan.
-	bool supports_intelligent_partitioning = false;
-
-	// Used for table scans, which indicates estimated rows per partition.
-	idx_t rows_per_partition = 0;
-};
 
 // Struct which represents a distributed pipeline task.
 // This represents one unit of work that will be executed on a worker.
@@ -63,7 +43,6 @@ struct DistributedPipelineTask {
 // Partitioning strategy used for distributed execution.
 enum class PartitionStrategy {
 	NONE,              // No partitioning (single task)
-	NATURAL,           // Partitioned by natural parallelism (range or modulo based)
 	ROW_GROUP_ALIGNED, // Partitioned by DuckDB row groups
 };
 
@@ -101,7 +80,6 @@ private:
 	distributed::StorageConfig storage_config;
 
 	unique_ptr<QueryPlanAnalyzer> plan_analyzer;
-	unique_ptr<PartitionSQLGenerator> sql_generator;
 	unique_ptr<ResultMerger> result_merger;
 	unique_ptr<TaskPartitioner> task_partitioner;
 };

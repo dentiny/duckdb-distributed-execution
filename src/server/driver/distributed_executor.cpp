@@ -27,9 +27,8 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
                                          distributed::StorageConfig storage_config_p)
     : worker_manager(worker_manager_p), conn(conn_p), storage_config(std::move(storage_config_p)) {
 	plan_analyzer = make_uniq<QueryPlanAnalyzer>(conn);
-	sql_generator = make_uniq<PartitionSQLGenerator>();
 	result_merger = make_uniq<ResultMerger>(conn);
-	task_partitioner = make_uniq<TaskPartitioner>(conn, *plan_analyzer, *sql_generator);
+	task_partitioner = make_uniq<TaskPartitioner>(conn, *plan_analyzer);
 }
 
 // Distributed execution Driver implementing DuckDB's parallel execution model.
@@ -66,8 +65,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		return exec_result;
 	}
 
-	exec_result.num_workers_used = workers.size();
-
 	// Phase 1: Plan extraction and validation
 	unique_ptr<LogicalOperator> logical_plan = conn.ExtractPlan(sql);
 	if (logical_plan == nullptr) {
@@ -93,22 +90,19 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		return exec_result;
 	}
 
-	exec_result.num_tasks = tasks.size();
-
-	// Determine partition strategy based on tasks generated
+	// A delegated query already contains its final result, including aggregates.
 	if (tasks.size() == 1) {
-		// Single task - delegated to one worker
-		exec_result.partition_strategy = PartitionStrategy::NONE;
-	} else if (tasks[0].row_group_end > 0) {
-		// Tasks have row group information - row group aligned
-		exec_result.partition_strategy = PartitionStrategy::ROW_GROUP_ALIGNED;
-	} else {
-		// Multiple tasks without row group info - natural partitioning
-		exec_result.partition_strategy = PartitionStrategy::NATURAL;
+		query_analysis.merge_strategy = QueryPlanAnalyzer::MergeStrategy::CONCATENATE;
 	}
+	exec_result.merge_strategy = query_analysis.merge_strategy;
+
+	exec_result.num_tasks = tasks.size();
+	exec_result.num_workers_used = tasks.size();
+
+	exec_result.partition_strategy = tasks.size() == 1 ? PartitionStrategy::NONE : PartitionStrategy::ROW_GROUP_ALIGNED;
 
 	// Map tasks to workers using round-robin
-	// This allows M tasks to be distributed across N workers (M >= N)
+	// The partitioner creates at most one task per worker; tables with fewer row groups than workers yield M < N.
 	// Maps from worker_id -> [task_indices]
 	vector<vector<idx_t>> worker_to_tasks(workers.size());
 	for (idx_t idx = 0; idx < tasks.size(); ++idx) {

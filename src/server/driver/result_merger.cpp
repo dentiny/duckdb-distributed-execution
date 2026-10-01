@@ -175,7 +175,7 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 		while (true) {
 			auto batch_result = stream->Next();
 			if (!batch_result.ok()) {
-				break;
+				throw IOException("Failed reading worker result: %s", batch_result.status().ToString());
 			}
 
 			auto batch_with_metadata = batch_result.ValueOrDie();
@@ -209,6 +209,9 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	// In this simple case, we just return the merged collection
 	// For more complex operators (aggregates, sorts, etc.), additional
 	// finalization logic would go here (e.g., final aggregation, final sort)
+	if (!collection) {
+		collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	}
 	return make_uniq<MaterializedQueryResult>(StatementType::SELECT_STATEMENT, StatementProperties {}, names,
 	                                          std::move(collection), ClientProperties {});
 }
@@ -315,9 +318,7 @@ ResultMerger::CollectAndMergeResults(vector<std::unique_ptr<arrow::flight::Fligh
 	// Clean up temp table
 	conn.Query(StringUtil::Format("DROP TABLE IF EXISTS %s", temp_table_name));
 
-	if (final_result->HasError()) {
-		return partial_result; // Fallback to partial results
-	}
+	// Propagate final aggregation errors instead of falling back to partial results.
 	return final_result;
 }
 

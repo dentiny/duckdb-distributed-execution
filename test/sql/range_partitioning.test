@@ -1,10 +1,10 @@
 # name: test/sql/range_partitioning.test
-# description: Test RANGE-BASED partitioning - evenly divides data across workers using rowid ranges
+# description: Test partitioning a table with fewer row groups than workers
 # group: [sql]
 
-# Partitioning method: rowid BETWEEN range_start AND range_end (not aligned with row groups)
-# Dataset: 200,000 rows distributed evenly (50,000 rows per worker with 4 workers)
-# This is > 122,880 rows (1 row group) to trigger NATURAL_PARTITION mode
+# Partitioning method: half-open rowid ranges over whole row groups; a row group is never split
+# Dataset: 200,000 rows in 2 row groups, so only 2 of the 4 workers get a task
+# This is > 122,880 rows (1 row group) to trigger ROW_GROUP_PARTITION mode
 
 require duckherder
 
@@ -31,12 +31,10 @@ CREATE TABLE large_table (
     amount DECIMAL(10,2)
 );
 
-# Insert 200,000 rows to trigger intelligent range-based partitioning
+# Insert 200,000 rows to span 2 row groups
 # This ensures:
-# - Natural parallelism > 0
-# - Intelligent partitioning: YES
-# - Range-based partition predicates (rowid BETWEEN x AND y)
-# - Table size > 122,880 rows to use NATURAL_PARTITION mode
+# - Row-group-aligned partition predicates (rowid >= x AND rowid < y)
+# - Table size > 122,880 rows to use ROW_GROUP_PARTITION mode
 statement ok
 INSERT INTO large_table 
 SELECT 
@@ -65,11 +63,10 @@ statement ok
 USE dh;
 
 # Test 1: Verify partition boundary rows.
-# Expected partitioning with 4 workers and 200,000 rows:
-#   Worker 0: rowid BETWEEN 0 AND 49999       (50,000 rows)
-#   Worker 1: rowid BETWEEN 50000 AND 99999   (50,000 rows)
-#   Worker 2: rowid BETWEEN 100000 AND 149999 (50,000 rows)
-#   Worker 3: rowid BETWEEN 150000 AND 199999 (50,000 rows)
+# Expected partitioning with 4 workers and 200,000 rows (2 row groups):
+#   Worker 0: rowid >= 0 AND rowid < 122880      (row group 0)
+#   Worker 1: rowid >= 122880 AND rowid < 200000 (row group 1)
+#   Workers 2 and 3 get no task
 
 # Test rows from Worker 0 boundary
 query IIII
@@ -178,6 +175,6 @@ SELECT id, value, category FROM large_table WHERE id = 199999;
 # Verify execution mode.
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
-              WHERE sql LIKE '%large_table%' AND execution_mode = 'NATURAL_PARTITION');
+              WHERE sql LIKE '%large_table%' AND execution_mode = 'ROW_GROUP_PARTITION');
 ----
 true

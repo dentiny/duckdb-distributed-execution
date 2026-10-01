@@ -1,19 +1,17 @@
 #include "server/driver/query_plan_analyzer.hpp"
 
-#include "server/driver/distributed_executor.hpp"
-#include "server/driver/query_utils.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table/row_group_segment_tree.hpp"
 
 namespace duckdb {
-
-namespace {
-// Minimum required rows per partition to enable intelligent partition.
-constexpr idx_t MIN_ROW_PER_PARTITION_FOR_INTELLI = 100;
-} // namespace
 
 QueryPlanAnalyzer::QueryPlanAnalyzer(Connection &conn_p) : conn(conn_p) {
 }
@@ -36,69 +34,34 @@ idx_t QueryPlanAnalyzer::QueryEstimatedParallelism(LogicalOperator &logical_plan
 	return estimated_threads;
 }
 
-PlanPartitionInfo QueryPlanAnalyzer::ExtractPartitionInfo(LogicalOperator &logical_plan, idx_t num_workers) {
-	PlanPartitionInfo info;
-
-	// Wrap physical plan generation in a transaction, which mimicking DuckDB's internal behavior.
-	conn.context->RunFunctionInTransaction([&]() {
-		auto cloned_plan = logical_plan.Copy(*conn.context);
-		PhysicalPlanGenerator generator(*conn.context);
-		auto physical_plan_ptr = generator.Plan(std::move(cloned_plan));
-		auto &physical_plan = physical_plan_ptr->Root();
-
-		// Extract basic information.
-		info.operator_type = physical_plan.type;
-		info.estimated_cardinality = physical_plan.estimated_cardinality;
-		info.estimated_parallelism = physical_plan.EstimatedThreadCount();
-
-		// Analyze if we can use intelligent partitioning
-		// For now, we support intelligent partitioning for:
-		// 1. Table scans with sufficient cardinality
-		// 2. Plans where natural parallelism matches or exceeds worker count
-		if (info.estimated_cardinality > 0 && num_workers > 0) {
-			info.rows_per_partition = (info.estimated_cardinality + num_workers - 1) / num_workers;
-
-			// We can use intelligent partitioning if:
-			// - It's a table scan (most common case) OR
-			// - There's a table scan somewhere in the plan (e.g., with aggregates on top)
-			// - We have enough rows per partition (at least 100 rows per worker)
-			bool has_table_scan =
-			    (info.operator_type == PhysicalOperatorType::TABLE_SCAN) || ContainsTableScan(physical_plan);
-
-			if (has_table_scan && info.rows_per_partition >= MIN_ROW_PER_PARTITION_FOR_INTELLI) {
-				info.supports_intelligent_partitioning = true;
-			}
-		}
-	});
-
-	return info;
-}
-
 QueryPlanAnalyzer::RowGroupPartitionInfo QueryPlanAnalyzer::ExtractRowGroupInfo(LogicalOperator &logical_plan) {
 	RowGroupPartitionInfo row_group_info;
 
 	conn.context->RunFunctionInTransaction([&]() {
-		// Generate physical plan.
-		auto cloned_plan = logical_plan.Copy(*conn.context);
-		PhysicalPlanGenerator generator(*conn.context);
-		auto physical_plan_ptr = generator.Plan(std::move(cloned_plan));
-		auto &physical_plan = physical_plan_ptr->Root();
-
-		// For now, use estimated cardinality and DEFAULT_ROW_GROUP_SIZE to infer row groups.
-		if (physical_plan.estimated_cardinality > 0) {
-			// Calculate approximate number of row groups
-			// DuckDB typically uses DEFAULT_ROW_GROUP_SIZE (usually 122880) rows per row group.
-			constexpr idx_t APPROX_ROW_GROUP_SIZE = 122880;
-
-			row_group_info.total_row_groups =
-			    (physical_plan.estimated_cardinality + APPROX_ROW_GROUP_SIZE - 1) / APPROX_ROW_GROUP_SIZE;
-			row_group_info.rows_per_row_group = APPROX_ROW_GROUP_SIZE;
-
-			// If we have at least one row group, mark as valid.
-			if (row_group_info.total_row_groups > 0) {
-				row_group_info.valid = true;
-			}
+		// Find the native table scan instead of generating a physical plan to estimate row groups.
+		auto *op = &logical_plan;
+		while (op->children.size() == 1) {
+			op = op->children[0].get();
 		}
+		if (op->type != LogicalOperatorType::LOGICAL_GET) {
+			return;
+		}
+		auto table = op->Cast<LogicalGet>().GetTable();
+		if (!table || !table->IsDuckTable() || table->ColumnExists("rowid")) {
+			return;
+		}
+		// Use actual storage boundaries instead of estimated cardinality and DEFAULT_ROW_GROUP_SIZE
+		// to obtain row groups.
+		auto &storage = table->GetStorage();
+		auto row_groups = storage.GetRowGroupCollection()->GetRowGroups();
+		for (auto segment = row_groups->GetRootSegment(); segment; segment = row_groups->GetNextSegment(*segment)) {
+			row_group_info.row_group_starts.push_back(segment->GetRowStart());
+			row_group_info.rowid_end = segment->GetRowEnd();
+		}
+		// Calculate the number of row groups from storage metadata.
+		row_group_info.total_row_groups = row_group_info.row_group_starts.size();
+		// Mark native storage metadata as valid, including an empty table with no row groups.
+		row_group_info.valid = true;
 	});
 
 	return row_group_info;

@@ -80,26 +80,26 @@ SELECT COUNT(*) FROM group_by_table WHERE id > 100000;
 99999
 
 # Verify distributed execution happened with correct mode
-# With 200K rows and 4 workers, should use NATURAL_PARTITION (range-based)
+# With 200K rows (2 row groups) and 4 workers, should use ROW_GROUP_PARTITION
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
               WHERE sql LIKE '%group_by_table%'
-              AND execution_mode = 'NATURAL_PARTITION');
+              AND execution_mode = 'ROW_GROUP_PARTITION');
 ----
 true
 
-# Verify 4 workers were used
+# Verify only workers with row-group tasks were used
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
               WHERE sql LIKE '%group_by_table%'
-              AND num_workers_used = 4);
+              AND num_workers_used = 2);
 ----
 true
 
-# Verify multiple tasks were generated (should be 4 or more)
+# Verify one task per row group; a row group is never split across workers
 query I
 SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats() 
               WHERE sql LIKE '%group_by_table%'
-              AND num_tasks_generated >= 4);
+              AND num_tasks_generated = 2);
 ----
 true
