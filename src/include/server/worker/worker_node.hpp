@@ -61,6 +61,9 @@ private:
 
 	concurrency::mutex object_storage_mutex;
 	// Keyed by serialized storage configuration. Instances stay attached for the worker's lifetime.
+	//
+	// TODO(hjiang): Evict an instance when the final client detaches. Worker-lifetime caches retain resources, and
+	// their read-only snapshots do not see later writes.
 	unordered_map<string, unique_ptr<ObjectStorageDatabase>>
 	    object_storage_databases DUCKDB_GUARDED_BY(object_storage_mutex);
 };
