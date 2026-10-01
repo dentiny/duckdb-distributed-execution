@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <grpcpp/server_builder.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -46,14 +45,6 @@ int GetAvailablePort(int start_port) {
 
 	// No available port found
 	return -1;
-}
-
-void DisablePortSharing(arrow::flight::FlightServerOptions &options) {
-	// gRPC enables SO_REUSEPORT by default, which lets a second server bind the same port and receive some of its
-	// connections.
-	options.builder_hook = [](void *raw_builder) {
-		static_cast<grpc::ServerBuilder *>(raw_builder)->AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
-	};
 }
 
 } // namespace duckdb

@@ -17,7 +17,7 @@ CREATE TABLE dh.t AS SELECT 'x' || i::VARCHAR AS s FROM range(10) t(i);
 statement error
 SELECT sum(CAST(s AS INTEGER)) FROM dh.t;
 ----
-IO Error: Distributed table scan error: Invalid: Query error: Conversion Error: Could not convert string 'x
+Distributed table scan error: Invalid: Query error: Conversion Error: Could not convert string 'x
 
 query I
 SELECT count(*) FROM dh.t;

@@ -166,7 +166,7 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
 	auto status = GetClient(lock).ScanTable(table_name, limit, offset, batches);
 	if (!status.ok()) {
-		return MakeErrorResult(ErrorData(ExceptionType::IO, status.ToString()));
+		return MakeErrorResult(status.ToString());
 	}
 	auto schema = batches.empty() ? nullptr : batches[0]->schema();
 	return MakeArrowResult(GetArrowContext(lock), StatementType::SELECT_STATEMENT, batches, schema, expected_types);
