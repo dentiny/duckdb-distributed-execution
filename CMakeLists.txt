@@ -114,7 +114,8 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/worker_fragment_pushdown.cpp
     src/server/driver/worker_manager.cpp)
 
-set(SERVER_WORKER_SOURCES src/server/worker/worker_node.cpp)
+set(SERVER_WORKER_SOURCES src/server/worker/row_group_range_scan.cpp
+                          src/server/worker/worker_node.cpp)
 
 set(EXTENSION_SOURCES
     ${PROTO_SRCS} # Generated protobuf sources
