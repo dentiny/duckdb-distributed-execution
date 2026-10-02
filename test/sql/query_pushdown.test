@@ -108,6 +108,28 @@ SELECT count(*) AS setting_query FROM dh.orders;
 statement ok
 RESET default_null_order;
 
+statement ok
+SET old_implicit_casting = true;
+
+query I
+SELECT count(*) AS implicit_cast_query FROM dh.orders;
+----
+100
+
+statement ok
+RESET old_implicit_casting;
+
+statement ok
+SET order_by_non_integer_literal = true;
+
+query I
+SELECT count(*) AS literal_order_query FROM dh.orders;
+----
+100
+
+statement ok
+RESET order_by_non_integer_literal;
+
 query I
 SELECT dh.orders.id AS qualified_query FROM dh.orders WHERE id = 1;
 ----
@@ -132,7 +154,7 @@ SELECT count(*) AS type_query FROM dh.customers WHERE 'a'::local_mood = 'a';
 query I
 SELECT count(*) FROM duckherder_get_query_execution_stats()
 WHERE sql SIMILAR TO
-    '.*(local_join|view_query|macro_query|variable_query|tz_query|setting_query|qualified_query|sequence_query|type_query).*';
+    '.*(local_join|view_query|macro_query|variable_query|tz_query|setting_query|implicit_cast_query|literal_order_query|qualified_query|sequence_query|type_query).*';
 ----
 0
 

@@ -68,6 +68,18 @@ bool HasDefaultQuerySettings(ClientContext &context) {
 	    StringUtil::Equals(ScalarSubqueryErrorOnMultipleRowsSetting::DefaultValue, "true")) {
 		return false;
 	}
+	if (Settings::Get<OldImplicitCastingSetting>(context) !=
+	    StringUtil::Equals(OldImplicitCastingSetting::DefaultValue, "true")) {
+		return false;
+	}
+	if (Settings::Get<OrderByNonIntegerLiteralSetting>(context) !=
+	    StringUtil::Equals(OrderByNonIntegerLiteralSetting::DefaultValue, "true")) {
+		return false;
+	}
+	if (Settings::Get<DeprecatedUsingKeySyntaxSetting>(context) !=
+	    EnumUtil::FromString<DeprecatedUsingKeySyntax>(DeprecatedUsingKeySyntaxSetting::DefaultValue)) {
+		return false;
+	}
 	return true;
 }
 
