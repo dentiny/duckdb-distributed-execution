@@ -14,6 +14,7 @@
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "query_common.hpp"
+#include "server/driver/worker_fragment_pushdown.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "transaction_constants.hpp"
@@ -910,8 +911,18 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
 
-	// Read-only clients may share a read-write instance with the database's writer.
-	if (registration.role != distributed::CLIENT_ROLE_READ_WRITE) {
+	// Start tracking query execution
+	QueryExecutionInfo query_info;
+	query_info.sql = sql;
+	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
+	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
+
+	// The driver plans the query, running its single-table fragments on workers when possible.
+	unique_ptr<QueryResult> result;
+	if (registration.role == distributed::CLIENT_ROLE_READ_WRITE) {
+		result = registration.connection->Query(sql);
+	} else {
+		// Read-only clients may share a read-write instance with the database's writer.
 		auto prepared = registration.connection->Prepare(sql);
 		if (prepared->HasError()) {
 			return arrow::Status::Invalid("Query error: " + prepared->GetError());
@@ -919,62 +930,21 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		if (!prepared->GetStatementProperties().IsReadOnly()) {
 			return arrow::Status::Invalid("Duckherder client is read-only");
 		}
-	}
-
-	// Start tracking query execution
-	QueryExecutionInfo query_info;
-	query_info.sql = sql;
-	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
-	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
-
-	// Try distributed execution first if workers are available.
-	unique_ptr<QueryResult> result;
-	bool distributed = false;
-	if (registration.distributed_executor != nullptr && worker_manager != nullptr &&
-	    worker_manager->GetWorkerCount() > 0) {
-		auto exec_result = registration.distributed_executor->ExecuteDistributed(sql);
-
-		if (exec_result.result != nullptr || exec_result.arrow_schema != nullptr) {
-			// Query was executed in distributed mode
-			distributed = true;
-			result = std::move(exec_result.result);
-			schema = std::move(exec_result.arrow_schema);
-			batches = std::move(exec_result.arrow_batches);
-			query_info.num_workers_used = exec_result.num_workers_used;
-			query_info.num_tasks_generated = exec_result.num_tasks;
-
-			// Map partition strategy to execution mode
-			switch (exec_result.partition_strategy) {
-			case PartitionStrategy::NONE:
-				query_info.execution_mode = QueryExecutionMode::DELEGATED;
-				break;
-			case PartitionStrategy::ROW_GROUP_ALIGNED:
-				query_info.execution_mode = QueryExecutionMode::ROW_GROUP_PARTITION;
-				break;
-			}
-			query_info.merge_strategy = exec_result.merge_strategy;
-		}
-	}
-
-	// Fall back to local execution if not distributed.
-	if (!distributed) {
-		result = registration.connection->Query(sql);
-		query_info.execution_mode = QueryExecutionMode::LOCAL;
-		query_info.num_workers_used = 0;
-		query_info.num_tasks_generated = 0;
+		vector<Value> parameters;
+		result = prepared->Execute(parameters, /*allow_stream_result=*/false);
 	}
 
 	// Calculate total query duration (using steady_clock for accurate elapsed time)
 	auto query_end = std::chrono::steady_clock::now();
 	query_info.query_duration = std::chrono::duration_cast<std::chrono::milliseconds>(query_end - query_start);
 
-	// Record all successful query executions (both distributed and local)
+	if (registration.worker_fragments != nullptr) {
+		for (auto &fragment_info : registration.worker_fragments->TakeExecutions()) {
+			RecordQueryExecution(std::move(fragment_info));
+		}
+	}
 	RecordQueryExecution(std::move(query_info));
 
-	// Worker batches are already in the response format.
-	if (result == nullptr) {
-		return arrow::Status::OK();
-	}
 	if (result->HasError()) {
 		return arrow::Status::Invalid("Query error: " + result->GetError());
 	}

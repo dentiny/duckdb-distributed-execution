@@ -1,0 +1,125 @@
+# name: test/sql/query_pushdown.test
+# description: Queries reading only remote tables run on the server as a whole, unless they depend on client state
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8871, 2);
+
+statement ok
+ATTACH 'localhost:8871' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.orders (id INTEGER, customer_id INTEGER, amount INTEGER, ts TIMESTAMPTZ);
+
+statement ok
+INSERT INTO dh.orders
+SELECT i, i % 10, i, (TIMESTAMP '2024-01-01' + INTERVAL (i) HOUR)::TIMESTAMPTZ FROM range(100) t(i);
+
+statement ok
+CREATE TABLE dh.customers (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO dh.customers SELECT i, 'c' || i FROM range(10) t(i);
+
+# Each query carries a marker alias, which only appears in server stats if the whole query was pushed down.
+query II
+SELECT c.name AS pushed_join, sum(o.amount) FROM dh.orders o JOIN dh.customers c ON o.customer_id = c.id
+GROUP BY c.name ORDER BY c.name LIMIT 2;
+----
+c0	450
+c1	460
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%pushed_join%JOIN%';
+----
+1
+
+# CTE names stay unqualified, so the server resolves them to the same CTE.
+query I
+WITH big AS (SELECT * FROM dh.orders WHERE amount >= 90) SELECT count(*) AS pushed_cte FROM big;
+----
+10
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%pushed_cte%';
+----
+1
+
+# The server returns a large ordered result in many batches, which the client keeps in order.
+statement ok
+CREATE TABLE dh.numbers AS SELECT i FROM range(100000) t(i);
+
+query I
+SELECT i AS pushed_order FROM dh.numbers ORDER BY i DESC;
+----
+100000 values hashing to 6a720b227e361303445c41f7ff4a8109
+
+# Queries depending on client state stay on the client.
+statement ok
+CREATE TABLE local_ids AS SELECT 1 AS id;
+
+query I
+SELECT count(*) AS local_join FROM dh.orders o JOIN local_ids l ON o.id = l.id;
+----
+1
+
+statement ok
+CREATE VIEW big_orders AS SELECT * FROM dh.orders WHERE amount >= 90;
+
+query I
+SELECT count(*) AS view_query FROM big_orders;
+----
+10
+
+statement ok
+CREATE TEMP MACRO double_it(x) AS x * 2;
+
+query I
+SELECT max(double_it(amount)) AS macro_query FROM dh.orders;
+----
+198
+
+statement ok
+SET VARIABLE min_amount = 95;
+
+query I
+SELECT count(*) AS variable_query FROM dh.orders WHERE amount >= getvariable('min_amount');
+----
+5
+
+# The client's TimeZone, which the server lacks, decides how a TIMESTAMPTZ literal is read.
+query I
+SELECT count(*) AS tz_query FROM dh.orders WHERE ts < TIMESTAMPTZ '2024-01-02 00:00:00+00';
+----
+24
+
+statement ok
+SET default_null_order = 'nulls_first';
+
+query I
+SELECT count(*) AS setting_query FROM dh.orders;
+----
+100
+
+statement ok
+RESET default_null_order;
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql SIMILAR TO '.*(local_join|view_query|macro_query|variable_query|tz_query|setting_query).*';
+----
+0
+
+# SUMMARIZE names its table without a table reference, so it stays on the client.
+statement ok
+SUMMARIZE dh.customers;
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

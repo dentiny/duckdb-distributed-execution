@@ -16,9 +16,9 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
-#include "duckdb/planner/filter/list.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "utils/catalog_utils.hpp"
+#include "utils/sql_render_utils.hpp"
 
 namespace duckdb {
 
@@ -93,56 +93,6 @@ string GetRemoteColumn(const DistributedTableScanBindData &bind_data, column_t c
 	return GetScanColumn(bind_data, bind_data.table.GetVirtualColumns(), column_id, type);
 }
 
-bool SupportsRemoteFilterPushdown(const LogicalType &type) {
-	return type.id() != LogicalTypeId::ENUM && !type.HasAlias() && !type.IsNested();
-}
-
-string RemoteFilterToSQL(const TableFilter &filter, const string &column) {
-	switch (filter.filter_type) {
-	case TableFilterType::CONSTANT_COMPARISON: {
-		auto &constant_filter = filter.Cast<ConstantFilter>();
-		auto &constant = constant_filter.constant;
-		// A typed literal makes the server compare with the column type, e.g. FLOAT instead of DECIMAL.
-		return StringUtil::Format("%s %s CAST(%s AS %s)", column,
-		                          ExpressionTypeToOperator(constant_filter.comparison_type), constant.ToSQLString(),
-		                          constant.type().ToString());
-	}
-	case TableFilterType::IS_NULL:
-		return StringUtil::Format("%s IS NULL", column);
-	case TableFilterType::IS_NOT_NULL:
-		return StringUtil::Format("%s IS NOT NULL", column);
-	case TableFilterType::CONJUNCTION_AND: {
-		vector<string> predicates;
-		for (auto &child : filter.Cast<ConjunctionAndFilter>().child_filters) {
-			auto predicate = RemoteFilterToSQL(*child, column);
-			if (!predicate.empty()) {
-				predicates.emplace_back(std::move(predicate));
-			}
-		}
-		if (predicates.empty()) {
-			return "";
-		}
-		return StringUtil::Format("(%s)", StringUtil::Join(predicates, " AND "));
-	}
-	case TableFilterType::CONJUNCTION_OR: {
-		vector<string> predicates;
-		for (auto &child : filter.Cast<ConjunctionOrFilter>().child_filters) {
-			auto predicate = RemoteFilterToSQL(*child, column);
-			// An optional branch accepts every row, and so does the whole disjunction.
-			if (predicate.empty()) {
-				return "";
-			}
-			predicates.emplace_back(std::move(predicate));
-		}
-		return StringUtil::Format("(%s)", StringUtil::Join(predicates, " OR "));
-	}
-	case TableFilterType::OPTIONAL_FILTER:
-		return "";
-	default:
-		throw InternalException("Distributed table scan cannot push down table filter %s", filter.ToString(column));
-	}
-}
-
 namespace {
 
 bool DistributedTableScanSupportsPushdownType(const FunctionData &bind_data_p, idx_t column_id) {
@@ -212,8 +162,19 @@ struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
 	// The claimed batch, converted to DuckDB vectors and emitted one vector at a time.
 	unique_ptr<DataChunk> batch;
+	idx_t batch_index = 0;
 	idx_t batch_offset = 0;
 };
+
+namespace {
+
+// Batch indexes let DuckDB preserve the remote result order, e.g. of a pushed-down ORDER BY, across threads.
+OperatorPartitionData DistributedTableScanGetPartitionData(ClientContext &context,
+                                                           TableFunctionGetPartitionInput &input) {
+	return OperatorPartitionData(input.local_state->Cast<DistributedTableScanLocalState>().batch_index);
+}
+
+} // namespace
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
 	auto result = make_uniq<DistributedTableScanBindData>(table, server_url, remote_table_name);
@@ -239,6 +200,7 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	function.serialize = SerializeDistributedTableScan;
 	function.deserialize = DeserializeDistributedTableScan;
 	function.get_virtual_columns = GetDistributedTableScanVirtualColumns;
+	function.get_partition_data = DistributedTableScanGetPartitionData;
 	return function;
 }
 
@@ -307,6 +269,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		auto batch = std::move(global_state.batches[batch_idx]);
 		local_state.batch = make_uniq<DataChunk>();
 		ArrowRecordBatchToDataChunk(context, *batch, *local_state.batch, &global_state.expected_types);
+		local_state.batch_index = batch_idx;
 		local_state.batch_offset = 0;
 	}
 
@@ -317,8 +280,8 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 		if (global_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
 			continue;
 		}
-		VectorOperations::Copy(local_state.batch->data[col_idx], output.data[col_idx],
-		                       local_state.batch_offset + count, local_state.batch_offset, /*target_offset=*/0);
+		VectorOperations::Copy(local_state.batch->data[col_idx], output.data[col_idx], local_state.batch_offset + count,
+		                       local_state.batch_offset, /*target_offset=*/0);
 	}
 	local_state.batch_offset += count;
 }

@@ -135,6 +135,6 @@ SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k
 
 query I
 SELECT num_tasks_generated FROM duckherder_get_query_execution_stats()
-WHERE sql LIKE '%avg(%avg(%';
+WHERE sql LIKE 'SELECT "%"(id, %avg(%avg(%';
 ----
 2

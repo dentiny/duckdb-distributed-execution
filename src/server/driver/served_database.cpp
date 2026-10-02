@@ -1,6 +1,10 @@
 #include "server/driver/served_database.hpp"
 
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/connection.hpp"
+#include "duckdb/main/database.hpp"
 #include "server/driver/client_registration.hpp"
+#include "server/driver/worker_fragment_pushdown.hpp"
 #include "server/object_storage_database.hpp"
 
 namespace duckdb {
@@ -20,13 +24,27 @@ arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distribu
 			return database_result.status();
 		}
 		database = std::move(database_result).ValueOrDie();
+		auto &db_config = DBConfig::GetConfig(*database->GetInstance().instance);
+		// Compressed materialization rewrites aggregates with internal functions, which worker fragments cannot call.
+		db_config.options.disabled_optimizers.insert(OptimizerType::COMPRESSED_MATERIALIZATION);
+		OptimizerExtension::Register(db_config, GetWorkerFragmentExtension());
 	}
 	auto connection_result = database->Connect();
 	if (!connection_result.ok()) {
 		return connection_result.status();
 	}
-	auto registration = make_shared_ptr<ClientRegistration>(*database, std::move(connection_result).ValueOrDie(),
-	                                                        worker_manager, role, config);
+	// In-memory storage is private to this control-node instance. Shared-storage readers can use worker snapshots.
+	unique_ptr<Connection> executor_connection;
+	if (!writable && config.storage_case() != distributed::StorageConfig::kInMemory) {
+		auto executor_connection_result = database->Connect();
+		if (!executor_connection_result.ok()) {
+			return executor_connection_result.status();
+		}
+		executor_connection = std::move(executor_connection_result).ValueOrDie();
+	}
+	auto registration =
+	    make_shared_ptr<ClientRegistration>(*database, std::move(connection_result).ValueOrDie(),
+	                                        std::move(executor_connection), worker_manager, role, config);
 	if (writable) {
 		has_writer = true;
 	} else {

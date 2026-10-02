@@ -12,6 +12,10 @@ SELECT duckherder_start_local_server(8867, 2);
 statement ok
 ATTACH 'localhost:8867' AS dh (TYPE duckherder);
 
+# Keeps queries on the client, which pushes down only their scans.
+statement ok
+SET duckherder_query_pushdown = false;
+
 statement ok
 CREATE TYPE dh.mood AS ENUM ('sad', 'ok', 'happy');
 

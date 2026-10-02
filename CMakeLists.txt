@@ -47,13 +47,15 @@ endif()
 set(UTIL_SOURCES
     src/utils/catalog_utils.cpp src/utils/network_utils.cpp
     src/utils/remote_error.cpp src/utils/retry_utils.cpp
-    src/utils/thread_utils.cpp src/utils/time_utils.cpp)
+    src/utils/sql_render_utils.cpp src/utils/thread_utils.cpp
+    src/utils/time_utils.cpp)
 
 set(CLIENT_EXECUTION_SOURCES
     src/client/execution/distributed_aggregate_pushdown.cpp
     src/client/execution/distributed_alter_table.cpp
     src/client/execution/distributed_client.cpp
     src/client/execution/distributed_create_index.cpp
+    src/client/execution/distributed_query_pushdown.cpp
     src/client/execution/distributed_table_scan_function.cpp
     src/client/execution/logical_remote_alter_table.cpp
     src/client/execution/logical_remote_create_index.cpp
@@ -96,6 +98,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/result_merger.cpp
     src/server/driver/served_database.cpp
     src/server/driver/task_partitioner.cpp
+    src/server/driver/worker_fragment_pushdown.cpp
     src/server/driver/worker_manager.cpp)
 
 set(SERVER_WORKER_SOURCES src/server/worker/worker_node.cpp)

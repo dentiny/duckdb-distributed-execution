@@ -8,7 +8,6 @@ namespace duckdb {
 
 // Forward declaration.
 class TableCatalogEntry;
-class TableFilter;
 
 struct DistributedTableScanBindData : public TableFunctionData {
 	explicit DistributedTableScanBindData(TableCatalogEntry &table_p, string server_url_p, string remote_table_name_p)
@@ -29,14 +28,6 @@ struct DistributedTableScanBindData : public TableFunctionData {
 
 // Returns the quoted remote name and type of a physical or virtual table column.
 string GetRemoteColumn(const DistributedTableScanBindData &bind_data, column_t column_id, LogicalType &type);
-
-// ENUMs order by declaration but would compare as strings against a remote literal, and aliased or nested types may
-// not render as valid remote SQL. Filters on these columns are evaluated locally instead.
-bool SupportsRemoteFilterPushdown(const LogicalType &type);
-
-// Translates a table filter into a SQL predicate on `column`.
-// Returns an empty string for optional filters, which only prune data and are not needed for correctness.
-string RemoteFilterToSQL(const TableFilter &filter, const string &column);
 
 // The distributed table scan function that replaces regular table scans.
 class DistributedTableScanFunction {

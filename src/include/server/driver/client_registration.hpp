@@ -24,13 +24,16 @@ class Connection;
 class DistributedExecutor;
 class DuckDB;
 class ObjectStorageDatabase;
+class WorkerFragmentState;
 class WorkerManager;
 
 enum class ClientRequestTransport : uint8_t { NONE, ACTION, DO_GET, DO_PUT };
 
 // Owns the Control Node resources and bounded transaction replay state for one registered client.
 struct ClientRegistration {
-	ClientRegistration(ObjectStorageDatabase &db, unique_ptr<Connection> connection_p, WorkerManager &worker_manager,
+	// Queries run locally when `executor_connection_p` is null.
+	ClientRegistration(ObjectStorageDatabase &db, unique_ptr<Connection> connection_p,
+	                   unique_ptr<Connection> executor_connection_p, WorkerManager &worker_manager,
 	                   distributed::ClientRole role_p, const distributed::StorageConfig &storage_config);
 	~ClientRegistration();
 
@@ -45,8 +48,10 @@ struct ClientRegistration {
 	concurrency::mutex connection_mutex;
 	// Dedicated DuckDB session for this registered client.
 	unique_ptr<Connection> connection DUCKDB_GUARDED_BY(connection_mutex);
-	// Distributed execution components bound to this client's DuckDB session; null when queries must run locally.
+	// Distributed execution components for fragments of this client's queries; null when queries must run locally.
+	unique_ptr<Connection> executor_connection DUCKDB_GUARDED_BY(connection_mutex);
 	unique_ptr<DistributedExecutor> distributed_executor DUCKDB_GUARDED_BY(connection_mutex);
+	shared_ptr<WorkerFragmentState> worker_fragments DUCKDB_GUARDED_BY(connection_mutex);
 	// One connection has at most one active transaction. The finished watermark and its outcome make retries
 	// idempotent with constant memory; older outcomes no longer need to be replayed after a newer transaction
 	// starts.

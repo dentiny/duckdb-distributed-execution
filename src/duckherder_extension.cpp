@@ -1,6 +1,7 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "client/execution/distributed_aggregate_pushdown.hpp"
+#include "client/execution/distributed_query_pushdown.hpp"
 #include "client/execution/logical_remote_alter_table.hpp"
 #include "client/execution/logical_remote_create_index.hpp"
 #include "duckdb.hpp"
@@ -20,7 +21,11 @@ void LoadInternal(ExtensionLoader &loader) {
 	StorageExtension::Register(config, "duckherder", make_shared_ptr<DuckherderStorageExtension>());
 	OperatorExtension::Register(config, GetRemoteAlterTableOperatorExtension());
 	OperatorExtension::Register(config, GetRemoteCreateIndexOperatorExtension());
+	// Whole queries are pushed down first; aggregates are pushed down only from queries that stay on the client.
+	OptimizerExtension::Register(config, GetDistributedQueryPushdownExtension());
 	OptimizerExtension::Register(config, GetDistributedAggregatePushdownExtension());
+	config.AddExtensionOption(QUERY_PUSHDOWN_SETTING, "Push whole queries reading only remote tables to the server",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	config.AddExtensionOption(RETRY_MAX_ATTEMPTS_SETTING, "Maximum number of attempts for retryable Duckherder RPCs",
 	                          LogicalType::UBIGINT, Value::UBIGINT(DEFAULT_RETRY_MAX_ATTEMPTS), nullptr,
 	                          SetScope::GLOBAL);
