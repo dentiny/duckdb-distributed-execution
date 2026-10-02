@@ -173,6 +173,12 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	                       expected_types);
 }
 
+arrow::Status DistributedClient::ScanTableBatches(const string &sql,
+                                                  vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
+	DistributedClientLock lock(*this);
+	return GetClient(lock).ScanTable(sql, NO_QUERY_LIMIT, NO_QUERY_OFFSET, batches);
+}
+
 bool DistributedClient::TableExists(const string &table_name) {
 	DistributedClientLock lock(*this);
 	bool exists = false;

@@ -62,6 +62,9 @@ public:
 	                                  idx_t offset = NO_QUERY_OFFSET,
 	                                  const vector<LogicalType> *expected_types = nullptr);
 
+	// Get the Arrow batches of a remote query result, leaving their conversion to the caller.
+	arrow::Status ScanTableBatches(const string &sql, vector<std::shared_ptr<arrow::RecordBatch>> &batches);
+
 	// Get query execution statistics from the server.
 	// Returns error QueryResult on failure.
 	unique_ptr<QueryResult> GetQueryExecutionStats(vector<QueryExecutionStatsEntry> &stats_out);

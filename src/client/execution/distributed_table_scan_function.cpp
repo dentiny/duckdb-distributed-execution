@@ -1,10 +1,12 @@
 #include "client/execution/distributed_table_scan_function.hpp"
 
+#include "arrow_utils.hpp"
 #include "client/duckherder_catalog.hpp"
 #include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -195,21 +197,22 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 } // namespace
 
 struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
-	DistributedTableScanGlobalState() : finished(false) {
+	idx_t MaxThreads() const override {
+		return MaxValue<idx_t>(batches.size(), 1);
 	}
-	bool finished;
+
+	vector<column_t> column_ids;
+	// Expected types come from the table schema to handle special types like ENUM.
+	vector<LogicalType> expected_types;
+	// The whole remote scan result, fetched once. Each batch is converted by the thread that claims it.
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	atomic<idx_t> next_batch {0};
 };
 
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
-	DistributedTableScanLocalState() : finished(false) {
-	}
-	bool finished;
-	vector<column_t> column_ids;
-	string scan_sql;
-	// Expected types come from the table schema to handle special types like ENUM.
-	vector<LogicalType> expected_types;
-	// The whole remote scan result, fetched once and drained one chunk per Execute call.
-	unique_ptr<QueryResult> result;
+	// The claimed batch, converted to DuckDB vectors and emitted one vector at a time.
+	unique_ptr<DataChunk> batch;
+	idx_t batch_offset = 0;
 };
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
@@ -250,75 +253,74 @@ unique_ptr<FunctionData> DistributedTableScanFunction::Bind(ClientContext &conte
 
 unique_ptr<GlobalTableFunctionState> DistributedTableScanFunction::InitGlobal(ClientContext &context,
                                                                               TableFunctionInitInput &input) {
-	return make_uniq<DistributedTableScanGlobalState>();
+	auto &bind_data = input.bind_data->Cast<DistributedTableScanBindData>();
+	auto global_state = make_uniq<DistributedTableScanGlobalState>();
+	string scan_sql;
+	if (!bind_data.pushed_query.empty()) {
+		global_state->column_ids = input.column_ids;
+		scan_sql = bind_data.pushed_query;
+		global_state->expected_types = bind_data.pushed_types;
+	} else {
+		if (!input.projection_ids.empty()) {
+			// With filter pruning, the output follows `projection_ids`, which may reorder or drop filter-only columns.
+			for (auto projection_id : input.projection_ids) {
+				global_state->column_ids.emplace_back(input.column_ids[projection_id]);
+			}
+		} else {
+			global_state->column_ids = input.column_ids;
+		}
+		if (global_state->column_ids.empty()) {
+			for (idx_t col_idx = 0; col_idx < bind_data.table.GetColumns().LogicalColumnCount(); ++col_idx) {
+				global_state->column_ids.emplace_back(col_idx);
+			}
+		}
+		// Filters include join filters pushed from the build side, which are only known once the scan starts.
+		scan_sql = BuildScanSQL(bind_data, global_state->column_ids, input.column_ids, input.filters,
+		                        global_state->expected_types);
+	}
+
+	auto &client = GetDistributedClient(context, bind_data.table);
+	auto status = client.ScanTableBatches(scan_sql, global_state->batches);
+	if (!status.ok()) {
+		throw IOException("Distributed table scan error: %s", status.ToString());
+	}
+	return std::move(global_state);
 }
 
 unique_ptr<LocalTableFunctionState> DistributedTableScanFunction::InitLocal(ExecutionContext &context,
                                                                             TableFunctionInitInput &input,
                                                                             GlobalTableFunctionState *global_state) {
-	auto &bind_data = input.bind_data->Cast<DistributedTableScanBindData>();
-	auto local_state = make_uniq<DistributedTableScanLocalState>();
-	if (!bind_data.pushed_query.empty()) {
-		local_state->column_ids = input.column_ids;
-		local_state->scan_sql = bind_data.pushed_query;
-		local_state->expected_types = bind_data.pushed_types;
-		return std::move(local_state);
-	}
-	if (!input.projection_ids.empty()) {
-		// With filter pruning, the output follows `projection_ids`, which may reorder or drop filter-only columns.
-		for (auto projection_id : input.projection_ids) {
-			local_state->column_ids.emplace_back(input.column_ids[projection_id]);
-		}
-	} else {
-		local_state->column_ids = input.column_ids;
-	}
-	if (local_state->column_ids.empty()) {
-		for (idx_t col_idx = 0; col_idx < bind_data.table.GetColumns().LogicalColumnCount(); ++col_idx) {
-			local_state->column_ids.emplace_back(col_idx);
-		}
-	}
-	// Filters include join filters pushed from the build side, which are only known once the scan starts.
-	local_state->scan_sql =
-	    BuildScanSQL(bind_data, local_state->column_ids, input.column_ids, input.filters, local_state->expected_types);
-	return std::move(local_state);
+	return make_uniq<DistributedTableScanLocalState>();
 }
 
 void DistributedTableScanFunction::Execute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &bind_data = data.bind_data->Cast<DistributedTableScanBindData>();
+	auto &global_state = data.global_state->Cast<DistributedTableScanGlobalState>();
 	auto &local_state = data.local_state->Cast<DistributedTableScanLocalState>();
 
-	if (local_state.finished) {
-		output.SetCardinality(0);
-		return;
-	}
-
-	if (!local_state.result) {
-		// Paging with LIMIT/OFFSET re-reads the remaining table per chunk and has no stable row order.
-		auto &client = GetDistributedClient(context, bind_data.table);
-		local_state.result =
-		    client.ScanTable(local_state.scan_sql, NO_QUERY_LIMIT, NO_QUERY_OFFSET, &local_state.expected_types);
-		if (local_state.result->HasError()) {
-			local_state.result->ThrowError("Distributed table scan error: ");
+	while (!local_state.batch || local_state.batch_offset == local_state.batch->size()) {
+		auto batch_idx = global_state.next_batch++;
+		if (batch_idx >= global_state.batches.size()) {
+			output.SetCardinality(0);
+			return;
 		}
-	}
-
-	auto data_chunk = local_state.result->Fetch();
-	// No more data, and mark as finished.
-	if (data_chunk == nullptr || data_chunk->size() == 0) {
-		output.SetCardinality(0);
-		local_state.finished = true;
-		return;
+		// Only this thread claims the batch, so it can release the Arrow copy once converted.
+		auto batch = std::move(global_state.batches[batch_idx]);
+		local_state.batch = make_uniq<DataChunk>();
+		ArrowRecordBatchToDataChunk(context, *batch, *local_state.batch, &global_state.expected_types);
+		local_state.batch_offset = 0;
 	}
 
 	// The remote query already returns the projected columns in output order.
-	output.SetCardinality(data_chunk->size());
-	for (idx_t col_idx = 0; col_idx < output.ColumnCount() && col_idx < data_chunk->ColumnCount(); ++col_idx) {
-		if (local_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
+	auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, local_state.batch->size() - local_state.batch_offset);
+	output.SetCardinality(count);
+	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
+		if (global_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
 			continue;
 		}
-		VectorOperations::Copy(data_chunk->data[col_idx], output.data[col_idx], data_chunk->size(),
-		                       /*source_offset=*/0, /*target_offset=*/0);
+		VectorOperations::Copy(local_state.batch->data[col_idx], output.data[col_idx],
+		                       local_state.batch_offset + count, local_state.batch_offset, /*target_offset=*/0);
 	}
+	local_state.batch_offset += count;
 }
 
 } // namespace duckdb
