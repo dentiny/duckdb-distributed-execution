@@ -15,7 +15,6 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "utils/catalog_utils.hpp"
 #include "utils/sql_render_utils.hpp"
@@ -72,25 +71,10 @@ virtual_column_map_t GetDistributedTableScanVirtualColumns(ClientContext &contex
 	return bind_data->Cast<DistributedTableScanBindData>().table.GetVirtualColumns();
 }
 
-string GetScanColumn(const DistributedTableScanBindData &bind_data, const virtual_column_map_t &virtual_columns,
-                     column_t column_id, LogicalType &type) {
-	if (IsVirtualColumn(column_id)) {
-		auto entry = virtual_columns.find(column_id);
-		if (entry == virtual_columns.end()) {
-			throw InternalException("Distributed table scan received unregistered virtual column %llu", column_id);
-		}
-		type = entry->second.type;
-		return KeywordHelper::WriteOptionallyQuoted(entry->second.name);
-	}
-	auto &column = bind_data.table.GetColumn(LogicalIndex(column_id));
-	type = column.Type();
-	return KeywordHelper::WriteOptionallyQuoted(column.Name());
-}
-
 } // namespace
 
 string GetRemoteColumn(const DistributedTableScanBindData &bind_data, column_t column_id, LogicalType &type) {
-	return GetScanColumn(bind_data, bind_data.table.GetVirtualColumns(), column_id, type);
+	return GetColumnSQL(bind_data.table, bind_data.table.GetVirtualColumns(), column_id, type);
 }
 
 namespace {
@@ -116,7 +100,7 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 			continue;
 		}
 		LogicalType type;
-		select_list.emplace_back(GetScanColumn(bind_data, virtual_columns, column_id, type));
+		select_list.emplace_back(GetColumnSQL(bind_data.table, virtual_columns, column_id, type));
 		types.emplace_back(std::move(type));
 	}
 	auto sql =
@@ -128,7 +112,7 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 	vector<string> predicates;
 	for (auto &entry : filters->filters) {
 		LogicalType type;
-		auto column = GetScanColumn(bind_data, virtual_columns, filter_column_ids[entry.first], type);
+		auto column = GetColumnSQL(bind_data.table, virtual_columns, filter_column_ids[entry.first], type);
 		// Only join filters reach here for unsupported types; the join re-checks those rows anyway.
 		if (!SupportsRemoteFilterPushdown(type)) {
 			continue;

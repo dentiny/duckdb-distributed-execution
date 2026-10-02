@@ -4,12 +4,17 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
@@ -47,15 +52,14 @@ bool HasDefaultQuerySettings(ClientContext &context) {
 	       Settings::Get<ScalarSubqueryErrorOnMultipleRowsSetting>(context);
 }
 
-// Functions reading the session state or environment, which differ on the server.
+// Functions reading the session state, environment or sequences, which differ on the server.
 bool ReadsSessionState(const string &function_name) {
 	static const case_insensitive_set_t SESSION_FUNCTIONS {
-	    "current_catalog", "current_connection_id",  "current_database",
-	    "current_date",    "current_localtime",      "current_localtimestamp",
-	    "current_query",   "current_schema",         "current_schemas",
-	    "current_setting", "current_transaction_id", "getenv",
-	    "getvariable",     "in_search_path",         "today",
-	    "txid_current"};
+	    "currval",        "current_catalog",   "current_connection_id",  "current_database",
+	    "current_date",   "current_localtime", "current_localtimestamp", "current_query",
+	    "current_schema", "current_schemas",   "current_setting",        "current_transaction_id",
+	    "getenv",         "getvariable",       "in_search_path",         "nextval",
+	    "today",          "txid_current"};
 	return SESSION_FUNCTIONS.find(function_name) != SESSION_FUNCTIONS.end();
 }
 
@@ -117,6 +121,27 @@ private:
 
 	void VisitExpression(ParsedExpression &expr) {
 		switch (expr.GetExpressionClass()) {
+		case ExpressionClass::CAST: {
+			auto &type = expr.Cast<CastExpression>().cast_type;
+			if (type.IsUnbound()) {
+				VisitExpression(*UnboundType::GetTypeExpression(type));
+			}
+			break;
+		}
+		case ExpressionClass::TYPE: {
+			// Client-side types are unknown to the server.
+			auto &type = expr.Cast<TypeExpression>();
+			pushable = pushable && type.GetCatalog().empty() && type.GetSchema().empty() &&
+			           DefaultTypeGenerator::GetDefaultType(type.GetTypeName()) != LogicalTypeId::INVALID;
+			break;
+		}
+		case ExpressionClass::COLUMN_REF: {
+			// Table names are rewritten without the client's catalog, so columns qualified with it no longer resolve.
+			auto &column_names = expr.Cast<ColumnRefExpression>().column_names;
+			pushable =
+			    pushable && !(column_names.size() > 2 && StringUtil::CIEquals(column_names[0], catalog.GetName()));
+			break;
+		}
 		case ExpressionClass::FUNCTION: {
 			// Client-side macros and functions are unknown to the server.
 			auto &function = expr.Cast<FunctionExpression>();

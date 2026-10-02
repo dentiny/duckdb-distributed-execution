@@ -911,6 +911,15 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
 
+	auto prepared = registration.connection->Prepare(sql);
+	if (prepared->HasError()) {
+		return arrow::Status::Invalid("Query error: " + prepared->GetError());
+	}
+	// Read-only clients may share a read-write instance with the database's writer.
+	if (registration.role != distributed::CLIENT_ROLE_READ_WRITE && !prepared->GetStatementProperties().IsReadOnly()) {
+		return arrow::Status::Invalid("Duckherder client is read-only");
+	}
+
 	// Start tracking query execution
 	QueryExecutionInfo query_info;
 	query_info.sql = sql;
@@ -918,21 +927,8 @@ arrow::Status DistributedFlightServer::HandleScanTable(const distributed::ScanTa
 	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
 
 	// The driver plans the query, running its single-table fragments on workers when possible.
-	unique_ptr<QueryResult> result;
-	if (registration.role == distributed::CLIENT_ROLE_READ_WRITE) {
-		result = registration.connection->Query(sql);
-	} else {
-		// Read-only clients may share a read-write instance with the database's writer.
-		auto prepared = registration.connection->Prepare(sql);
-		if (prepared->HasError()) {
-			return arrow::Status::Invalid("Query error: " + prepared->GetError());
-		}
-		if (!prepared->GetStatementProperties().IsReadOnly()) {
-			return arrow::Status::Invalid("Duckherder client is read-only");
-		}
-		vector<Value> parameters;
-		result = prepared->Execute(parameters, /*allow_stream_result=*/false);
-	}
+	vector<Value> parameters;
+	auto result = prepared->Execute(parameters, /*allow_stream_result=*/false);
 
 	// Calculate total query duration (using steady_clock for accurate elapsed time)
 	auto query_end = std::chrono::steady_clock::now();

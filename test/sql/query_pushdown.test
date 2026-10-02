@@ -109,10 +109,49 @@ statement ok
 RESET default_null_order;
 
 query I
+SELECT dh.orders.id AS qualified_query FROM dh.orders WHERE id = 1;
+----
+1
+
+statement ok
+CREATE SEQUENCE local_seq;
+
+query I
+SELECT max(nextval('local_seq')) AS sequence_query FROM dh.customers;
+----
+10
+
+statement ok
+CREATE TYPE local_mood AS ENUM ('a', 'b');
+
+query I
+SELECT count(*) AS type_query FROM dh.customers WHERE 'a'::local_mood = 'a';
+----
+10
+
+query I
 SELECT count(*) FROM duckherder_get_query_execution_stats()
-WHERE sql SIMILAR TO '.*(local_join|view_query|macro_query|variable_query|tz_query|setting_query).*';
+WHERE sql SIMILAR TO
+    '.*(local_join|view_query|macro_query|variable_query|tz_query|setting_query|qualified_query|sequence_query|type_query).*';
 ----
 0
+
+# Built-in types resolve the same on the server, even when the remote database is the default one.
+statement ok
+USE dh;
+
+query I
+SELECT count(*) AS pushed_cast FROM orders WHERE id < CAST(5 AS BIGINT);
+----
+5
+
+statement ok
+USE memory;
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%pushed_cast%';
+----
+1
 
 # SUMMARIZE names its table without a table reference, so it stays on the client.
 statement ok

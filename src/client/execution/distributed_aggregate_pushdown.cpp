@@ -16,7 +16,7 @@ namespace {
 unique_ptr<LogicalOperator> TryPushdownAggregate(Binder &binder, LogicalAggregate &aggregate,
                                                  vector<ReplacementBinding> &replacements) {
 	auto get = GetAggregateScan(aggregate);
-	if (!get || get->function.name != "distributed_scan") {
+	if (!get || get->function.name != "distributed_scan" || get->extra_info.sample_options) {
 		return nullptr;
 	}
 	auto &bind_data = get->bind_data->Cast<DistributedTableScanBindData>();
@@ -26,7 +26,8 @@ unique_ptr<LogicalOperator> TryPushdownAggregate(Binder &binder, LogicalAggregat
 	vector<LogicalType> types;
 	vector<string> names;
 	auto query = RenderAggregateQuery(
-	    aggregate, [&](column_t column_id, LogicalType &type) { return GetRemoteColumn(bind_data, column_id, type); },
+	    aggregate, *get,
+	    [&](column_t column_id, LogicalType &type) { return GetRemoteColumn(bind_data, column_id, type); },
 	    bind_data.remote_table_name, types, names);
 	if (query.empty()) {
 		return nullptr;

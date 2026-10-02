@@ -15,6 +15,7 @@
 #include "utils/sql_render_utils.hpp"
 
 #include <chrono>
+#include <utility>
 
 namespace duckdb {
 
@@ -72,21 +73,6 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 	state.chunk_offset += count;
 }
 
-string GetTableColumn(TableCatalogEntry &table, column_t column_id, LogicalType &type) {
-	if (IsVirtualColumn(column_id)) {
-		auto virtual_columns = table.GetVirtualColumns();
-		auto entry = virtual_columns.find(column_id);
-		if (entry == virtual_columns.end()) {
-			throw InternalException("Table %s has no virtual column %llu", table.name, column_id);
-		}
-		type = entry->second.type;
-		return KeywordHelper::WriteOptionallyQuoted(entry->second.name);
-	}
-	auto &column = table.GetColumn(LogicalIndex(column_id));
-	type = column.Type();
-	return KeywordHelper::WriteOptionallyQuoted(column.Name());
-}
-
 // Returns the table `get` scans if workers can partition it, or nullptr.
 optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get) {
 	auto table = get.GetTable();
@@ -121,10 +107,12 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, LogicalAg
 	if (!table) {
 		return nullptr;
 	}
+	const auto virtual_columns = table->GetVirtualColumns();
 	vector<LogicalType> types;
 	vector<string> names;
 	auto sql = RenderAggregateQuery(
-	    aggregate, [&](column_t column_id, LogicalType &type) { return GetTableColumn(*table, column_id, type); },
+	    aggregate, *get,
+	    [&](column_t column_id, LogicalType &type) { return GetColumnSQL(*table, virtual_columns, column_id, type); },
 	    GetTableName(*table), types, names);
 	if (sql.empty()) {
 		return nullptr;
@@ -148,8 +136,9 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(Binder &binder, LogicalGet &ge
 	if (!table || column_ids.empty()) {
 		return nullptr;
 	}
+	const auto virtual_columns = table->GetVirtualColumns();
 	auto get_column = [&](column_t column_id, LogicalType &type) {
-		return GetTableColumn(*table, column_id, type);
+		return GetColumnSQL(*table, virtual_columns, column_id, type);
 	};
 	auto bindings = get.GetColumnBindings();
 	vector<string> select_list;
@@ -189,8 +178,9 @@ idx_t CountScans(LogicalOperator &op) {
 }
 
 void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	// Fragments run outside the client's transaction, so they would miss its snapshot in an explicit transaction.
 	if (!input.context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME) ||
-	    CountScans(*plan) != 1) {
+	    !input.context.transaction.IsAutoCommit() || CountScans(*plan) != 1) {
 		return;
 	}
 	auto &binder = input.optimizer.binder;
@@ -237,6 +227,7 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 		for (auto &batch : distributed.arrow_batches) {
 			auto chunk = make_uniq<DataChunk>();
 			ArrowRecordBatchToDataChunk(context, *batch, *chunk, &types);
+			batch.reset();
 			chunks.emplace_back(std::move(chunk));
 		}
 	} else {
@@ -266,9 +257,7 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 }
 
 vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {
-	auto result = std::move(executions);
-	executions.clear();
-	return result;
+	return std::exchange(executions, {});
 }
 
 OptimizerExtension GetWorkerFragmentExtension() {

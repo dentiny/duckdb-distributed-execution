@@ -36,11 +36,7 @@ arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distribu
 	// In-memory storage is private to this control-node instance. Shared-storage readers can use worker snapshots.
 	unique_ptr<Connection> executor_connection;
 	if (!writable && config.storage_case() != distributed::StorageConfig::kInMemory) {
-		auto executor_connection_result = database->Connect();
-		if (!executor_connection_result.ok()) {
-			return executor_connection_result.status();
-		}
-		executor_connection = std::move(executor_connection_result).ValueOrDie();
+		ARROW_ASSIGN_OR_RAISE(executor_connection, database->Connect());
 	}
 	auto registration =
 	    make_shared_ptr<ClientRegistration>(*database, std::move(connection_result).ValueOrDie(),

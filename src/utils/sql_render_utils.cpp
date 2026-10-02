@@ -1,5 +1,6 @@
 #include "utils/sql_render_utils.hpp"
 
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -102,12 +103,7 @@ string RenderAggregate(const RemoteScope &scope, const Expression &expr) {
 	return arg.empty() ? "" : StringUtil::Format("%s(%s)", name, arg);
 }
 
-} // namespace
-
-bool SupportsRemoteFilterPushdown(const LogicalType &type) {
-	return type.id() != LogicalTypeId::ENUM && !type.HasAlias() && !type.IsNested();
-}
-
+// Whether `RemoteFilterToSQL` can translate `filter`.
 bool IsRemoteFilter(const TableFilter &filter) {
 	switch (filter.filter_type) {
 	case TableFilterType::CONSTANT_COMPARISON:
@@ -132,6 +128,12 @@ bool IsRemoteFilter(const TableFilter &filter) {
 	default:
 		return false;
 	}
+}
+
+} // namespace
+
+bool SupportsRemoteFilterPushdown(const LogicalType &type) {
+	return type.id() != LogicalTypeId::ENUM && !type.HasAlias() && !type.IsNested();
 }
 
 string RemoteFilterToSQL(const TableFilter &filter, const string &column) {
@@ -180,6 +182,21 @@ string RemoteFilterToSQL(const TableFilter &filter, const string &column) {
 	}
 }
 
+string GetColumnSQL(const TableCatalogEntry &table, const virtual_column_map_t &virtual_columns, column_t column_id,
+                    LogicalType &type) {
+	if (IsVirtualColumn(column_id)) {
+		auto entry = virtual_columns.find(column_id);
+		if (entry == virtual_columns.end()) {
+			throw InternalException("Table %s has no virtual column %llu", table.name, column_id);
+		}
+		type = entry->second.type;
+		return KeywordHelper::WriteOptionallyQuoted(entry->second.name);
+	}
+	auto &column = table.GetColumn(LogicalIndex(column_id));
+	type = column.Type();
+	return KeywordHelper::WriteOptionallyQuoted(column.Name());
+}
+
 bool RenderScanFilters(const LogicalGet &get, const RemoteColumnFunction &get_column, vector<string> &predicates) {
 	for (auto &entry : get.table_filters.filters) {
 		LogicalType type;
@@ -206,16 +223,12 @@ optional_ptr<LogicalGet> GetAggregateScan(LogicalAggregate &aggregate) {
 	return child.get().Cast<LogicalGet>();
 }
 
-string RenderAggregateQuery(LogicalAggregate &aggregate, const RemoteColumnFunction &get_column,
+string RenderAggregateQuery(LogicalAggregate &aggregate, const LogicalGet &get, const RemoteColumnFunction &get_column,
                             const string &table_name, vector<LogicalType> &types, vector<string> &names) {
 	if (aggregate.grouping_sets.size() > 1 || !aggregate.grouping_functions.empty()) {
 		return "";
 	}
 	if (!aggregate.grouping_sets.empty() && aggregate.grouping_sets[0].size() != aggregate.groups.size()) {
-		return "";
-	}
-	auto get = GetAggregateScan(aggregate);
-	if (!get || get->extra_info.sample_options) {
 		return "";
 	}
 	RemoteScope scope;
@@ -225,18 +238,18 @@ string RenderAggregateQuery(LogicalAggregate &aggregate, const RemoteColumnFunct
 			scope.projections.emplace(ColumnBinding(projection.table_index, idx), projection.expressions[idx].get());
 		}
 	}
-	auto &column_ids = get->GetColumnIds();
+	auto &column_ids = get.GetColumnIds();
 	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
 		auto column_id = column_ids[idx].GetPrimaryIndex();
 		if (column_id == COLUMN_IDENTIFIER_EMPTY || column_ids[idx].HasChildren()) {
 			continue;
 		}
 		LogicalType type;
-		scope.columns.emplace(ColumnBinding(get->table_index, idx), get_column(column_id, type));
+		scope.columns.emplace(ColumnBinding(get.table_index, idx), get_column(column_id, type));
 	}
 
 	vector<string> predicates;
-	if (!RenderScanFilters(*get, get_column, predicates)) {
+	if (!RenderScanFilters(get, get_column, predicates)) {
 		return "";
 	}
 
