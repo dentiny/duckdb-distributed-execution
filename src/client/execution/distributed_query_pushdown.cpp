@@ -23,15 +23,11 @@
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "utils/sql_render_utils.hpp"
 
 namespace duckdb {
 
 namespace {
-
-// Results on TIMESTAMPTZ and TIMETZ may depend on client settings such as TimeZone, which the server lacks.
-bool DependsOnTimeZone(const LogicalType &type) {
-	return type.id() == LogicalTypeId::TIMESTAMP_TZ || type.id() == LogicalTypeId::TIME_TZ;
-}
 
 bool DependsOnTimeZone(const Expression &expr) {
 	if (DependsOnTimeZone(expr.return_type)) {
@@ -110,7 +106,7 @@ bool ReadsOnlyRemoteTables(LogicalOperator &op, optional_ptr<LogicalGet> &scan) 
 		// Filters pushed into the scan no longer appear as expressions.
 		for (auto &entry : get.table_filters.filters) {
 			LogicalType type;
-			GetRemoteColumn(bind_data, entry.first, type);
+			GetColumnSQL(bind_data.table, entry.first, type);
 			if (DependsOnTimeZone(type)) {
 				return false;
 			}

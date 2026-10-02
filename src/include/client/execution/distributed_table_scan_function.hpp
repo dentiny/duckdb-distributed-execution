@@ -26,9 +26,6 @@ struct DistributedTableScanBindData : public TableFunctionData {
 	vector<LogicalType> pushed_types;
 };
 
-// Returns the quoted remote name and type of a physical or virtual table column.
-string GetRemoteColumn(const DistributedTableScanBindData &bind_data, column_t column_id, LogicalType &type);
-
 // The distributed table scan function that replaces regular table scans.
 class DistributedTableScanFunction {
 public:

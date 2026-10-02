@@ -3,7 +3,6 @@
 #include "arrow_utils.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
@@ -107,25 +106,12 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, LogicalAg
 	if (!table) {
 		return nullptr;
 	}
-	const auto virtual_columns = table->GetVirtualColumns();
-	vector<LogicalType> types;
-	vector<string> names;
-	auto sql = RenderAggregateQuery(
-	    aggregate, *get,
-	    [&](column_t column_id, LogicalType &type) { return GetColumnSQL(*table, virtual_columns, column_id, type); },
-	    GetTableName(*table), types, names);
-	if (sql.empty()) {
+	auto query = RenderAggregateQuery(aggregate, *get, *table, GetTableName(*table));
+	if (!query) {
 		return nullptr;
 	}
-	auto fragment = CreateFragment(binder, std::move(sql), std::move(types), std::move(names));
-	const auto group_count = aggregate.groups.size();
-	for (idx_t idx = 0; idx < group_count; ++idx) {
-		replacements.emplace_back(ColumnBinding(aggregate.group_index, idx), ColumnBinding(fragment->table_index, idx));
-	}
-	for (idx_t idx = 0; idx < aggregate.expressions.size(); ++idx) {
-		replacements.emplace_back(ColumnBinding(aggregate.aggregate_index, idx),
-		                          ColumnBinding(fragment->table_index, group_count + idx));
-	}
+	auto fragment = CreateFragment(binder, std::move(query->sql), std::move(query->types), std::move(query->names));
+	ReplaceAggregateBindings(aggregate, fragment->table_index, replacements);
 	return std::move(fragment);
 }
 
@@ -136,10 +122,6 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(Binder &binder, LogicalGet &ge
 	if (!table || column_ids.empty()) {
 		return nullptr;
 	}
-	const auto virtual_columns = table->GetVirtualColumns();
-	auto get_column = [&](column_t column_id, LogicalType &type) {
-		return GetColumnSQL(*table, virtual_columns, column_id, type);
-	};
 	auto bindings = get.GetColumnBindings();
 	vector<string> select_list;
 	vector<LogicalType> types;
@@ -150,18 +132,15 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(Binder &binder, LogicalGet &ge
 			return nullptr;
 		}
 		LogicalType type;
-		select_list.emplace_back(get_column(column.GetPrimaryIndex(), type));
+		select_list.emplace_back(GetColumnSQL(*table, column.GetPrimaryIndex(), type));
 		types.emplace_back(std::move(type));
 		names.emplace_back(select_list.back());
 	}
 	vector<string> predicates;
-	if (!RenderScanFilters(get, get_column, predicates)) {
+	if (!RenderScanFilters(get, *table, predicates)) {
 		return nullptr;
 	}
-	auto sql = StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), GetTableName(*table));
-	if (!predicates.empty()) {
-		sql += " WHERE " + StringUtil::Join(predicates, " AND ");
-	}
+	auto sql = RenderSelectQuery(select_list, GetTableName(*table), predicates);
 	auto fragment = CreateFragment(binder, std::move(sql), std::move(types), std::move(names));
 	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
 		replacements.emplace_back(bindings[idx], ColumnBinding(fragment->table_index, idx));

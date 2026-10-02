@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
@@ -33,10 +34,8 @@ struct RemoteScope {
 // Renders `expr` as SQL on the remote table, or returns an empty string if it cannot be translated with identical
 // semantics.
 string RenderExpression(const RemoteScope &scope, const Expression &expr) {
-	// Results on TIMESTAMPTZ and TIMETZ may depend on client settings such as TimeZone, which the server lacks.
 	auto &type = expr.return_type;
-	if (!SupportsRemoteFilterPushdown(type) || type.id() == LogicalTypeId::TIMESTAMP_TZ ||
-	    type.id() == LogicalTypeId::TIME_TZ) {
+	if (!SupportsRemoteFilterPushdown(type) || DependsOnTimeZone(type)) {
 		return "";
 	}
 	switch (expr.GetExpressionClass()) {
@@ -132,6 +131,10 @@ bool IsRemoteFilter(const TableFilter &filter) {
 
 } // namespace
 
+bool DependsOnTimeZone(const LogicalType &type) {
+	return type.id() == LogicalTypeId::TIMESTAMP_TZ || type.id() == LogicalTypeId::TIME_TZ;
+}
+
 bool SupportsRemoteFilterPushdown(const LogicalType &type) {
 	return type.id() != LogicalTypeId::ENUM && !type.HasAlias() && !type.IsNested();
 }
@@ -182,9 +185,9 @@ string RemoteFilterToSQL(const TableFilter &filter, const string &column) {
 	}
 }
 
-string GetColumnSQL(const TableCatalogEntry &table, const virtual_column_map_t &virtual_columns, column_t column_id,
-                    LogicalType &type) {
+string GetColumnSQL(const TableCatalogEntry &table, column_t column_id, LogicalType &type) {
 	if (IsVirtualColumn(column_id)) {
+		const auto virtual_columns = table.GetVirtualColumns();
 		auto entry = virtual_columns.find(column_id);
 		if (entry == virtual_columns.end()) {
 			throw InternalException("Table %s has no virtual column %llu", table.name, column_id);
@@ -197,10 +200,10 @@ string GetColumnSQL(const TableCatalogEntry &table, const virtual_column_map_t &
 	return KeywordHelper::WriteOptionallyQuoted(column.Name());
 }
 
-bool RenderScanFilters(const LogicalGet &get, const RemoteColumnFunction &get_column, vector<string> &predicates) {
+bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates) {
 	for (auto &entry : get.table_filters.filters) {
 		LogicalType type;
-		auto column = get_column(entry.first, type);
+		auto column = GetColumnSQL(table, entry.first, type);
 		if (!SupportsRemoteFilterPushdown(type) || !IsRemoteFilter(*entry.second)) {
 			return false;
 		}
@@ -210,6 +213,15 @@ bool RenderScanFilters(const LogicalGet &get, const RemoteColumnFunction &get_co
 		}
 	}
 	return true;
+}
+
+string RenderSelectQuery(const vector<string> &select_list, const string &table_name,
+                         const vector<string> &predicates) {
+	auto sql = StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), table_name);
+	if (!predicates.empty()) {
+		sql += " WHERE " + StringUtil::Join(predicates, " AND ");
+	}
+	return sql;
 }
 
 optional_ptr<LogicalGet> GetAggregateScan(LogicalAggregate &aggregate) {
@@ -223,13 +235,13 @@ optional_ptr<LogicalGet> GetAggregateScan(LogicalAggregate &aggregate) {
 	return child.get().Cast<LogicalGet>();
 }
 
-string RenderAggregateQuery(LogicalAggregate &aggregate, const LogicalGet &get, const RemoteColumnFunction &get_column,
-                            const string &table_name, vector<LogicalType> &types, vector<string> &names) {
+unique_ptr<RemoteAggregateQuery> RenderAggregateQuery(LogicalAggregate &aggregate, const LogicalGet &get,
+                                                      const TableCatalogEntry &table, const string &table_name) {
 	if (aggregate.grouping_sets.size() > 1 || !aggregate.grouping_functions.empty()) {
-		return "";
+		return nullptr;
 	}
 	if (!aggregate.grouping_sets.empty() && aggregate.grouping_sets[0].size() != aggregate.groups.size()) {
-		return "";
+		return nullptr;
 	}
 	RemoteScope scope;
 	if (aggregate.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
@@ -245,44 +257,54 @@ string RenderAggregateQuery(LogicalAggregate &aggregate, const LogicalGet &get, 
 			continue;
 		}
 		LogicalType type;
-		scope.columns.emplace(ColumnBinding(get.table_index, idx), get_column(column_id, type));
+		scope.columns.emplace(ColumnBinding(get.table_index, idx), GetColumnSQL(table, column_id, type));
 	}
 
 	vector<string> predicates;
-	if (!RenderScanFilters(get, get_column, predicates)) {
-		return "";
+	if (!RenderScanFilters(get, table, predicates)) {
+		return nullptr;
 	}
 
+	auto result = make_uniq<RemoteAggregateQuery>();
 	vector<string> select_list;
 	vector<string> group_by;
 	for (auto &group : aggregate.groups) {
 		auto sql = RenderExpression(scope, *group);
 		if (sql.empty()) {
-			return "";
+			return nullptr;
 		}
 		select_list.emplace_back(std::move(sql));
 		group_by.emplace_back(std::to_string(group_by.size() + 1));
-		types.emplace_back(group->return_type);
-		names.emplace_back(group->GetName());
+		result->types.emplace_back(group->return_type);
+		result->names.emplace_back(group->GetName());
 	}
 	for (auto &expr : aggregate.expressions) {
 		auto sql = RenderAggregate(scope, *expr);
 		if (sql.empty()) {
-			return "";
+			return nullptr;
 		}
 		select_list.emplace_back(std::move(sql));
-		types.emplace_back(expr->return_type);
-		names.emplace_back(expr->GetName());
+		result->types.emplace_back(expr->return_type);
+		result->names.emplace_back(expr->GetName());
 	}
 
-	auto query = StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), table_name);
-	if (!predicates.empty()) {
-		query += " WHERE " + StringUtil::Join(predicates, " AND ");
-	}
+	result->sql = RenderSelectQuery(select_list, table_name, predicates);
 	if (!group_by.empty()) {
-		query += " GROUP BY " + StringUtil::Join(group_by, ", ");
+		result->sql += " GROUP BY " + StringUtil::Join(group_by, ", ");
 	}
-	return query;
+	return result;
+}
+
+void ReplaceAggregateBindings(const LogicalAggregate &aggregate, idx_t table_index,
+                              vector<ReplacementBinding> &replacements) {
+	const auto group_count = aggregate.groups.size();
+	for (idx_t idx = 0; idx < group_count; ++idx) {
+		replacements.emplace_back(ColumnBinding(aggregate.group_index, idx), ColumnBinding(table_index, idx));
+	}
+	for (idx_t idx = 0; idx < aggregate.expressions.size(); ++idx) {
+		replacements.emplace_back(ColumnBinding(aggregate.aggregate_index, idx),
+		                          ColumnBinding(table_index, group_count + idx));
+	}
 }
 
 } // namespace duckdb

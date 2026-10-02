@@ -71,17 +71,9 @@ virtual_column_map_t GetDistributedTableScanVirtualColumns(ClientContext &contex
 	return bind_data->Cast<DistributedTableScanBindData>().table.GetVirtualColumns();
 }
 
-} // namespace
-
-string GetRemoteColumn(const DistributedTableScanBindData &bind_data, column_t column_id, LogicalType &type) {
-	return GetColumnSQL(bind_data.table, bind_data.table.GetVirtualColumns(), column_id, type);
-}
-
-namespace {
-
 bool DistributedTableScanSupportsPushdownType(const FunctionData &bind_data_p, idx_t column_id) {
 	LogicalType type;
-	GetRemoteColumn(bind_data_p.Cast<DistributedTableScanBindData>(), column_id, type);
+	GetColumnSQL(bind_data_p.Cast<DistributedTableScanBindData>().table, column_id, type);
 	return SupportsRemoteFilterPushdown(type);
 }
 
@@ -90,7 +82,6 @@ bool DistributedTableScanSupportsPushdownType(const FunctionData &bind_data_p, i
 string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<column_t> &column_ids,
                     const vector<column_t> &filter_column_ids, optional_ptr<TableFilterSet> filters,
                     vector<LogicalType> &types) {
-	const auto virtual_columns = bind_data.table.GetVirtualColumns();
 	vector<string> select_list;
 	for (auto column_id : column_ids) {
 		if (column_id == COLUMN_IDENTIFIER_EMPTY) {
@@ -100,32 +91,25 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 			continue;
 		}
 		LogicalType type;
-		select_list.emplace_back(GetColumnSQL(bind_data.table, virtual_columns, column_id, type));
+		select_list.emplace_back(GetColumnSQL(bind_data.table, column_id, type));
 		types.emplace_back(std::move(type));
 	}
-	auto sql =
-	    StringUtil::Format("SELECT %s FROM %s", StringUtil::Join(select_list, ", "), bind_data.remote_table_name);
-
-	if (filters == nullptr) {
-		return sql;
-	}
 	vector<string> predicates;
-	for (auto &entry : filters->filters) {
-		LogicalType type;
-		auto column = GetColumnSQL(bind_data.table, virtual_columns, filter_column_ids[entry.first], type);
-		// Only join filters reach here for unsupported types; the join re-checks those rows anyway.
-		if (!SupportsRemoteFilterPushdown(type)) {
-			continue;
-		}
-		auto predicate = RemoteFilterToSQL(*entry.second, column);
-		if (!predicate.empty()) {
-			predicates.emplace_back(std::move(predicate));
+	if (filters != nullptr) {
+		for (auto &entry : filters->filters) {
+			LogicalType type;
+			auto column = GetColumnSQL(bind_data.table, filter_column_ids[entry.first], type);
+			// Only join filters reach here for unsupported types; the join re-checks those rows anyway.
+			if (!SupportsRemoteFilterPushdown(type)) {
+				continue;
+			}
+			auto predicate = RemoteFilterToSQL(*entry.second, column);
+			if (!predicate.empty()) {
+				predicates.emplace_back(std::move(predicate));
+			}
 		}
 	}
-	if (predicates.empty()) {
-		return sql;
-	}
-	return StringUtil::Format("%s WHERE %s", sql, StringUtil::Join(predicates, " AND "));
+	return RenderSelectQuery(select_list, bind_data.remote_table_name, predicates);
 }
 
 } // namespace

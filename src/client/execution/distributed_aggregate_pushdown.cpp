@@ -23,37 +23,24 @@ unique_ptr<LogicalOperator> TryPushdownAggregate(Binder &binder, LogicalAggregat
 	if (!bind_data.pushed_query.empty()) {
 		return nullptr;
 	}
-	vector<LogicalType> types;
-	vector<string> names;
-	auto query = RenderAggregateQuery(
-	    aggregate, *get,
-	    [&](column_t column_id, LogicalType &type) { return GetRemoteColumn(bind_data, column_id, type); },
-	    bind_data.remote_table_name, types, names);
-	if (query.empty()) {
+	auto query = RenderAggregateQuery(aggregate, *get, bind_data.table, bind_data.remote_table_name);
+	if (!query) {
 		return nullptr;
 	}
 
 	auto pushed_bind_data = unique_ptr_cast<FunctionData, DistributedTableScanBindData>(bind_data.Copy());
-	pushed_bind_data->pushed_query = std::move(query);
-	pushed_bind_data->pushed_types = types;
+	pushed_bind_data->pushed_query = std::move(query->sql);
+	pushed_bind_data->pushed_types = query->types;
 
 	const auto table_index = binder.GenerateTableIndex();
-	auto result =
-	    make_uniq<LogicalGet>(table_index, get->function, std::move(pushed_bind_data), types, std::move(names));
+	auto result = make_uniq<LogicalGet>(table_index, get->function, std::move(pushed_bind_data),
+	                                    std::move(query->types), std::move(query->names));
 	vector<ColumnIndex> result_column_ids;
-	for (idx_t idx = 0; idx < types.size(); ++idx) {
+	for (idx_t idx = 0; idx < result->returned_types.size(); ++idx) {
 		result_column_ids.emplace_back(idx);
 	}
 	result->SetColumnIds(std::move(result_column_ids));
-
-	const auto group_count = aggregate.groups.size();
-	for (idx_t idx = 0; idx < group_count; ++idx) {
-		replacements.emplace_back(ColumnBinding(aggregate.group_index, idx), ColumnBinding(table_index, idx));
-	}
-	for (idx_t idx = 0; idx < aggregate.expressions.size(); ++idx) {
-		replacements.emplace_back(ColumnBinding(aggregate.aggregate_index, idx),
-		                          ColumnBinding(table_index, group_count + idx));
-	}
+	ReplaceAggregateBindings(aggregate, table_index, replacements);
 	return std::move(result);
 }
 
