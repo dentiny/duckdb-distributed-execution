@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client.pb.h"
+#include "distributed.pb.h"
 #include "storage_config.pb.h"
 #include "transaction.pb.h"
 #include "duckdb/common/atomic.hpp"
@@ -11,6 +12,7 @@
 #include "transaction_constants.hpp"
 #include "utils/mutex.hpp"
 
+#include <arrow/status.h>
 #include <memory>
 
 namespace arrow {
@@ -36,6 +38,19 @@ struct ClientRegistration {
 	                   unique_ptr<Connection> executor_connection_p, WorkerManager &worker_manager,
 	                   distributed::ClientRole role_p, const distributed::StorageConfig &storage_config);
 	~ClientRegistration();
+
+	// Validate a transaction-scoped request and indicate whether its latest result can be replayed.
+	arrow::Status CheckRequestReplay(const distributed::DistributedRequest &request, ClientRequestTransport transport,
+	                                 const string &signature, bool &replay) const DUCKDB_REQUIRES(connection_mutex);
+	// Replace the bounded replay entry after an action or insertion has completed.
+	void CacheActionResponse(const distributed::DistributedRequest &request, ClientRequestTransport transport,
+	                         const string &signature, const distributed::DistributedResponse &response)
+	    DUCKDB_REQUIRES(connection_mutex);
+	// Replace the bounded replay entry after a scan has completed.
+	void CacheQueryResult(const distributed::DistributedRequest &request, const string &signature,
+	                      std::shared_ptr<arrow::Schema> schema, vector<std::shared_ptr<arrow::RecordBatch>> batches)
+	    DUCKDB_REQUIRES(connection_mutex);
+	void ClearRequestReplay() DUCKDB_REQUIRES(connection_mutex);
 
 	distributed::ClientRole role;
 	// Storage identity, excluding credentials, for the database this client is attached to.
@@ -70,6 +85,11 @@ struct ClientRegistration {
 	// TODO(hjiang): Bound the in-memory query replay cache and explicitly reject replay when a result exceeds the
 	// limit; consider spilling oversized replay results to object storage.
 	// TODO: Persist the finished transaction watermark and outcome with authoritative data across server restarts.
+
+private:
+	// Start a replay entry for a completed request, finishing its transaction when it ran in autocommit mode.
+	void RecordCompletedRequest(const distributed::DistributedRequest &request, ClientRequestTransport transport,
+	                            const string &signature) DUCKDB_REQUIRES(connection_mutex);
 };
 
 } // namespace duckdb

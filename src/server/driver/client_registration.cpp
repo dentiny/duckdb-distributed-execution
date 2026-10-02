@@ -23,4 +23,87 @@ ClientRegistration::ClientRegistration(ObjectStorageDatabase &db, unique_ptr<Con
 
 ClientRegistration::~ClientRegistration() = default;
 
+arrow::Status ClientRegistration::CheckRequestReplay(const distributed::DistributedRequest &request,
+                                                     ClientRequestTransport transport, const string &signature,
+                                                     bool &replay) const {
+	replay = false;
+	if (request.transaction_id() == INVALID_TRANSACTION_ID || request.request_sequence() == INVALID_REQUEST_SEQUENCE) {
+		return arrow::Status::Invalid("Transaction identifier and request sequence must be specified");
+	}
+	if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
+		if (active_transaction_id != INVALID_TRANSACTION_ID) {
+			return arrow::Status::Invalid("Autocommit request cannot run inside an explicit transaction");
+		}
+		if (request.request_sequence() != INITIAL_REQUEST_SEQUENCE) {
+			return arrow::Status::Invalid("Autocommit request sequence must be one");
+		}
+		if (request.transaction_id() == finished_transaction_id + 1) {
+			return arrow::Status::OK();
+		}
+		if (request.transaction_id() != finished_transaction_id) {
+			return arrow::Status::Invalid("Autocommit transaction identifier is outside the replay window");
+		}
+	} else if (request.transaction_mode() != distributed::TRANSACTION_MODE_EXPLICIT) {
+		return arrow::Status::Invalid("Transaction mode must be AUTOCOMMIT or EXPLICIT");
+	} else if (active_transaction_id != request.transaction_id()) {
+		return arrow::Status::Invalid("Request does not belong to the active client transaction");
+	} else if (request.request_sequence() > last_request_sequence) {
+		if (request.request_sequence() != last_request_sequence + 1) {
+			return arrow::Status::Invalid("Request sequence contains a gap");
+		}
+		return arrow::Status::OK();
+	}
+	if (request.request_sequence() < last_request_sequence) {
+		return arrow::Status::Invalid("Request sequence is older than the replay window");
+	}
+	if (last_request_transport != transport || last_request_signature != signature) {
+		return arrow::Status::Invalid("Request sequence was reused for a different operation");
+	}
+	if (transport == ClientRequestTransport::DO_GET) {
+		if (!last_query_schema) {
+			return arrow::Status::Invalid("Query result is unavailable for replay");
+		}
+	} else if (last_action_response.empty()) {
+		return arrow::Status::Invalid("Operation result is unavailable for replay");
+	}
+	replay = true;
+	return arrow::Status::OK();
+}
+
+void ClientRegistration::CacheActionResponse(const distributed::DistributedRequest &request,
+                                             ClientRequestTransport transport, const string &signature,
+                                             const distributed::DistributedResponse &response) {
+	RecordCompletedRequest(request, transport, signature);
+	last_action_response = response.SerializeAsString();
+}
+
+void ClientRegistration::CacheQueryResult(const distributed::DistributedRequest &request, const string &signature,
+                                          std::shared_ptr<arrow::Schema> schema,
+                                          vector<std::shared_ptr<arrow::RecordBatch>> batches) {
+	RecordCompletedRequest(request, ClientRequestTransport::DO_GET, signature);
+	last_query_schema = std::move(schema);
+	last_query_batches = std::move(batches);
+}
+
+void ClientRegistration::ClearRequestReplay() {
+	last_request_sequence = INVALID_REQUEST_SEQUENCE;
+	last_request_transport = ClientRequestTransport::NONE;
+	last_request_signature.clear();
+	last_action_response.clear();
+	last_query_schema.reset();
+	last_query_batches.clear();
+}
+
+void ClientRegistration::RecordCompletedRequest(const distributed::DistributedRequest &request,
+                                                ClientRequestTransport transport, const string &signature) {
+	ClearRequestReplay();
+	last_request_sequence = request.request_sequence();
+	last_request_transport = transport;
+	last_request_signature = signature;
+	if (request.transaction_mode() == distributed::TRANSACTION_MODE_AUTOCOMMIT) {
+		finished_transaction_id = request.transaction_id();
+		finished_transaction_status = distributed::TRANSACTION_STATUS_COMMITTED;
+	}
+}
+
 } // namespace duckdb

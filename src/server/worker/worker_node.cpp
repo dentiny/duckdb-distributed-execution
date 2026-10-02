@@ -1,3 +1,4 @@
+#include "arrow_utils.hpp"
 #include "core_functions_extension.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
@@ -176,9 +177,10 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	}
 
 	// Convert result to Arrow format.
-	// This represents the LocalState output from this worker node.
+	// This represents the LocalState output from this worker node; the coordinator combines the outputs of all
+	// workers, mirroring how thread-local sink states are combined into a global state.
 	idx_t row_count = 0;
-	auto status = QueryResultToArrow(*result, *task_conn, reader, &row_count);
+	auto status = QueryResultToArrowReader(*result, *task_conn->context, reader, &row_count);
 	if (!status.ok()) {
 		return status;
 	}
@@ -288,71 +290,6 @@ WorkerNode::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &con
 		                 StringUtil::Format("Worker %s attached %s", worker_id, config.database_uri()));
 	}
 	return instance.get();
-}
-
-arrow::Status WorkerNode::QueryResultToArrow(QueryResult &result, Connection &result_conn,
-                                             std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count) {
-	// Convert DuckDB QueryResult to Arrow RecordBatchReader
-	//
-	// This method serializes the LocalState output from this worker node
-	// to Arrow format for transmission back to the coordinator.
-	//
-	// In DuckDB's parallel execution model:
-	// - Each thread produces results in its LocalSinkState
-	// - These results are typically DataChunks or ColumnDataCollections
-	// - The Combine() method would merge these into GlobalSinkState
-	//
-	// In distributed execution:
-	// - This worker's QueryResult represents LocalState output
-	// - We serialize it to Arrow for network transmission
-	// - Coordinator receives and combines all worker outputs (GlobalState semantics)
-	// - This maintains the same aggregation pattern as thread-level parallelism
-
-	// Ensure client_context is set (required for Arrow conversion)
-	if (!result.client_properties.client_context) {
-		result.client_properties.client_context = result_conn.context.get();
-	}
-	auto client_properties = result.client_properties;
-	client_properties.arrow_lossless_conversion = true;
-
-	ArrowSchema arrow_schema;
-	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
-	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
-
-	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	idx_t count = 0;
-
-	// Batches of a row group instead of one vector each, since every Arrow batch costs per-message overhead on each
-	// hop back to the client.
-	auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
-	QueryResultChunkScanState scan_state(result);
-	while (true) {
-		ArrowArray arrow_array;
-		idx_t fetched = 0;
-		ErrorData error;
-		if (!ArrowUtil::TryFetchChunk(scan_state, client_properties, DEFAULT_ROW_GROUP_SIZE, &arrow_array, fetched,
-		                              error, extension_types)) {
-			return arrow::Status::Invalid("Task execution failed: " + error.Message());
-		}
-		if (fetched == 0) {
-			break;
-		}
-
-		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
-		if (!batch_result.ok()) {
-			return arrow::Status::Invalid("Failed to import Arrow batch");
-		}
-
-		auto batch = batch_result.ValueOrDie();
-		count += batch->num_rows();
-		batches.emplace_back(batch);
-	}
-
-	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(batches, schema));
-	if (row_count) {
-		*row_count = count;
-	}
-	return arrow::Status::OK();
 }
 
 } // namespace duckdb

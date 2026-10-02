@@ -8,6 +8,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
+#include "client/remote_index_registry.hpp"
 #include "entry_lookup_info_hash_utils.hpp"
 #include "utils/mutex.hpp"
 
@@ -52,6 +53,7 @@ public:
 
 private:
 	friend class DuckherderCatalog;
+	friend class DuckherderCatalogLoader;
 	friend class PhysicalRemoteAlterTableOperator;
 	friend class PhysicalRemoteCreateTableAs;
 
@@ -62,8 +64,6 @@ private:
 	optional_ptr<CatalogEntry> CreateTypeLocal(CatalogTransaction transaction, CreateTypeInfo &info);
 	// Applies an ALTER only to the client-side metadata cache.
 	void AlterLocal(CatalogTransaction transaction, AlterInfo &info);
-	// Records metadata for an index that is physically stored on the control node.
-	void AddRemoteIndex(TableCatalogEntry &table, const CreateIndexInfo &info);
 
 	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry)
 	    DUCKDB_REQUIRES(mu);
@@ -85,16 +85,11 @@ private:
 		unique_ptr<CatalogEntry> wrapper;
 	};
 
-	struct RemoteIndexMetadata {
-		string name;
-		IndexInfo info;
-	};
-
 	concurrency::mutex mu;
 	// Cache for catalog entries, including table entries.
 	unordered_map<EntryLookupInfoKey, CachedCatalogEntry, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries DUCKDB_GUARDED_BY(mu);
-	unordered_map<string, vector<RemoteIndexMetadata>> remote_indexes DUCKDB_GUARDED_BY(mu);
+	RemoteIndexRegistry remote_indexes;
 };
 
 } // namespace duckdb

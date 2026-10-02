@@ -7,6 +7,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/statement/copy_statement.hpp"
@@ -127,6 +128,11 @@ DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog
 	}
 	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
 	return dh_catalog.GetClient(context);
+}
+
+string QualifiedRemoteName(const string &schema_name, const string &entry_name) {
+	return StringUtil::Format("%s.%s", KeywordHelper::WriteQuoted(schema_name, '"'),
+	                          KeywordHelper::WriteQuoted(entry_name, '"'));
 }
 
 } // namespace duckdb

@@ -1,14 +1,18 @@
 #include "arrow_utils.hpp"
 
 #include "duckdb/common/allocator.hpp"
+#include "duckdb/common/arrow/arrow_converter.hpp"
+#include "duckdb/common/arrow/arrow_util.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/function/table/arrow.hpp"
+#include "duckdb/main/chunk_scan_state/query_result.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/storage/storage_info.hpp"
 
 #include <arrow/c/bridge.h>
 #include <arrow/record_batch.h>
@@ -155,6 +159,82 @@ unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType st
 	}
 	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
 	                                          ClientProperties());
+}
+
+arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arrow::Schema> &schema,
+                                        vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
+	auto client_properties = result.client_properties;
+	client_properties.arrow_lossless_conversion = true;
+	ArrowSchema arrow_schema;
+	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
+	ARROW_ASSIGN_OR_RAISE(schema, arrow::ImportSchema(&arrow_schema));
+
+	while (true) {
+		auto chunk = result.Fetch();
+		if (!chunk || chunk->size() == 0) {
+			break;
+		}
+
+		ArrowArray arrow_array;
+		auto extension_types =
+		    ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
+		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_properties, extension_types);
+
+		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
+		if (!batch_result.ok()) {
+			return arrow::Status::Invalid("Failed to import Arrow batch: " + batch_result.status().ToString());
+		}
+
+		// TODO(hjiang): Avoid exception thrown.
+		batches.emplace_back(batch_result.ValueOrDie());
+	}
+	return arrow::Status::OK();
+}
+
+arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &context,
+                                       std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count) {
+	if (!result.client_properties.client_context) {
+		result.client_properties.client_context = &context;
+	}
+	auto client_properties = result.client_properties;
+	client_properties.arrow_lossless_conversion = true;
+
+	ArrowSchema arrow_schema;
+	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
+	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
+
+	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	idx_t count = 0;
+
+	auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
+	QueryResultChunkScanState scan_state(result);
+	while (true) {
+		ArrowArray arrow_array;
+		idx_t fetched = 0;
+		ErrorData error;
+		if (!ArrowUtil::TryFetchChunk(scan_state, client_properties, DEFAULT_ROW_GROUP_SIZE, &arrow_array, fetched,
+		                              error, extension_types)) {
+			return arrow::Status::Invalid("Task execution failed: " + error.Message());
+		}
+		if (fetched == 0) {
+			break;
+		}
+
+		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
+		if (!batch_result.ok()) {
+			return arrow::Status::Invalid("Failed to import Arrow batch");
+		}
+
+		auto batch = batch_result.ValueOrDie();
+		count += batch->num_rows();
+		batches.emplace_back(batch);
+	}
+
+	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(batches, schema));
+	if (row_count) {
+		*row_count = count;
+	}
+	return arrow::Status::OK();
 }
 
 } // namespace duckdb

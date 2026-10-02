@@ -3,7 +3,7 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/main/client_context_state.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
-#include "server/driver/distributed_flight_server.hpp"
+#include "server/driver/query_history.hpp"
 
 namespace duckdb {
 

@@ -5,11 +5,13 @@
 #include "duckdb/common/types.hpp"
 
 #include <arrow/array.h>
+#include <arrow/status.h>
 #include <arrow/type.h>
 #include <memory>
 
 namespace arrow {
 class RecordBatch;
+class RecordBatchReader;
 class Schema;
 } // namespace arrow
 
@@ -36,5 +38,15 @@ unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType st
                                         vector<std::shared_ptr<arrow::RecordBatch>> batches,
                                         const std::shared_ptr<arrow::Schema> &schema,
                                         const vector<LogicalType> *expected_types);
+
+// Convert a DuckDB query result into Arrow record batches, one per result chunk.
+// The result's client properties must reference a client context.
+arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arrow::Schema> &schema,
+                                        vector<std::shared_ptr<arrow::RecordBatch>> &batches);
+
+// Convert a DuckDB query result into a reader over row-group-sized Arrow record batches, using `context` when the
+// result does not reference a client context. Larger batches reduce per-message overhead on every network hop.
+arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &context,
+                                       std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count = nullptr);
 
 } // namespace duckdb

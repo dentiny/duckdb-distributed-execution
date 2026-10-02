@@ -42,8 +42,6 @@ private:
 	                                     std::shared_ptr<arrow::RecordBatchReader> &reader);
 	arrow::Status ExecuteSerializedPlan(const distributed::ExecutePartitionRequest &req,
 	                                    unique_ptr<QueryResult> &result);
-	arrow::Status QueryResultToArrow(QueryResult &result, Connection &result_conn,
-	                                 std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count = nullptr);
 
 	// Execute a pipeline task on task_conn, which must outlive the result.
 	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,

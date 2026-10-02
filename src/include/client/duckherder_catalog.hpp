@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client/duckherder_client_sessions.hpp"
 #include "client/duckherder_remote_table_config.hpp"
 #include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"
@@ -21,7 +22,6 @@ namespace duckdb {
 class DuckCatalog;
 class DatabaseInstance;
 class DistributedClient;
-class DuckherderConnectionState;
 class DuckherderPragmas;
 class DuckherderSchemaCatalogEntry;
 class DuckherderTableCatalogEntry;
@@ -72,6 +72,7 @@ public:
 	optional_idx GetEstimatedCardinality(const string &schema_name, const string &table_name) const;
 
 private:
+	friend class DuckherderCatalogLoader;
 	friend class DuckherderPragmas;
 	friend class DuckherderSchemaCatalogEntry;
 	friend class DuckherderTableCatalogEntry;
@@ -83,29 +84,15 @@ private:
 	string GetServerUrl() const;
 
 	optional_ptr<CatalogEntry> CreateSchemaLocal(CatalogTransaction transaction, CreateSchemaInfo &info);
-	void LoadRemoteCatalog(ClientContext &context);
-	void CloseClients();
-	void EnsureWriteOwner(ClientContext &context) DUCKDB_REQUIRES(client_states_mu);
-	shared_ptr<DuckherderConnectionState> GetOrCreateClientState(ClientContext &context)
-	    DUCKDB_REQUIRES(client_states_mu);
-	void PruneExpiredClientStates() DUCKDB_REQUIRES(client_states_mu);
+	void SetEstimatedCardinality(const string &schema_name, const string &table_name, idx_t cardinality);
 
 	DatabaseInstance &db_instance;
 
 	// Attachment configuration.
 	string server_host;
 	int server_port;
-	distributed::ClientRole role;
-	connection_t attach_connection_id;
-	// Every remote session of this attachment opens the same database on the control node.
-	distributed::StorageConfig storage_config;
 
-	// Per-connection remote session state.
-	string client_state_key;
-	mutable concurrency::mutex client_states_mu;
-	bool detached DUCKDB_GUARDED_BY(client_states_mu) = false;
-	unique_ptr<DistributedClient> attach_client DUCKDB_GUARDED_BY(client_states_mu);
-	unordered_map<connection_t, weak_ptr<DuckherderConnectionState>> client_states DUCKDB_GUARDED_BY(client_states_mu);
+	DuckherderClientSessions client_sessions;
 
 	// Explicit routing overrides registered through the compatibility pragmas.
 	mutable concurrency::mutex remote_tables_mu;

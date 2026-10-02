@@ -27,4 +27,7 @@ DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntr
 // Get the DistributedClient from a Catalog.
 DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog);
 
+// Return the quoted `schema.entry` name of a catalog entry on the control node.
+string QualifiedRemoteName(const string &schema_name, const string &entry_name);
+
 } // namespace duckdb

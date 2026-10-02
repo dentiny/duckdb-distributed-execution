@@ -5,12 +5,14 @@ include_directories(${DuckDB_SOURCE_DIR}/third_party)
 include_directories(${DuckDB_SOURCE_DIR}/test/include)
 
 set(DUCKHERDER_UNITTEST_SOURCES
+    flight_test_utils.cpp
     main.cpp
     test_arrow_enum_conversion.cpp
     test_arrow_list_array_conversion.cpp
     test_arrow_map_conversion.cpp
     test_arrow_struct_conversion.cpp
     test_distributed_flight.cpp
+    test_distributed_flight_replay.cpp
     test_arrow_uuid_conversion.cpp
     test_duckherder_remote_endpoint.cpp
     test_query_plan_analyzer.cpp)
