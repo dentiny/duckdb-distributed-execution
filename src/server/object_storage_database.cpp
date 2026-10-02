@@ -144,6 +144,8 @@ arrow::Result<unique_ptr<ObjectStorageDatabase>> ObjectStorageDatabase::Create(c
 		instance->LoadStaticExtension<CoreFunctionsExtension>();
 		Connection conn(*instance);
 		ARROW_RETURN_NOT_OK(Execute(conn, "LOAD duckdb_object_storage"));
+		// Arrow 1.5 encodes decimals at their physical width instead of always as 128-bit, shrinking scan results.
+		ARROW_RETURN_NOT_OK(Execute(conn, "SET GLOBAL arrow_output_version = '1.5'"));
 		ARROW_RETURN_NOT_OK(ConfigureObjectStorage(conn, config));
 		ARROW_RETURN_NOT_OK(
 		    Execute(conn, StringUtil::Format("ATTACH %s AS %s%s", KeywordHelper::WriteQuoted(config.database_uri()),
