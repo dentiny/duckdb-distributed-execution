@@ -45,11 +45,30 @@ bool DependsOnTimeZone(const Expression &expr) {
 
 // The server runs queries with default settings, so the client must not have changed any affecting query results.
 bool HasDefaultQuerySettings(ClientContext &context) {
-	return Settings::Get<DefaultOrderSetting>(context) == OrderType::ASCENDING &&
-	       Settings::Get<DefaultNullOrderSetting>(context) == DefaultOrderByNullType::NULLS_LAST &&
-	       Settings::Get<DefaultCollationSetting>(context).empty() && !Settings::Get<IntegerDivisionSetting>(context) &&
-	       Settings::Get<IeeeFloatingPointOpsSetting>(context) &&
-	       Settings::Get<ScalarSubqueryErrorOnMultipleRowsSetting>(context);
+	if (Settings::Get<DefaultOrderSetting>(context) !=
+	    EnumUtil::FromString<OrderType>(DefaultOrderSetting::DefaultValue)) {
+		return false;
+	}
+	if (Settings::Get<DefaultNullOrderSetting>(context) !=
+	    EnumUtil::FromString<DefaultOrderByNullType>(DefaultNullOrderSetting::DefaultValue)) {
+		return false;
+	}
+	if (Settings::Get<DefaultCollationSetting>(context) != DefaultCollationSetting::DefaultValue) {
+		return false;
+	}
+	if (Settings::Get<IntegerDivisionSetting>(context) !=
+	    Value(IntegerDivisionSetting::DefaultValue).GetValue<bool>()) {
+		return false;
+	}
+	if (Settings::Get<IeeeFloatingPointOpsSetting>(context) !=
+	    Value(IeeeFloatingPointOpsSetting::DefaultValue).GetValue<bool>()) {
+		return false;
+	}
+	if (Settings::Get<ScalarSubqueryErrorOnMultipleRowsSetting>(context) !=
+	    Value(ScalarSubqueryErrorOnMultipleRowsSetting::DefaultValue).GetValue<bool>()) {
+		return false;
+	}
+	return true;
 }
 
 // Functions reading the session state, environment or sequences, which differ on the server.

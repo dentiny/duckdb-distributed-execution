@@ -45,9 +45,12 @@ if(${BUILD_UNITTESTS})
 endif()
 
 set(UTIL_SOURCES
-    src/utils/catalog_utils.cpp src/utils/network_utils.cpp
-    src/utils/remote_error.cpp src/utils/retry_utils.cpp
-    src/utils/sql_render_utils.cpp src/utils/thread_utils.cpp
+    src/utils/catalog_utils.cpp
+    src/utils/network_utils.cpp
+    src/utils/remote_error.cpp
+    src/utils/retry_utils.cpp
+    src/utils/sql_render_utils.cpp
+    src/utils/thread_utils.cpp
     src/utils/time_utils.cpp)
 
 set(CLIENT_EXECUTION_SOURCES
