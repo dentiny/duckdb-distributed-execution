@@ -57,15 +57,15 @@ bool HasDefaultQuerySettings(ClientContext &context) {
 		return false;
 	}
 	if (Settings::Get<IntegerDivisionSetting>(context) !=
-	    Value(IntegerDivisionSetting::DefaultValue).GetValue<bool>()) {
+	    StringUtil::Equals(IntegerDivisionSetting::DefaultValue, "true")) {
 		return false;
 	}
 	if (Settings::Get<IeeeFloatingPointOpsSetting>(context) !=
-	    Value(IeeeFloatingPointOpsSetting::DefaultValue).GetValue<bool>()) {
+	    StringUtil::Equals(IeeeFloatingPointOpsSetting::DefaultValue, "true")) {
 		return false;
 	}
 	if (Settings::Get<ScalarSubqueryErrorOnMultipleRowsSetting>(context) !=
-	    Value(ScalarSubqueryErrorOnMultipleRowsSetting::DefaultValue).GetValue<bool>()) {
+	    StringUtil::Equals(ScalarSubqueryErrorOnMultipleRowsSetting::DefaultValue, "true")) {
 		return false;
 	}
 	return true;
