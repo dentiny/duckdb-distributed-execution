@@ -19,6 +19,7 @@
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "server/object_storage_database.hpp"
+#include "server/startup_sql.hpp"
 #include "server/validation.hpp"
 #include "server/worker/row_group_range_scan.hpp"
 #include "server/worker/worker_node.hpp"
@@ -34,6 +35,10 @@ WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p)
 	db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
 	// Workers need core functions when created from a loadable extension.
 	db->LoadStaticExtension<CoreFunctionsExtension>();
+	auto startup_status = RunStartupSQL(*db);
+	if (!startup_status.ok()) {
+		throw IOException(startup_status.ToString());
+	}
 	conn = make_uniq<Connection>(*db);
 }
 

@@ -6,6 +6,7 @@
 #include "server/driver/worker_manager.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
+#include "server/worker/worker_node.hpp"
 
 #include <arrow/util/future.h>
 #include <atomic>
@@ -217,4 +218,19 @@ TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispat
 	ARROW_THROW_IF_ERROR(resized);
 	REQUIRE(*resized == pool);
 	REQUIRE(pool->GetCapacity() == 1);
+}
+
+TEST_CASE("DUCKHERDER_STARTUP_SQL runs in every database the server and workers create", "[distributed_flight]") {
+	auto config = ObjectStorageDatabase::ResolveConfig(distributed::StorageConfig {});
+
+	setenv("DUCKHERDER_STARTUP_SQL", "SET GLOBAL threads = 3; SET GLOBAL threads = 5", /*overwrite=*/1);
+	auto database = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
+	REQUIRE(database.ok());
+	Connection conn((*database)->GetInstance());
+	REQUIRE(conn.Query("SELECT current_setting('threads')")->GetValue(0, 0) == Value::BIGINT(5));
+
+	setenv("DUCKHERDER_STARTUP_SQL", "SELECT * FROM missing_table", /*overwrite=*/1);
+	REQUIRE_FALSE(ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE).ok());
+	REQUIRE_THROWS(WorkerNode("startup-sql-worker", "localhost", 18899));
+	unsetenv("DUCKHERDER_STARTUP_SQL");
 }
