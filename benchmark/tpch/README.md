@@ -41,6 +41,7 @@ systemd-run --user --scope -p AllowedCPUs=0-1 -p CPUQuota=200% -p MemoryMax=4G \
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--sf` | `1` | TPC-H scale factor |
+| `--queries` | all 22 | Queries to run, e.g. `"1 6 12"` or `1,6,12`; also limits the result check |
 | `--workers` | `"0 2"` | Worker counts to run; with 0 the driver runs queries itself |
 | `--reps` | `5` | Measured runs per query |
 | `--warmup` | `1` | Warm-up runs per query, excluded from `summary.csv` |
@@ -74,12 +75,13 @@ The values approximate S3 Standard within a region.
 
 ## Output
 
-Each run writes `results/<time>-sf<sf>/`:
+The console prints each query number as it runs. Each run writes `results/<time>-sf<sf>/`:
 
 - `summary.csv`: median seconds per query, one column per worker count
 - `metadata.json`: commit, settings, CPU and memory limits, and startup SQL
-- `n<N>.csv`: every timing; `n<N>.log` ends with the SQL each query sent to the driver
-- `cold-n<N>/`: per-run logs with `--cold`; `verify-n<N>/`: query and reference results
+- `n<N>.csv`: every timing
+- `runs-n<N>/`: `q<query>.log` and `.csv` per query, or `q<query>-r<run>` per run with `--cold`; each log ends with the SQL the query sent to the driver
+- `verify-n<N>/`: query and reference results
 - `n<N>-driver.log`, `n<N>-worker<i>.log`: process logs
 
 ## Results

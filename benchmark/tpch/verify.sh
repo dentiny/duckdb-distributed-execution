@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Check that the 22 TPC-H queries through duckherder match plain DuckDB on the file load.sh generated.
+# Check that TPC-H queries through duckherder match plain DuckDB on the file load.sh generated.
 # Usage: verify.sh <driver_host:port> <s3://bucket/root> <tpch_file>   (source rustfs.env first)
+# QUERIES selects the queries (default 1 to 22).
 set -euo pipefail
 ENDPOINT=$1
 DATA_PATH=$2
@@ -8,9 +9,10 @@ TPCH_FILE=$3
 DIR=$(cd "$(dirname "$0")" && pwd)
 DUCKDB=${DUCKDB:-$DIR/../../build/release/duckdb}
 OUT=${OUT:-$(mktemp -d)}
+QUERIES=${QUERIES:-$(seq 1 22)}
 
 queries() {
-	for q in $(seq 1 22); do
+	for q in $QUERIES; do
 		echo ".output $OUT/$1_q$q.csv"
 		echo "PRAGMA tpch($q);"
 	done
@@ -31,4 +33,4 @@ queries() {
 	queries ref
 } | "$DUCKDB" -bail
 
-python3 "$DIR/compare.py" "$OUT"
+python3 "$DIR/compare.py" "$OUT" $QUERIES

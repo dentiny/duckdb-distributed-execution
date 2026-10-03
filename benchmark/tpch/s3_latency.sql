@@ -1,5 +1,4 @@
--- Startup SQL simulating S3 Standard latency within a region; pass it as DUCKHERDER_STARTUP_SQL. Requires a build with
--- latency_injection_fs.
+-- Startup SQL that simulates S3 latency; pass it as DUCKHERDER_STARTUP_SQL. Requires a build with latency_injection_fs.
 SET GLOBAL latency_inject_fs_read_base_mean_ms = 30;
 SET GLOBAL latency_inject_fs_read_base_stddev = 15;
 SET GLOBAL latency_inject_fs_read_bytes_per_ms = 88000;

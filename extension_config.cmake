@@ -11,9 +11,7 @@ duckdb_extension_load(
   duckdb_object_storage SOURCE_DIR
   ${CMAKE_CURRENT_LIST_DIR}/duckdb-object-storage LOAD_TESTS)
 
-# Benchmark builds only: set LATENCY_INJECTION_FS_DIR to a
-# duckdb-filesystem-latency-injection checkout to simulate storage latency
-# through DUCKHERDER_STARTUP_SQL.
+# Optional: build latency_injection_fs from the checkout in LATENCY_INJECTION_FS_DIR.
 if(DEFINED ENV{LATENCY_INJECTION_FS_DIR})
   duckdb_extension_load(latency_injection_fs SOURCE_DIR
                         $ENV{LATENCY_INJECTION_FS_DIR})

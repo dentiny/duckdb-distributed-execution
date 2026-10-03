@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the TPC-H benchmark end to end: load the data once, then for each worker count start the driver with that many
 # workers, verify results, time the queries, and stop the driver. See README.md for options.
-# Results go to results/<time>-sf<N>/: metadata.json, n<N>.csv/.log, verify-n<N>.txt, process logs, summary.csv.
+# Results go to results/<time>-sf<N>/: metadata.json, n<N>.csv, runs-n<N>/, verify-n<N>.txt, process logs, summary.csv.
 set -euo pipefail
 
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -12,13 +12,14 @@ DRIVER_PORT=${DRIVER_PORT:-8815}
 # DuckDB executable on the --driver-ssh host.
 REMOTE_DUCKDB=${REMOTE_DUCKDB:-duckdb}
 # Optional cgroup isolation for local processes (Linux, systemd): one CPU list per worker, e.g. "4-7 8-11 12-15", and
-# one for the driver, e.g. "8-9". The client stays in whatever cgroup bench.sh runs in.
+# one for the driver, e.g. "8-9".
 read -r -a worker_cpus <<<"${WORKER_CPUS:-}"
 WORKER_MEMORY=${WORKER_MEMORY:-4G}
 DRIVER_CPUS=${DRIVER_CPUS:-}
 DRIVER_MEMORY=${DRIVER_MEMORY:-4G}
 
 SF=1
+QUERY_LIST=$(seq 1 22 | tr '\n' ' ')
 WORKER_COUNTS="0 2"
 REPS=5
 WARMUP=1
@@ -33,6 +34,7 @@ ENDPOINT=""
 while (($#)); do
 	case $1 in
 	--sf) SF=$2 && shift 2 ;;
+	--queries) QUERY_LIST=$2 && shift 2 ;;
 	--workers) WORKER_COUNTS=$2 && shift 2 ;;
 	--reps) REPS=$2 && shift 2 ;;
 	--warmup) WARMUP=$2 && shift 2 ;;
@@ -46,6 +48,10 @@ while (($#)); do
 	--driver-endpoint) ENDPOINT=$2 && shift 2 ;;
 	*) echo "Unknown option: $1" >&2 && exit 1 ;;
 	esac
+done
+QUERY_LIST=${QUERY_LIST//,/ }
+for q in $QUERY_LIST; do
+	[[ $q =~ ^([1-9]|1[0-9]|2[0-2])$ ]] || { echo "Invalid query '$q'; use numbers from 1 to 22" >&2 && exit 1; }
 done
 DATA_PATH=${DATA_PATH:-s3://duckherder/tpch-sf$SF}
 ENDPOINT=${ENDPOINT:-localhost:$DRIVER_PORT}
@@ -187,6 +193,7 @@ cat >"$OUT/metadata.json" <<EOF
   "modified_tracked_files": $(git -C "$ROOT" status --porcelain --untracked-files=no | wc -l | tr -d ' '),
   "duckdb": "$("$DUCKDB" -noheader -list -c 'SELECT version()')",
   "sf": $SF,
+  "queries": "$(echo $QUERY_LIST)",
   "worker_counts": "$WORKER_COUNTS",
   "reps": $REPS,
   "warmup": $WARMUP,
@@ -243,30 +250,32 @@ for n in $WORKER_COUNTS; do
 	start_cluster "$n"
 	if ((VERIFY)); then
 		mkdir -p "$OUT/verify-n$n"
-		if ! OUT=$OUT/verify-n$n "$DIR/verify.sh" "$ENDPOINT" "$DATA_PATH" "$TPCH_FILE" | tee "$OUT/verify-n$n.txt"; then
+		if ! OUT=$OUT/verify-n$n QUERIES=$QUERY_LIST "$DIR/verify.sh" "$ENDPOINT" "$DATA_PATH" "$TPCH_FILE" |
+			tee "$OUT/verify-n$n.txt"; then
 			failed+=("verify with $n workers")
 		fi
 	fi
-	if ((COLD)); then
-		# Restart every process before each run, so that no run reads data cached by an earlier one.
-		stop_all
-		mkdir -p "$OUT/cold-n$n"
-		echo "query,run,seconds" >"$OUT/n$n.csv"
-		for q in $(seq 1 22); do
-			printf 'Q%s ' "$q"
+	# Cold runs restart every process before each run, so that no run reads data cached by an earlier one.
+	((COLD)) && stop_all
+	mkdir -p "$OUT/runs-n$n"
+	echo "query,run,seconds" >"$OUT/n$n.csv"
+	for q in $QUERY_LIST; do
+		printf 'Q%s ' "$q"
+		if ((COLD)); then
 			for ((r = 0; r < REPS; r++)); do
 				start_cluster "$n"
-				QUERIES=$q WARMUP=0 REPS=1 "$DIR/run.sh" "$OUT/cold-n$n/q$q-r$r" "$ENDPOINT" "$DATA_PATH" >/dev/null
-				awk -F, -v r="$r" 'NR > 1 { print $1 "," r "," $3 }' "$OUT/cold-n$n/q$q-r$r.csv" >>"$OUT/n$n.csv"
+				QUERIES=$q WARMUP=0 REPS=1 "$DIR/run.sh" "$OUT/runs-n$n/q$q-r$r" "$ENDPOINT" "$DATA_PATH" >/dev/null
 				stop_all
+				awk -F, -v r="$r" 'NR > 1 { print $1 "," r "," $3 }' "$OUT/runs-n$n/q$q-r$r.csv" >>"$OUT/n$n.csv"
 			done
-		done
-		echo
-		echo "Wrote $OUT/n$n.csv; per-run logs in $OUT/cold-n$n"
-	else
-		WARMUP=$WARMUP REPS=$REPS "$DIR/run.sh" "$OUT/n$n" "$ENDPOINT" "$DATA_PATH"
-		stop_all
-	fi
+		else
+			QUERIES=$q WARMUP=$WARMUP REPS=$REPS "$DIR/run.sh" "$OUT/runs-n$n/q$q" "$ENDPOINT" "$DATA_PATH" >/dev/null
+			awk -F, 'NR > 1' "$OUT/runs-n$n/q$q.csv" >>"$OUT/n$n.csv"
+		fi
+	done
+	echo
+	stop_all
+	echo "Wrote $OUT/n$n.csv; per-query logs in $OUT/runs-n$n"
 done
 
 # Median seconds per query (columns are worker counts), excluding warm-up runs.

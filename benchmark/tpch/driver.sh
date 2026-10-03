@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the driver inside a DuckDB session and register remote workers; runs until killed (use tmux on EC2).
+# Start the driver inside a DuckDB session and register remote workers; runs until killed.
 # Usage: driver.sh <port> [worker_host:port ...]
 # Example: driver.sh 8815 10.0.0.2:8816 10.0.0.3:8816
 # The `distributed_server` executable cannot register remote workers, so the driver is started from SQL.
