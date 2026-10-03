@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
-RUSTFS_MC_IMAGE="${RUSTFS_MC_IMAGE:-quay.io/minio/mc:latest}"
 RUSTFS_CONTAINER="${RUSTFS_CONTAINER:-duckherder-rustfs}"
 RUSTFS_NETWORK="${RUSTFS_NETWORK:-duckherder-rustfs}"
 RUSTFS_VOLUME="${RUSTFS_VOLUME:-duckherder-rustfs-data}"
@@ -73,11 +72,15 @@ wait_until_ready() {
 }
 
 create_bucket() {
-	docker run --rm \
-		--network "${RUSTFS_NETWORK}" \
-		-e "MC_HOST_rustfs=http://${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}@${RUSTFS_CONTAINER}:9000" \
-		"${RUSTFS_MC_IMAGE}" \
-		mb --ignore-existing "rustfs/${RUSTFS_BUCKET}" >/dev/null
+	# A signed S3 PUT creates the bucket; an existing bucket returns 200 or 409 depending on the server.
+	local status
+	status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+		--aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
+		-X PUT "http://${RUSTFS_HOST}:${RUSTFS_S3_PORT}/${RUSTFS_BUCKET}")
+	if [[ "${status}" != 200 && "${status}" != 409 ]]; then
+		echo "Failed to create bucket '${RUSTFS_BUCKET}' (HTTP ${status})" >&2
+		return 1
+	fi
 }
 
 print_connection_info() {
