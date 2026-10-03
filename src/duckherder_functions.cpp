@@ -69,7 +69,7 @@ DatabaseInstance &GetDatabaseInstance(ExpressionState &state) {
 
 void ClearQueryRecorderStats(const DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &duckdb_instance = GetDatabaseInstance(state);
-	auto &instance_state = GetInstanceStateOrThrow(duckdb_instance);
+	auto &instance_state = GetDuckherderInstanceStateOrThrow(duckdb_instance);
 	instance_state.GetQueryRecorder()->ClearQueryRecords();
 	result.Reference(Value(SUCCESS));
 }

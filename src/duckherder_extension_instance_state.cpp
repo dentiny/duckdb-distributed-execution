@@ -17,12 +17,12 @@ void SetInstanceState(DatabaseInstance &instance, shared_ptr<DuckherderInstanceS
 	instance.GetObjectCache().Put(DuckherderInstanceState::CACHE_KEY, std::move(state));
 }
 
-DuckherderInstanceState &GetInstanceStateOrThrow(ClientContext &client_context) {
+DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(ClientContext &client_context) {
 	auto &duckdb_instance = client_context.db;
-	return GetInstanceStateOrThrow(*duckdb_instance);
+	return GetDuckherderInstanceStateOrThrow(*duckdb_instance);
 }
 
-DuckherderInstanceState &GetInstanceStateOrThrow(DatabaseInstance &instance) {
+DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(DatabaseInstance &instance) {
 	auto state = instance.GetObjectCache().Get<DuckherderInstanceState>(DuckherderInstanceState::CACHE_KEY);
 	if (state == nullptr) {
 		throw InternalException("duckherder instance state not found - extension not properly loaded");

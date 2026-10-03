@@ -156,7 +156,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 
 	// Preserve the complete CREATE TABLE definition, including constraints, defaults, and generated columns.
 	auto create_sql = create_info.ToString();
-	auto &instance_state = GetInstanceStateOrThrow(db_instance);
+	auto &instance_state = GetDuckherderInstanceStateOrThrow(db_instance);
 	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(create_sql);
 	auto &client = duckherder_catalog.GetClient(transaction.GetContext());
 	auto result = client.ExecuteStatement(create_sql, StatementType::CREATE_STATEMENT, duckherder_catalog.GetName());
@@ -291,7 +291,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, const
 	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
 	auto drop_sql = StringUtil::Format("DROP INDEX %s%s.%s", if_exists, schema_name, index_name);
 
-	auto &instance_state = GetInstanceStateOrThrow(db_instance);
+	auto &instance_state = GetDuckherderInstanceStateOrThrow(db_instance);
 	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
 	auto &client = duckherder_catalog.GetClient(context);
 	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
@@ -312,7 +312,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const
 		drop_sql += " CASCADE";
 	}
 
-	auto &instance_state = GetInstanceStateOrThrow(db_instance);
+	auto &instance_state = GetDuckherderInstanceStateOrThrow(db_instance);
 	const auto query_recorder_handle = instance_state.GetQueryRecorder()->RecordQueryStart(drop_sql);
 	auto &client = duckherder_catalog.GetClient(context);
 	auto result = client.ExecuteStatement(drop_sql, StatementType::DROP_STATEMENT);
