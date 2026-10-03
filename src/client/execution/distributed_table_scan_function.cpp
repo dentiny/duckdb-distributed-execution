@@ -42,7 +42,8 @@ unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deseriali
 	auto server_url = deserializer.ReadProperty<string>(103, "server_url");
 	auto remote_table_name = deserializer.ReadProperty<string>(104, "remote_table_name");
 	auto &table_entry =
-	    Catalog::GetEntry<TableCatalogEntry>(deserializer.Get<ClientContext &>(), catalog, schema, table);
+	    Catalog::GetEntry(deserializer.Get<ClientContext &>(), CatalogType::TABLE_ENTRY, catalog, schema, table)
+	        .Cast<TableCatalogEntry>();
 	auto result =
 	    make_uniq<DistributedTableScanBindData>(table_entry, std::move(server_url), std::move(remote_table_name));
 	result->pushed_query = deserializer.ReadPropertyWithDefault<string>(105, "pushed_query");
