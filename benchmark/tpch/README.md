@@ -58,7 +58,19 @@ systemd-run --user --scope -p AllowedCPUs=0-1 -p CPUQuota=200% -p MemoryMax=4G \
 | `WORKER_MEMORY`, `DRIVER_MEMORY` | `MemoryMax` of those scopes (default `4G`); DuckDB uses 80% of it |
 | `DUCKHERDER_STARTUP_SQL` | SQL the driver and workers run in their databases before attaching the data, e.g. `s3_latency.sql` |
 
-The client stays in the cgroup `bench.sh` runs in. Simulated latency applies only to reads that miss DuckDB's buffer pool, so without `--cold` it mostly shows in the first run of each query.
+The client stays in the cgroup `bench.sh` runs in.
+
+## Simulated latency
+
+`s3_latency.sql` wraps `SlateDBFileSystem`, the filesystem `duckdb_object_storage` registers for the ObjFS database, with [latency_inject_fs](https://github.com/dentiny/duckdb-filesystem-latency-injection). Each call sleeps before running the real I/O against local RustFS. The driver and every worker wrap their own filesystem.
+
+| Operation | Delay (log-normal) | Mean | Standard deviation |
+| --- | --- | ---: | ---: |
+| Read | base, plus `bytes / 88000` ms | 30 ms | 15 ms |
+| Stat | base | 20 ms | 10 ms |
+| List | base | 40 ms | 20 ms |
+
+The values approximate S3 Standard within a region.
 
 ## Output
 
@@ -72,30 +84,32 @@ Each run writes `results/<time>-sf<sf>/`:
 
 ## Results
 
-SF10 with the run command above (`--cold`, one run per query) on an i7-12700K (8 performance cores with two threads each, 4 efficiency cores, 31 GiB). Each DuckDB process gets 2 threads of one performance core and 4 GiB; RustFS gets the 4 efficiency cores. Seconds per query:
+SF10 with the run command above (`--cold`, one run per query) on an i7-12700K (8 performance cores with two threads each, 4 efficiency cores, 31 GiB). Each DuckDB process gets 2 threads of one performance core and 4 GiB; RustFS gets the 4 efficiency cores. Seconds per query, with simulated S3 latency (`s3_latency.sql`) and without:
 
-| Query | 0 workers | 3 workers | 3 / 0 |
-| ---: | ---: | ---: | ---: |
-| 1 | 29.67 | 35.08 | 1.18 |
-| 2 | 4.96 | 7.61 | 1.53 |
-| 3 | 45.66 | 86.67 | 1.90 |
-| 4 | 29.45 | 45.58 | 1.55 |
-| 5 | 51.99 | 80.34 | 1.55 |
-| 6 | 30.95 | 40.75 | 1.32 |
-| 7 | 55.08 | 95.74 | 1.74 |
-| 8 | 69.85 | 114.08 | 1.63 |
-| 9 | 87.72 | 123.01 | 1.40 |
-| 10 | 48.71 | 80.50 | 1.65 |
-| 11 | 4.45 | 7.48 | 1.68 |
-| 12 | 32.47 | 72.46 | 2.23 |
-| 13 | 24.94 | 35.18 | 1.41 |
-| 14 | 43.69 | 44.97 | 1.03 |
-| 15 | 41.22 | 45.56 | 1.11 |
-| 16 | 3.35 | 5.66 | 1.69 |
-| 17 | 45.57 | 73.79 | 1.62 |
-| 18 | 32.12 | 35.95 | 1.12 |
-| 19 | 50.43 | 92.06 | 1.83 |
-| 20 | 48.84 | 77.22 | 1.58 |
-| 21 | 49.86 | 79.02 | 1.58 |
-| 22 | 5.90 | 8.58 | 1.46 |
-| **Total** | **836.9** | **1287.3** | **1.54** |
+![TPC-H SF10 cold start](tpch-sf10-cold.png)
+
+| Query | Latency, 0 workers | Latency, 3 workers | None, 0 workers | None, 3 workers |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 28.79 | 20.04 | 2.89 | 2.09 |
+| 2 | 4.47 | 4.45 | 0.35 | 0.36 |
+| 3 | 44.30 | 44.59 | 3.77 | 3.65 |
+| 4 | 28.33 | 28.43 | 2.53 | 2.30 |
+| 5 | 48.95 | 48.88 | 3.90 | 3.70 |
+| 6 | 29.89 | 21.09 | 2.27 | 1.81 |
+| 7 | 54.46 | 53.93 | 4.13 | 4.01 |
+| 8 | 62.36 | 62.16 | 4.09 | 4.15 |
+| 9 | 67.14 | 67.17 | 5.60 | 5.57 |
+| 10 | 47.59 | 47.34 | 3.98 | 3.92 |
+| 11 | 4.04 | 4.13 | 0.30 | 0.31 |
+| 12 | 30.91 | 30.86 | 2.42 | 2.40 |
+| 13 | 22.81 | 22.59 | 2.60 | 2.62 |
+| 14 | 44.18 | 44.31 | 3.36 | 3.27 |
+| 15 | 41.29 | 41.56 | 3.02 | 2.91 |
+| 16 | 2.79 | 2.72 | 0.44 | 0.44 |
+| 17 | 42.51 | 42.87 | 3.11 | 3.08 |
+| 18 | 30.01 | 30.03 | 4.02 | 3.95 |
+| 19 | 48.19 | 48.26 | 3.78 | 3.73 |
+| 20 | 46.97 | 47.66 | 3.44 | 3.44 |
+| 21 | 44.71 | 44.56 | 4.27 | 4.25 |
+| 22 | 5.62 | 5.66 | 0.68 | 0.69 |
+| **Total** | **780.3** | **763.3** | **65.0** | **62.7** |
