@@ -8,6 +8,7 @@
 #include "duckdb/main/secret/secret.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "server/startup_sql.hpp"
 
 namespace duckdb {
 
@@ -147,6 +148,7 @@ arrow::Result<unique_ptr<ObjectStorageDatabase>> ObjectStorageDatabase::Create(c
 		// Arrow 1.5 encodes decimals at their physical width instead of always as 128-bit, shrinking scan results.
 		ARROW_RETURN_NOT_OK(Execute(conn, "SET GLOBAL arrow_output_version = '1.5'"));
 		ARROW_RETURN_NOT_OK(ConfigureObjectStorage(conn, config));
+		ARROW_RETURN_NOT_OK(RunStartupSQL(*instance));
 		ARROW_RETURN_NOT_OK(
 		    Execute(conn, StringUtil::Format("ATTACH %s AS %s%s", KeywordHelper::WriteQuoted(config.database_uri()),
 		                                     OBJECT_STORAGE_CATALOG,

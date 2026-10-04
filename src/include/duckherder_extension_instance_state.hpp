@@ -54,7 +54,7 @@ private:
 void SetInstanceState(DatabaseInstance &instance, shared_ptr<DuckherderInstanceState> state);
 
 // Get instance state, throwing if not found
-DuckherderInstanceState &GetInstanceStateOrThrow(ClientContext &client_context);
-DuckherderInstanceState &GetInstanceStateOrThrow(DatabaseInstance &instance);
+DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(ClientContext &client_context);
+DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(DatabaseInstance &instance);
 
 } // namespace duckdb

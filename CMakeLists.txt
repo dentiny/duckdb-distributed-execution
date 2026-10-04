@@ -90,6 +90,7 @@ set(CLIENT_SOURCES
     src/client/remote_index_registry.cpp)
 
 set(SERVER_UTIL_SOURCES src/server/object_storage_database.cpp
+                        src/server/startup_sql.cpp
                         src/server/validation.cpp)
 
 set(SERVER_DRIVER_SOURCES

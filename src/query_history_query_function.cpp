@@ -38,7 +38,7 @@ unique_ptr<GlobalTableFunctionState> GetQueryHistoryTableFuncInit(ClientContext 
                                                                   TableFunctionInitInput &input) {
 	auto result = make_uniq<GetQueryHistoryData>();
 	auto &query_records = result->query_records;
-	auto &instance_state = GetInstanceStateOrThrow(context);
+	auto &instance_state = GetDuckherderInstanceStateOrThrow(context);
 	query_records = instance_state.GetQueryRecorder()->GetQueryRecords();
 
 	// Sort the results to ensure determinististism and testibility.
