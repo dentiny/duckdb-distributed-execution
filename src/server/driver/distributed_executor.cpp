@@ -9,8 +9,6 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
-#include "duckdb/parallel/pipeline.hpp"
-#include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
@@ -24,41 +22,9 @@
 #include "server/driver/query_utils.hpp"
 #include "server/driver/worker_manager.hpp"
 
+#include <future>
+
 namespace duckdb {
-
-namespace {
-
-class WorkerDispatchTask : public BaseExecutorTask {
-public:
-	WorkerDispatchTask(TaskExecutor &executor, WorkerNodeClient &client_p, const vector<idx_t> &task_indices_p,
-	                   const vector<distributed::ExecutePartitionRequest> &requests_p,
-	                   vector<arrow::RecordBatchVector> &task_batches_p, vector<arrow::Status> &task_statuses_p)
-	    : BaseExecutorTask(executor), client(client_p), task_indices(task_indices_p), requests(requests_p),
-	      task_batches(task_batches_p), task_statuses(task_statuses_p) {
-	}
-
-	void ExecuteTask() override {
-		for (auto task_idx : task_indices) {
-			task_statuses[task_idx] = client.ExecutePartition(requests[task_idx], task_batches[task_idx]);
-			if (!task_statuses[task_idx].ok()) {
-				return;
-			}
-		}
-	}
-
-	string TaskType() const override {
-		return "WorkerDispatchTask";
-	}
-
-private:
-	WorkerNodeClient &client;
-	const vector<idx_t> &task_indices;
-	const vector<distributed::ExecutePartitionRequest> &requests;
-	vector<arrow::RecordBatchVector> &task_batches;
-	vector<arrow::Status> &task_statuses;
-};
-
-} // namespace
 
 DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p,
                                          distributed::StorageConfig storage_config_p)
@@ -203,15 +169,26 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 
 	vector<arrow::RecordBatchVector> task_batches(tasks.size());
 	vector<arrow::Status> task_statuses(tasks.size());
-	TaskExecutor executor(*conn.context);
+	vector<std::future<void>> dispatches;
+	dispatches.reserve(workers.size());
 	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
 		if (worker_to_tasks[worker_id].empty()) {
 			continue;
 		}
-		executor.ScheduleTask(make_uniq<WorkerDispatchTask>(
-		    executor, *workers[worker_id]->client, worker_to_tasks[worker_id], requests, task_batches, task_statuses));
+		// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
+		dispatches.emplace_back(std::async(std::launch::async, [&, worker_id]() {
+			for (auto task_idx : worker_to_tasks[worker_id]) {
+				task_statuses[task_idx] =
+				    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
+				if (!task_statuses[task_idx].ok()) {
+					return;
+				}
+			}
+		}));
 	}
-	executor.WorkOnTasks();
+	for (auto &dispatch : dispatches) {
+		dispatch.get();
+	}
 
 	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
 		for (auto task_idx : worker_to_tasks[worker_id]) {
