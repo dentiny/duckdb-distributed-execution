@@ -187,34 +187,26 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	vector<arrow::Future<>> dispatches;
 	arrow::Status dispatch_error = arrow::Status::OK();
 	dispatches.reserve(workers.size());
-	try {
-		for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
-			if (worker_to_tasks[worker_id].empty()) {
-				continue;
-			}
-			// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
-			auto submitted = pool->Submit([&, worker_id]() -> arrow::Status {
-				for (auto task_idx : worker_to_tasks[worker_id]) {
-					task_statuses[task_idx] =
-					    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
-					if (!task_statuses[task_idx].ok()) {
-						return arrow::Status::OK();
-					}
+	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
+		if (worker_to_tasks[worker_id].empty()) {
+			continue;
+		}
+		// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
+		auto submitted = pool->Submit([&, worker_id]() -> arrow::Status {
+			for (auto task_idx : worker_to_tasks[worker_id]) {
+				task_statuses[task_idx] =
+				    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
+				if (!task_statuses[task_idx].ok()) {
+					return arrow::Status::OK();
 				}
-				return arrow::Status::OK();
-			});
-			if (!submitted.ok()) {
-				dispatch_error = submitted.status();
-				break;
 			}
-			dispatches.emplace_back(*submitted);
+			return arrow::Status::OK();
+		});
+		if (!submitted.ok()) {
+			dispatch_error = submitted.status();
+			break;
 		}
-	} catch (...) {
-		// Submitted tasks reference query-local state: drain them before unwinding.
-		for (auto &dispatch : dispatches) {
-			dispatch.Wait();
-		}
-		throw;
+		dispatches.emplace_back(*submitted);
 	}
 	for (auto &dispatch : dispatches) {
 		const auto &status = dispatch.status();
