@@ -1,13 +1,24 @@
 #pragma once
 
 #include "duckdb/common/enums/statement_type.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/types.hpp"
 
 #include <arrow/array.h>
+#include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/type.h>
 #include <memory>
+
+// Throw a DuckDB IOException carrying the error message if `expr`, an arrow::Status or arrow::Result, is not OK.
+#define ARROW_THROW_IF_ERROR(expr)                                                                                     \
+	do {                                                                                                               \
+		::arrow::Status _s = ::arrow::ToStatus(expr);                                                                  \
+		if (ARROW_PREDICT_FALSE(!_s.ok())) {                                                                           \
+			throw ::duckdb::IOException("%s failed: %s", ARROW_STRINGIFY(expr), _s.ToString());                        \
+		}                                                                                                              \
+	} while (false)
 
 namespace arrow {
 class RecordBatch;

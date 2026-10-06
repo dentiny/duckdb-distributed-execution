@@ -1,5 +1,6 @@
 #include "catch/catch.hpp"
 
+#include "arrow_utils.hpp"
 #include "distributed.pb.h"
 #include "flight_test_utils.hpp"
 #include "server/driver/worker_manager.hpp"
@@ -176,8 +177,7 @@ TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispat
 	DuckDB db(nullptr);
 	WorkerManager manager(db);
 	auto result = manager.GetDispatchPool(2);
-	INFO(result.status().ToString());
-	REQUIRE(result.ok());
+	ARROW_THROW_IF_ERROR(result);
 	auto pool = *result;
 	auto gate = arrow::Future<>::Make();
 	auto two_started = arrow::Future<>::Make();
@@ -208,15 +208,13 @@ TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispat
 		future.Wait();
 	}
 	for (auto &future : futures) {
-		INFO(future.status().ToString());
-		REQUIRE(future.status().ok());
+		ARROW_THROW_IF_ERROR(future.status());
 	}
 	REQUIRE(reached_two);
 	REQUIRE(running_before_release == 2);
 	REQUIRE(started.load() == 3);
 	auto resized = manager.GetDispatchPool(1);
-	INFO(resized.status().ToString());
-	REQUIRE(resized.ok());
+	ARROW_THROW_IF_ERROR(resized);
 	REQUIRE(*resized == pool);
 	REQUIRE(pool->GetCapacity() == 1);
 }
