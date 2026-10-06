@@ -10,6 +10,7 @@
 #include "utils/mutex.hpp"
 
 #include <arrow/status.h>
+#include <arrow/util/thread_pool.h>
 
 namespace duckdb {
 
@@ -32,6 +33,8 @@ public:
 	explicit WorkerManager(DuckDB &db_ref) : db(db_ref) {
 	}
 
+	arrow::Result<std::shared_ptr<arrow::internal::ThreadPool>> GetDispatchPool(int32_t threads);
+
 	// Register a single external worker node.
 	arrow::Status RegisterWorker(const string &worker_id, const string &location);
 
@@ -53,6 +56,7 @@ private:
 	mutable concurrency::mutex mu;
 	vector<unique_ptr<WorkerInfo>> workers DUCKDB_GUARDED_BY(mu);
 	DuckDB &db;
+	std::shared_ptr<arrow::internal::ThreadPool> dispatch_pool DUCKDB_GUARDED_BY(mu);
 
 	// Driver node.
 	unique_ptr<WorkerInfo> driver_node DUCKDB_GUARDED_BY(mu);

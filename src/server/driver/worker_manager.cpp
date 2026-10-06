@@ -1,9 +1,20 @@
+#include "server/driver/worker_manager.hpp"
+
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "server/driver/worker_manager.hpp"
 #include "utils/network_utils.hpp"
 
 namespace duckdb {
+
+arrow::Result<std::shared_ptr<arrow::internal::ThreadPool>> WorkerManager::GetDispatchPool(int32_t threads) {
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
+	if (!dispatch_pool) {
+		ARROW_ASSIGN_OR_RAISE(dispatch_pool, arrow::internal::ThreadPool::Make(threads));
+	} else if (dispatch_pool->GetCapacity() != threads) {
+		ARROW_RETURN_NOT_OK(dispatch_pool->SetCapacity(threads));
+	}
+	return dispatch_pool;
+}
 
 arrow::Status WorkerManager::RegisterWorker(const string &worker_id, const string &location) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);

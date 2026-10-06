@@ -2,9 +2,12 @@
 
 #include "distributed.pb.h"
 #include "flight_test_utils.hpp"
+#include "server/driver/worker_manager.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 
+#include <arrow/util/future.h>
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -167,4 +170,47 @@ TEST_CASE("S3 storage identity excludes credentials", "[distributed_flight][obje
 	auto invalid = first;
 	invalid.mutable_s3()->clear_secret();
 	REQUIRE_FALSE(ValidateRequest(invalid).ok());
+}
+
+TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispatch_pool]") {
+	DuckDB db(nullptr);
+	WorkerManager manager(db);
+	auto result = manager.GetDispatchPool(2);
+	REQUIRE(result.ok());
+	auto pool = *result;
+	auto gate = arrow::Future<>::Make();
+	auto two_started = arrow::Future<>::Make();
+	std::atomic<idx_t> started {0};
+	vector<arrow::Future<>> futures;
+	futures.reserve(3);
+	for (idx_t idx = 0; idx < 3; ++idx) {
+		auto submitted = pool->Submit([&]() {
+			if (++started == 2) {
+				two_started.MarkFinished();
+			}
+			gate.Wait();
+			return arrow::Status::OK();
+		});
+		if (!submitted.ok()) {
+			gate.MarkFinished();
+			for (auto &future : futures) {
+				future.Wait();
+			}
+			FAIL(submitted.status().ToString());
+		}
+		futures.push_back(*submitted);
+	}
+	const auto reached_two = two_started.Wait(5.0);
+	const auto running_before_release = started.load();
+	gate.MarkFinished();
+	for (auto &future : futures) {
+		REQUIRE(future.status().ok());
+	}
+	REQUIRE(reached_two);
+	REQUIRE(running_before_release == 2);
+	REQUIRE(started.load() == 3);
+	auto resized = manager.GetDispatchPool(1);
+	REQUIRE(resized.ok());
+	REQUIRE(*resized == pool);
+	REQUIRE(pool->GetCapacity() == 1);
 }

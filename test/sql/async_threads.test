@@ -1,0 +1,46 @@
+# name: test/sql/async_threads.test
+# description: Worker dispatch thread limit validation and reset
+# group: [sql]
+
+require duckherder
+
+query I
+SELECT current_setting('duckherder_async_threads');
+----
+0
+
+statement ok
+SET GLOBAL duckherder_async_threads = 3;
+
+query I
+SELECT current_setting('duckherder_async_threads');
+----
+3
+
+statement error
+SET GLOBAL duckherder_async_threads = -1;
+----
+duckherder_async_threads must be between 0 and INT_MAX
+
+statement error
+SET GLOBAL duckherder_async_threads = NULL;
+----
+duckherder_async_threads must be between 0 and INT_MAX
+
+statement error
+SET GLOBAL duckherder_async_threads = 2147483648;
+----
+duckherder_async_threads must be between 0 and INT_MAX
+
+statement error
+SET LOCAL duckherder_async_threads = 2;
+----
+SET LOCAL is not implemented
+
+statement ok
+RESET GLOBAL duckherder_async_threads;
+
+query I
+SELECT current_setting('duckherder_async_threads');
+----
+0

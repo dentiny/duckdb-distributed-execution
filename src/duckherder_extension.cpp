@@ -5,6 +5,7 @@
 #include "client/execution/logical_remote_alter_table.hpp"
 #include "client/execution/logical_remote_create_index.hpp"
 #include "duckdb.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckherder_extension.hpp"
 #include "duckherder_functions.hpp"
 #include "duckherder_extension_instance_state.hpp"
@@ -14,6 +15,16 @@
 namespace duckdb {
 
 namespace {
+
+void SetAsyncThreads(ClientContext &, SetScope scope, Value &parameter) {
+	if (scope != SetScope::GLOBAL) {
+		throw InvalidInputException("duckherder_async_threads must be set globally");
+	}
+	const auto threads = parameter.IsNull() ? -1 : parameter.GetValue<int64_t>();
+	if (threads < 0 || threads > NumericLimits<int32_t>::Maximum()) {
+		throw InvalidInputException("duckherder_async_threads must be between 0 and INT_MAX");
+	}
+}
 
 void LoadInternal(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
@@ -38,6 +49,10 @@ void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption(RETRY_JITTER_RATIO_SETTING, "Jitter ratio applied to Duckherder RPC retry backoff",
 	                          LogicalType::DOUBLE, Value::DOUBLE(DEFAULT_RETRY_JITTER_RATIO), nullptr,
 	                          SetScope::GLOBAL);
+
+	config.AddExtensionOption("duckherder_async_threads",
+	                          "Worker RPC thread limit (0: min(4 * DuckDB threads, 256)); applied on next dispatch",
+	                          LogicalType::BIGINT, Value::BIGINT(0), SetAsyncThreads, SetScope::GLOBAL);
 
 	// Set extension state.
 	SetInstanceState(db, make_shared_ptr<DuckherderInstanceState>());

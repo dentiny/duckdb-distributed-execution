@@ -9,6 +9,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
@@ -22,7 +23,7 @@
 #include "server/driver/query_utils.hpp"
 #include "server/driver/worker_manager.hpp"
 
-#include <future>
+#include <arrow/util/future.h>
 
 namespace duckdb {
 
@@ -169,25 +170,66 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 
 	vector<arrow::RecordBatchVector> task_batches(tasks.size());
 	vector<arrow::Status> task_statuses(tasks.size());
-	vector<std::future<void>> dispatches;
+	Value thread_setting;
+	if (!db_instance.TryGetCurrentSetting("duckherder_async_threads", thread_setting)) {
+		throw InternalException("Duckherder async thread setting is not registered");
+	}
+	auto thread_count = thread_setting.GetValue<int64_t>();
+	if (thread_count == 0) {
+		const auto cpu_threads = TaskScheduler::GetScheduler(*conn.context).NumberOfThreads();
+		thread_count = MinValue<idx_t>(cpu_threads, 64) * 4;
+	}
+	auto pool_result = worker_manager.GetDispatchPool(NumericCast<int>(thread_count));
+	if (!pool_result.ok()) {
+		throw IOException("Failed creating worker dispatch pool: %s", pool_result.status().ToString());
+	}
+	auto pool = *pool_result;
+	vector<arrow::Future<>> dispatches;
+	arrow::Status dispatch_error = arrow::Status::OK();
 	dispatches.reserve(workers.size());
-	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
-		if (worker_to_tasks[worker_id].empty()) {
-			continue;
-		}
-		// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
-		dispatches.emplace_back(std::async(std::launch::async, [&, worker_id]() {
-			for (auto task_idx : worker_to_tasks[worker_id]) {
-				task_statuses[task_idx] =
-				    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
-				if (!task_statuses[task_idx].ok()) {
-					return;
-				}
+	try {
+		for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
+			if (worker_to_tasks[worker_id].empty()) {
+				continue;
 			}
-		}));
+			// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
+			auto submitted = pool->Submit([&, worker_id]() -> arrow::Status {
+				try {
+					for (auto task_idx : worker_to_tasks[worker_id]) {
+						task_statuses[task_idx] =
+						    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
+						if (!task_statuses[task_idx].ok()) {
+							return arrow::Status::OK();
+						}
+					}
+				} catch (const std::exception &ex) {
+					return arrow::Status::UnknownError(ex.what());
+				} catch (...) {
+					return arrow::Status::UnknownError("Unknown worker dispatch exception");
+				}
+				return arrow::Status::OK();
+			});
+			if (!submitted.ok()) {
+				dispatch_error = submitted.status();
+				break;
+			}
+			dispatches.emplace_back(*submitted);
+		}
+	} catch (...) {
+		// Submitted tasks reference query-local state: drain them before unwinding.
+		for (auto &dispatch : dispatches) {
+			dispatch.Wait();
+		}
+		throw;
 	}
 	for (auto &dispatch : dispatches) {
-		dispatch.get();
+		const auto &status = dispatch.status();
+		if (!status.ok() && dispatch_error.ok()) {
+			dispatch_error = status;
+		}
+	}
+	if (!dispatch_error.ok()) {
+		throw IOException("Worker dispatch failed: %s", dispatch_error.ToString());
 	}
 
 	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
