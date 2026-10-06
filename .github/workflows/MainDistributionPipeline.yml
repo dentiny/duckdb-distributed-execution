@@ -19,6 +19,7 @@ jobs:
       duckdb_version: v1.5.6
       ci_tools_version: v1.5.6
       extension_name: motherduck
+      vcpkg_commit: b6344914f08db9186dcd07a6b8f77ff43c699070
 
   code-quality-check:
     name: Code Quality Check
