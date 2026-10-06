@@ -176,6 +176,7 @@ TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispat
 	DuckDB db(nullptr);
 	WorkerManager manager(db);
 	auto result = manager.GetDispatchPool(2);
+	INFO(result.status().ToString());
 	REQUIRE(result.ok());
 	auto pool = *result;
 	auto gate = arrow::Future<>::Make();
@@ -204,12 +205,17 @@ TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispat
 	const auto running_before_release = started.load();
 	gate.MarkFinished();
 	for (auto &future : futures) {
+		future.Wait();
+	}
+	for (auto &future : futures) {
+		INFO(future.status().ToString());
 		REQUIRE(future.status().ok());
 	}
 	REQUIRE(reached_two);
 	REQUIRE(running_before_release == 2);
 	REQUIRE(started.load() == 3);
 	auto resized = manager.GetDispatchPool(1);
+	INFO(resized.status().ToString());
 	REQUIRE(resized.ok());
 	REQUIRE(*resized == pool);
 	REQUIRE(pool->GetCapacity() == 1);

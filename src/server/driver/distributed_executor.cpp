@@ -194,18 +194,12 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 			}
 			// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
 			auto submitted = pool->Submit([&, worker_id]() -> arrow::Status {
-				try {
-					for (auto task_idx : worker_to_tasks[worker_id]) {
-						task_statuses[task_idx] =
-						    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
-						if (!task_statuses[task_idx].ok()) {
-							return arrow::Status::OK();
-						}
+				for (auto task_idx : worker_to_tasks[worker_id]) {
+					task_statuses[task_idx] =
+					    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
+					if (!task_statuses[task_idx].ok()) {
+						return arrow::Status::OK();
 					}
-				} catch (const std::exception &ex) {
-					return arrow::Status::UnknownError(ex.what());
-				} catch (...) {
-					return arrow::Status::UnknownError("Unknown worker dispatch exception");
 				}
 				return arrow::Status::OK();
 			});
