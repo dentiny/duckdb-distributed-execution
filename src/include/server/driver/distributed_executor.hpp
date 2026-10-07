@@ -19,6 +19,7 @@ namespace duckdb {
 class Connection;
 class WorkerManager;
 class LogicalOperator;
+class SelectStatement;
 
 // Struct which represents a distributed pipeline task.
 // This represents one unit of work that will be executed on a worker.
@@ -65,15 +66,17 @@ struct DistributedExecutionResult {
 	}
 };
 
+enum class DistributedFragmentKind { TABLE, PARTITIONED_JOIN };
+
 // Distributed executor that partitions data and sends to workers.
 class DistributedExecutor {
 public:
 	DistributedExecutor(WorkerManager &worker_manager_p, Connection &conn_p,
 	                    distributed::StorageConfig storage_config_p);
 
-	// Execute a query in distributed manner.
-	// Returns result with nullptr if query cannot be distributed, which will fall back to local execution.
-	DistributedExecutionResult ExecuteDistributed(const string &sql);
+	// Returns an empty result when the query cannot be distributed.
+	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind);
+	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement);
 
 private:
 	WorkerManager &worker_manager;

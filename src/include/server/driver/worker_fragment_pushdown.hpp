@@ -5,10 +5,17 @@
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "server/driver/query_history.hpp"
 
+#include <optional>
+
 namespace duckdb {
 
 class Connection;
 class DistributedExecutor;
+class LogicalOperator;
+class PreparedStatement;
+class SelectStatement;
+
+enum class DistributedFragmentKind;
 
 // Runs fragments of a client's queries through the distributed executor, which uses its own connection because the
 // client's connection is busy running the query containing the fragment.
@@ -19,19 +26,24 @@ public:
 	WorkerFragmentState(DistributedExecutor &executor_p, Connection &connection_p);
 
 	// Returns the result of `sql`, whose columns have `types`, as chunks of arbitrary size.
-	vector<unique_ptr<DataChunk>> Execute(ClientContext &context, const string &sql, const vector<LogicalType> &types);
+	vector<unique_ptr<DataChunk>> Execute(ClientContext &context, const string &sql, const vector<LogicalType> &types,
+	                                      DistributedFragmentKind kind);
 	// Returns the fragments executed since the last call.
 	vector<QueryExecutionInfo> TakeExecutions();
+	// The optimizer runs during Prepare and needs the original SQL to build Join task queries.
+	// Expose it only for this client query, not for later prepares on the same connection.
+	unique_ptr<PreparedStatement> PrepareClientQuery(Connection &client_connection, const string &sql);
+	const string *PlanningQuery() const;
+	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement);
 
 private:
 	DistributedExecutor &executor;
 	Connection &connection;
 	vector<QueryExecutionInfo> executions;
+	std::optional<string> planning_query;
 };
 
-// Replaces the single-table part of a query with a fragment the distributed executor runs on workers: an aggregate
-// over the table if it can be partially computed per partition, otherwise the table scan. Plans reading several
-// tables, such as joins, run on the driver.
+// Replaces eligible single-table fragments or a complete two-table Join aggregate with a worker fragment.
 OptimizerExtension GetWorkerFragmentExtension();
 
 } // namespace duckdb

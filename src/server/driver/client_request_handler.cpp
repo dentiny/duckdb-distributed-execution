@@ -233,7 +233,9 @@ arrow::Status ClientRequestHandler::ScanTable(const distributed::ScanTableReques
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
 
-	auto prepared = registration.connection->Prepare(sql);
+	auto prepared = registration.worker_fragments
+	                    ? registration.worker_fragments->PrepareClientQuery(*registration.connection, sql)
+	                    : registration.connection->Prepare(sql);
 	if (prepared->HasError()) {
 		return arrow::Status::Invalid("Query error: " + prepared->GetError());
 	}
@@ -248,7 +250,7 @@ arrow::Status ClientRequestHandler::ScanTable(const distributed::ScanTableReques
 	auto query_start = std::chrono::steady_clock::now();                // For duration calculation
 	query_info.execution_start_time = std::chrono::system_clock::now(); // Wall-clock timestamp
 
-	// The driver plans the query, running its single-table fragments on workers when possible.
+	// The optimizer routes eligible scan and Join fragments through worker_fragment.
 	vector<Value> parameters;
 	auto result = prepared->Execute(parameters, /*allow_stream_result=*/false);
 
