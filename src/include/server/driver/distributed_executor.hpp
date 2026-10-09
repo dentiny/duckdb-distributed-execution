@@ -75,8 +75,10 @@ public:
 	                    distributed::StorageConfig storage_config_p);
 
 	// Returns an empty result when the query cannot be distributed.
-	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind);
-	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql);
+	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind,
+	                                              const QueryPlanAnalyzer::QueryAnalysis *join_analysis);
+	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql,
+	                      QueryPlanAnalyzer::QueryAnalysis &analysis);
 
 private:
 	WorkerManager &worker_manager;

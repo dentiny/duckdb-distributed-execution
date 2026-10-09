@@ -3,6 +3,7 @@
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/partition_sql_generator.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
+#include "server/driver/query_utils.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -149,14 +150,11 @@ struct JoinPartitionInfo {
 // distinct native scans that match the SQL references before rewriting either table.
 std::optional<JoinPartitionInfo> GetJoinPartitionInfo(LogicalOperator &logical_plan, const SelectNode &select,
                                                       QueryPlanAnalyzer &analyzer) {
-	if (!select.from_table || select.from_table->type != TableReferenceType::JOIN || !select.cte_map.map.empty() ||
-	    !select.modifiers.empty() || select.sample || select.from_table->sample ||
-	    !select.from_table->column_name_alias.empty()) {
+	if (select.from_table->sample || !select.from_table->column_name_alias.empty()) {
 		return std::nullopt;
 	}
 	const auto &join = select.from_table->Cast<JoinRef>();
-	if (join.type != JoinType::INNER || !join.alias.empty() || !HasEquiJoin(logical_plan) ||
-	    join.left->type != TableReferenceType::BASE_TABLE || join.right->type != TableReferenceType::BASE_TABLE) {
+	if (!join.alias.empty() || !HasEquiJoin(logical_plan)) {
 		return std::nullopt;
 	}
 	const auto &left = join.left->Cast<BaseTableRef>();
@@ -236,8 +234,8 @@ vector<DistributedPipelineTask> TaskPartitioner::CreateSingleTask(const string &
 }
 
 bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement,
-                                       string &qualified_sql) {
-	if (statement.node->type != QueryNodeType::SELECT_NODE) {
+                                       string &qualified_sql, QueryPlanAnalyzer::QueryAnalysis &analysis) {
+	if (!IsSimplePartitionedJoin(statement)) {
 		return false;
 	}
 	auto info = GetJoinPartitionInfo(logical_plan, statement.node->Cast<SelectNode>(), analyzer);
@@ -250,6 +248,10 @@ bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const Sele
 	auto &join = copy->Cast<SelectStatement>().node->Cast<SelectNode>().from_table->Cast<JoinRef>();
 	QualifyRef(join.left->Cast<BaseTableRef>(), *info->left_scan->GetTable());
 	QualifyRef(join.right->Cast<BaseTableRef>(), *info->right_scan->GetTable());
+	analysis = QueryPlanAnalyzer::AnalyzeQuery(logical_plan, copy->Cast<SelectStatement>());
+	if (!analysis.supports_partitioned_aggregation) {
+		return false;
+	}
 	qualified_sql = copy->ToString();
 	return true;
 }
@@ -296,6 +298,9 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 	} else if (select.from_table->type == TableReferenceType::JOIN) {
 		// Give workers disjoint ranges of one input; each repeats the other input and joins locally.
 		// This avoids a shuffle and keeps every matching pair in exactly one task.
+		if (!IsSimplePartitionedJoin(statement)) {
+			return CreateSingleTask(base_sql);
+		}
 		auto info = GetJoinPartitionInfo(logical_plan, select, analyzer);
 		if (!info) {
 			return CreateSingleTask(base_sql);

@@ -4,6 +4,7 @@
 #include "duckdb/main/client_context_state.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "server/driver/query_history.hpp"
+#include "server/driver/query_plan_analyzer.hpp"
 
 #include <optional>
 
@@ -27,14 +28,16 @@ public:
 
 	// Returns the result of `sql`, whose columns have `types`, as chunks of arbitrary size.
 	vector<unique_ptr<DataChunk>> Execute(ClientContext &context, const string &sql, const vector<LogicalType> &types,
-	                                      DistributedFragmentKind kind);
+	                                      DistributedFragmentKind kind,
+	                                      const QueryPlanAnalyzer::QueryAnalysis *join_analysis);
 	// Returns the fragments executed since the last call.
 	vector<QueryExecutionInfo> TakeExecutions();
 	// The optimizer runs during Prepare and needs the original SQL to build Join task queries.
 	// Expose it only for this client query, not for later prepares on the same connection.
 	unique_ptr<PreparedStatement> PrepareClientQuery(Connection &client_connection, const string &sql);
 	const string *PlanningQuery() const;
-	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql);
+	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql,
+	                      QueryPlanAnalyzer::QueryAnalysis &analysis);
 
 private:
 	DistributedExecutor &executor;

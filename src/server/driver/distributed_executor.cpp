@@ -36,17 +36,12 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 }
 
 bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement,
-                                           string &qualified_sql) {
+                                           string &qualified_sql, QueryPlanAnalyzer::QueryAnalysis &analysis) {
 	if (storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET ||
-	    worker_manager.GetAvailableWorkers().size() < 2 || !IsSimplePartitionedJoin(statement) ||
-	    !IsSupportedPlan(plan)) {
+	    worker_manager.GetAvailableWorkers().size() < 2 || !IsSupportedPlan(plan)) {
 		return false;
 	}
-	// Each worker produces a partial aggregate; the driver must be able to merge those results.
-	if (!QueryPlanAnalyzer::AnalyzeQuery(plan, statement).supports_partitioned_aggregation) {
-		return false;
-	}
-	return task_partitioner->CanPartitionJoin(plan, statement, qualified_sql);
+	return task_partitioner->CanPartitionJoin(plan, statement, qualified_sql, analysis);
 }
 
 // Distributed execution Driver implementing DuckDB's parallel execution model.
@@ -66,7 +61,9 @@ bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectSt
 // 3. Each worker executes its partition (LocalState semantics) [WORKER]
 // 4. Driver collects and combines results (GlobalState semantics) [Driver]
 // 5. Final result is returned to client [Driver]
-DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string &sql, DistributedFragmentKind kind) {
+DistributedExecutionResult
+DistributedExecutor::ExecuteDistributed(const string &sql, DistributedFragmentKind kind,
+                                        const QueryPlanAnalyzer::QueryAnalysis *join_analysis) {
 	DistributedExecutionResult exec_result;
 	auto &db_instance = *conn.context->db;
 
@@ -93,6 +90,7 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	}
 
 	// Phase 1: Plan extraction and validation
+	// Refresh the plan for task partitioning; table storage may change after the client prepares the fragment.
 	unique_ptr<LogicalOperator> logical_plan = conn.ExtractPlan(sql);
 	if (logical_plan == nullptr) {
 		return exec_result;
@@ -103,8 +101,9 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		return exec_result;
 	}
 
-	// Analyze query to determine merge strategy
-	QueryPlanAnalyzer::QueryAnalysis query_analysis = QueryPlanAnalyzer::AnalyzeQuery(*logical_plan, statement);
+	// The Join's aggregate rewrite was validated against the client plan during Prepare.
+	QueryPlanAnalyzer::QueryAnalysis query_analysis =
+	    join_analysis ? *join_analysis : QueryPlanAnalyzer::AnalyzeQuery(*logical_plan, statement);
 	const bool partitioned_aggregation = query_analysis.supports_partitioned_aggregation &&
 	                                     storage_config.storage_case() != distributed::StorageConfig::STORAGE_NOT_SET;
 	if (kind == DistributedFragmentKind::PARTITIONED_JOIN && !partitioned_aggregation) {

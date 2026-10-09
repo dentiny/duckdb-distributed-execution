@@ -24,22 +24,30 @@ namespace duckdb {
 namespace {
 
 struct WorkerFragmentBindData : public TableFunctionData {
-	WorkerFragmentBindData(string sql_p, vector<LogicalType> types_p, DistributedFragmentKind kind_p)
-	    : sql(std::move(sql_p)), types(std::move(types_p)), kind(kind_p) {
+	WorkerFragmentBindData(string sql_p, vector<LogicalType> types_p, DistributedFragmentKind kind_p,
+	                       std::optional<QueryPlanAnalyzer::QueryAnalysis> join_analysis_p)
+	    : sql(std::move(sql_p)), types(std::move(types_p)), kind(kind_p), join_analysis(std::move(join_analysis_p)) {
 	}
 
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<WorkerFragmentBindData>(sql, types, kind);
+		return make_uniq<WorkerFragmentBindData>(sql, types, kind, join_analysis);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<WorkerFragmentBindData>();
-		return other.sql == sql && other.types == types && other.kind == kind;
+		if (other.sql != sql || other.types != types || other.kind != kind ||
+		    other.join_analysis.has_value() != join_analysis.has_value()) {
+			return false;
+		}
+		return !join_analysis || (other.join_analysis->partial_sql == join_analysis->partial_sql &&
+		                          other.join_analysis->final_sql == join_analysis->final_sql &&
+		                          other.join_analysis->merge_strategy == join_analysis->merge_strategy);
 	}
 
 	string sql;
 	vector<LogicalType> types;
 	DistributedFragmentKind kind;
+	std::optional<QueryPlanAnalyzer::QueryAnalysis> join_analysis;
 };
 
 struct WorkerFragmentGlobalState : public GlobalTableFunctionState {
@@ -52,7 +60,8 @@ unique_ptr<GlobalTableFunctionState> WorkerFragmentInitGlobal(ClientContext &con
 	auto &bind_data = input.bind_data->Cast<WorkerFragmentBindData>();
 	auto result = make_uniq<WorkerFragmentGlobalState>();
 	result->chunks = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME)
-	                     ->Execute(context, bind_data.sql, bind_data.types, bind_data.kind);
+	                     ->Execute(context, bind_data.sql, bind_data.types, bind_data.kind,
+	                               bind_data.join_analysis ? &*bind_data.join_analysis : nullptr);
 	return std::move(result);
 }
 
@@ -91,9 +100,10 @@ string GetTableName(TableCatalogEntry &table) {
 }
 
 unique_ptr<LogicalGet> CreateFragment(Binder &binder, string sql, vector<LogicalType> types, vector<string> names,
-                                      DistributedFragmentKind kind = DistributedFragmentKind::TABLE) {
+                                      DistributedFragmentKind kind = DistributedFragmentKind::TABLE,
+                                      std::optional<QueryPlanAnalyzer::QueryAnalysis> join_analysis = std::nullopt) {
 	TableFunction function("worker_fragment", {}, WorkerFragmentExecute, nullptr, WorkerFragmentInitGlobal);
-	auto bind_data = make_uniq<WorkerFragmentBindData>(std::move(sql), types, kind);
+	auto bind_data = make_uniq<WorkerFragmentBindData>(std::move(sql), types, kind, std::move(join_analysis));
 	auto result = make_uniq<LogicalGet>(binder.GenerateTableIndex(), std::move(function), std::move(bind_data),
 	                                    std::move(types), std::move(names));
 	vector<ColumnIndex> column_ids;
@@ -176,15 +186,16 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		Parser parser;
 		parser.ParseQuery(*planning_query);
 		string qualified_sql;
+		QueryPlanAnalyzer::QueryAnalysis analysis;
 		if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::SELECT_STATEMENT &&
-		    state->CanPartitionJoin(*plan, parser.statements[0]->Cast<SelectStatement>(), qualified_sql)) {
+		    state->CanPartitionJoin(*plan, parser.statements[0]->Cast<SelectStatement>(), qualified_sql, analysis)) {
 			vector<string> names;
 			names.reserve(plan->types.size());
 			for (idx_t idx = 0; idx < plan->types.size(); ++idx) {
 				names.emplace_back(StringUtil::Format("__c%llu", idx));
 			}
 			plan = CreateFragment(binder, std::move(qualified_sql), plan->types, std::move(names),
-			                      DistributedFragmentKind::PARTITIONED_JOIN);
+			                      DistributedFragmentKind::PARTITIONED_JOIN, std::move(analysis));
 			return;
 		}
 	}
@@ -224,11 +235,12 @@ WorkerFragmentState::WorkerFragmentState(DistributedExecutor &executor_p, Connec
 
 vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &context, const string &sql,
                                                            const vector<LogicalType> &types,
-                                                           DistributedFragmentKind kind) {
+                                                           DistributedFragmentKind kind,
+                                                           const QueryPlanAnalyzer::QueryAnalysis *join_analysis) {
 	QueryExecutionInfo info;
 	info.sql = sql;
 	const auto start = std::chrono::steady_clock::now();
-	auto distributed = executor.ExecuteDistributed(sql, kind);
+	auto distributed = executor.ExecuteDistributed(sql, kind, join_analysis);
 	const bool ran_distributed = distributed.result != nullptr || distributed.arrow_schema != nullptr;
 	vector<unique_ptr<DataChunk>> chunks;
 	if (distributed.arrow_schema) {
@@ -283,8 +295,8 @@ const string *WorkerFragmentState::PlanningQuery() const {
 }
 
 bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement,
-                                           string &qualified_sql) {
-	return executor.CanPartitionJoin(plan, statement, qualified_sql);
+                                           string &qualified_sql, QueryPlanAnalyzer::QueryAnalysis &analysis) {
+	return executor.CanPartitionJoin(plan, statement, qualified_sql, analysis);
 }
 
 vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {
