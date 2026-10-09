@@ -17,8 +17,8 @@ class TaskPartitioner {
 public:
 	TaskPartitioner(Connection &conn, QueryPlanAnalyzer &analyzer);
 
-	// Check whether a two-table Join has a native input with multiple row groups.
-	bool CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement);
+	// On success, return SQL with both table names resolved from the client plan.
+	bool CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement, string &qualified_sql);
 
 	// Extract distributed pipeline tasks from logical plan.
 	// Creates tasks aligned with native DuckDB row groups when possible.

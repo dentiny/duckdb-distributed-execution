@@ -56,6 +56,11 @@ bool MatchesRef(const BaseTableRef &ref, const TableCatalogEntry &table) {
 	       StringUtil::CIEquals(ref.schema_name, table.catalog.GetName());
 }
 
+void QualifyRef(BaseTableRef &ref, const TableCatalogEntry &table) {
+	ref.catalog_name = table.catalog.GetName();
+	ref.schema_name = table.schema.name;
+}
+
 void FlattenConjunction(const ParsedExpression &expression, ExpressionType type,
                         vector<const ParsedExpression *> &terms) {
 	if (expression.GetExpressionType() == type && expression.GetExpressionClass() == ExpressionClass::CONJUNCTION) {
@@ -230,13 +235,23 @@ vector<DistributedPipelineTask> TaskPartitioner::CreateSingleTask(const string &
 	return tasks;
 }
 
-bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement) {
+bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement,
+                                       string &qualified_sql) {
 	if (statement.node->type != QueryNodeType::SELECT_NODE) {
 		return false;
 	}
 	auto info = GetJoinPartitionInfo(logical_plan, statement.node->Cast<SelectNode>(), analyzer);
 	// One row group yields one task, so there is no Join work to spread across workers.
-	return info && info->row_group_info.total_row_groups >= 2;
+	if (!info || info->row_group_info.total_row_groups < 2) {
+		return false;
+	}
+	// The executor rebinds this SQL on another connection, so keep the client's bound table identities.
+	auto copy = statement.Copy();
+	auto &join = copy->Cast<SelectStatement>().node->Cast<SelectNode>().from_table->Cast<JoinRef>();
+	QualifyRef(join.left->Cast<BaseTableRef>(), *info->left_scan->GetTable());
+	QualifyRef(join.right->Cast<BaseTableRef>(), *info->right_scan->GetTable());
+	qualified_sql = copy->ToString();
+	return true;
 }
 
 vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOperator &logical_plan,
@@ -291,10 +306,8 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 		auto left_table = info->left_scan->GetTable();
 		auto right_table = info->right_scan->GetTable();
 		// Use bound names so workers resolve the same tables as the driver.
-		left.catalog_name = left_table->catalog.GetName();
-		left.schema_name = left_table->schema.name;
-		right.catalog_name = right_table->catalog.GetName();
-		right.schema_name = right_table->schema.name;
+		QualifyRef(left, *left_table);
+		QualifyRef(right, *right_table);
 		// Only this reference receives the rowid predicate below; the other stays unpartitioned.
 		partition_ref = info->partition_left ? &left : &right;
 		row_group_info = std::move(info->row_group_info);

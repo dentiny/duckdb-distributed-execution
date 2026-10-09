@@ -221,6 +221,13 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		                  ->HasError());
 		REQUIRE_FALSE(
 		    writer->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")->HasError());
+		REQUIRE_FALSE(writer->Query("CREATE SCHEMA alt")->HasError());
+		REQUIRE_FALSE(writer
+		                  ->Query("CREATE TABLE alt.fact AS SELECT i AS id, i % 17 AS k, 2 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    writer->Query("CREATE TABLE alt.dim AS SELECT i AS k, 10 AS multiplier FROM range(17) t(i)")->HasError());
 		writer.reset();
 
 		WorkerManager manager(db);
@@ -297,6 +304,23 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE_FALSE(txn_result->HasError());
 		REQUIRE(state->TakeExecutions().empty());
 		REQUIRE_FALSE(client->Query("ROLLBACK")->HasError());
+
+		REQUIRE_FALSE(client->Query("USE alt")->HasError());
+		const string schema_sql = "SELECT sum(f.amount * d.multiplier) AS revenue FROM fact f JOIN dim d ON f.k = d.k";
+		auto schema_expected = client->Query(schema_sql);
+		auto default_result = executor_connection->Query(schema_sql);
+		REQUIRE_FALSE(schema_expected->HasError());
+		REQUIRE_FALSE(default_result->HasError());
+		REQUIRE(schema_expected->GetValue(0, 0) != default_result->GetValue(0, 0));
+		auto schema_prepared = state->PrepareClientQuery(*client, schema_sql);
+		REQUIRE_FALSE(schema_prepared->HasError());
+		auto schema_actual = schema_prepared->Execute(parameters, /*allow_stream_result=*/false);
+		REQUIRE_FALSE(schema_actual->HasError());
+		REQUIRE(schema_actual->Equals(*schema_expected));
+		auto schema_executions = state->TakeExecutions();
+		REQUIRE(schema_executions.size() == 1);
+		REQUIRE(schema_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(schema_executions[0].num_tasks_generated == 2);
 		client.reset();
 		state.reset();
 	}

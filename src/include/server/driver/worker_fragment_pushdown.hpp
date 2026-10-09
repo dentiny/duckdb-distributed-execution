@@ -34,7 +34,7 @@ public:
 	// Expose it only for this client query, not for later prepares on the same connection.
 	unique_ptr<PreparedStatement> PrepareClientQuery(Connection &client_connection, const string &sql);
 	const string *PlanningQuery() const;
-	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement);
+	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql);
 
 private:
 	DistributedExecutor &executor;

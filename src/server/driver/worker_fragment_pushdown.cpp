@@ -175,14 +175,15 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 	if (scans == 2 && planning_query) {
 		Parser parser;
 		parser.ParseQuery(*planning_query);
+		string qualified_sql;
 		if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::SELECT_STATEMENT &&
-		    state->CanPartitionJoin(*plan, parser.statements[0]->Cast<SelectStatement>())) {
+		    state->CanPartitionJoin(*plan, parser.statements[0]->Cast<SelectStatement>(), qualified_sql)) {
 			vector<string> names;
 			names.reserve(plan->types.size());
 			for (idx_t idx = 0; idx < plan->types.size(); ++idx) {
 				names.emplace_back(StringUtil::Format("__c%llu", idx));
 			}
-			plan = CreateFragment(binder, *planning_query, plan->types, std::move(names),
+			plan = CreateFragment(binder, std::move(qualified_sql), plan->types, std::move(names),
 			                      DistributedFragmentKind::PARTITIONED_JOIN);
 			return;
 		}
@@ -275,8 +276,9 @@ const string *WorkerFragmentState::PlanningQuery() const {
 	return planning_query ? &*planning_query : nullptr;
 }
 
-bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement) {
-	return executor.CanPartitionJoin(plan, statement);
+bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement,
+                                           string &qualified_sql) {
+	return executor.CanPartitionJoin(plan, statement, qualified_sql);
 }
 
 vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {

@@ -76,7 +76,7 @@ public:
 
 	// Returns an empty result when the query cannot be distributed.
 	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind);
-	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement);
+	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql);
 
 private:
 	WorkerManager &worker_manager;

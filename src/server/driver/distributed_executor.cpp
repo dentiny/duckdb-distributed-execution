@@ -35,7 +35,8 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 	task_partitioner = make_uniq<TaskPartitioner>(conn, *plan_analyzer);
 }
 
-bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement) {
+bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement,
+                                           string &qualified_sql) {
 	if (storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET ||
 	    worker_manager.GetAvailableWorkers().size() < 2 || !IsSimplePartitionedJoin(statement) ||
 	    !IsSupportedPlan(plan)) {
@@ -45,7 +46,7 @@ bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectSt
 	if (!QueryPlanAnalyzer::AnalyzeQuery(plan, statement).supports_partitioned_aggregation) {
 		return false;
 	}
-	return task_partitioner->CanPartitionJoin(plan, statement);
+	return task_partitioner->CanPartitionJoin(plan, statement, qualified_sql);
 }
 
 // Distributed execution Driver implementing DuckDB's parallel execution model.
