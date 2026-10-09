@@ -27,7 +27,6 @@ public:
 		// Whether row group info is available.
 		bool valid = false;
 	};
-	RowGroupPartitionInfo ExtractRowGroupInfo(LogicalOperator &logical_plan);
 	RowGroupPartitionInfo ExtractRowGroupInfo(LogicalGet &get);
 
 	// Merge strategy for distributed query results

@@ -5,6 +5,7 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/partition_sql_generator.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
@@ -21,6 +22,15 @@
 using namespace duckdb; // NOLINT
 
 namespace {
+
+LogicalGet &FindScan(LogicalOperator &plan) {
+	auto *op = &plan;
+	while (op->children.size() == 1) {
+		op = op->children[0].get();
+	}
+	REQUIRE(op->type == LogicalOperatorType::LOGICAL_GET);
+	return op->Cast<LogicalGet>();
+}
 
 QueryPlanAnalyzer::QueryAnalysis AnalyzeQuery(Connection &con, const string &sql) {
 	auto plan = con.ExtractPlan(sql);
@@ -134,7 +144,7 @@ TEST_CASE("Partition tasks cover deleted rowid gaps without changing WHERE prece
 		REQUIRE(plan != nullptr);
 		auto tasks = partitioner.ExtractPipelineTasks(*plan, sql, workers);
 		// Never split a row group, so extra workers get no task.
-		const auto total_row_groups = analyzer.ExtractRowGroupInfo(*plan).total_row_groups;
+		const auto total_row_groups = analyzer.ExtractRowGroupInfo(FindScan(*plan)).total_row_groups;
 		REQUIRE(total_row_groups > 1);
 		REQUIRE(tasks.size() == std::min<idx_t>(workers, total_row_groups));
 		idx_t matches = 0;
@@ -195,7 +205,7 @@ TEST_CASE("Local ObjFS scans assign contiguous whole row groups", "[task_partiti
 		const string sql = "SELECT id FROM object_db.t";
 		plan = reader.ExtractPlan(sql);
 		REQUIRE(plan != nullptr);
-		auto row_group_info = analyzer.ExtractRowGroupInfo(*plan);
+		auto row_group_info = analyzer.ExtractRowGroupInfo(FindScan(*plan));
 		REQUIRE(row_group_info.total_row_groups >= 3);
 		auto tasks = partitioner.ExtractPipelineTasks(*plan, sql, 3);
 		REQUIRE(tasks.size() == 3);
