@@ -31,6 +31,26 @@ QueryPlanAnalyzer::QueryAnalysis AnalyzeQuery(Connection &con, const string &sql
 
 } // namespace
 
+TEST_CASE("Preparing a client query clears planning SQL after an exception", "[worker_fragment]") {
+	DuckDB db(nullptr);
+	auto &db_config = DBConfig::GetConfig(*db.instance);
+	OptimizerExtension extension;
+	// DuckDB converts std::exception to an error result, so this must escape that handler.
+	extension.optimize_function = [](OptimizerExtensionInput &, unique_ptr<LogicalOperator> &) {
+		throw 1;
+	};
+	OptimizerExtension::Register(db_config, std::move(extension));
+	Connection client(db);
+	Connection executor_connection(db);
+	WorkerManager manager(db);
+	distributed::StorageConfig config;
+	DistributedExecutor executor(manager, executor_connection, config);
+	WorkerFragmentState state(executor, executor_connection);
+
+	REQUIRE_THROWS_AS(state.PrepareClientQuery(client, "SELECT 42"), int);
+	REQUIRE(state.PlanningQuery() == nullptr);
+}
+
 TEST_CASE("ContainsTableScan Tests", "[query_utils]") {
 	DuckDB db(nullptr);
 	Connection con(db);

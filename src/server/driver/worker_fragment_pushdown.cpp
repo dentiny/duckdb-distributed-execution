@@ -267,9 +267,15 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 unique_ptr<PreparedStatement> WorkerFragmentState::PrepareClientQuery(Connection &client_connection,
                                                                       const string &sql) {
 	planning_query = sql;
-	auto prepared = client_connection.Prepare(sql);
-	planning_query.reset();
-	return prepared;
+	// The optimizer reads this during Prepare; an escaping exception must not leave it set.
+	try {
+		auto prepared = client_connection.Prepare(sql);
+		planning_query.reset();
+		return prepared;
+	} catch (...) {
+		planning_query.reset();
+		throw;
+	}
 }
 
 const string *WorkerFragmentState::PlanningQuery() const {
