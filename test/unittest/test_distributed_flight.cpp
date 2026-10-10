@@ -222,15 +222,26 @@ TEST_CASE("Worker dispatch pool limits concurrency and reuses threads", "[dispat
 
 TEST_CASE("DUCKHERDER_STARTUP_SQL runs in every database the server and workers create", "[distributed_flight]") {
 	auto config = ObjectStorageDatabase::ResolveConfig(distributed::StorageConfig {});
+	// Unset the variable even when a REQUIRE fails, so later tests don't run this SQL.
+	struct StartupSQLReset {
+		~StartupSQLReset() {
+			unsetenv("DUCKHERDER_STARTUP_SQL");
+		}
+	} startup_sql_reset;
 
 	setenv("DUCKHERDER_STARTUP_SQL", "SET GLOBAL threads = 3; SET GLOBAL threads = 5", /*overwrite=*/1);
 	auto database = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
 	REQUIRE(database.ok());
 	Connection conn((*database)->GetInstance());
 	REQUIRE(conn.Query("SELECT current_setting('threads')")->GetValue(0, 0) == Value::BIGINT(5));
+	// The constructor only creates the driver's database; Start() would bind the port.
+	DistributedFlightServer server("localhost", 18900);
+	Connection server_conn(server.GetDatabaseInstance());
+	REQUIRE(server_conn.Query("SELECT current_setting('threads')")->GetValue(0, 0) == Value::BIGINT(5));
 
-	setenv("DUCKHERDER_STARTUP_SQL", "SELECT * FROM missing_table", /*overwrite=*/1);
+	// The failing statement follows one that returns a result, so its error must not be lost in the result chain.
+	setenv("DUCKHERDER_STARTUP_SQL", "SELECT 1; SELECT * FROM missing_table", /*overwrite=*/1);
 	REQUIRE_FALSE(ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE).ok());
 	REQUIRE_THROWS(WorkerNode("startup-sql-worker", "localhost", 18899));
-	unsetenv("DUCKHERDER_STARTUP_SQL");
+	REQUIRE_THROWS(DistributedFlightServer("localhost", 18900));
 }

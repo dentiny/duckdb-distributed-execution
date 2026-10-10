@@ -6,7 +6,7 @@ Timings are only meaningful on Linux, where each process runs in its own cgroup.
 
 ## Build
 
-Requires `pkg-config`, `flex`, `bison`, `libtool`, `cargo`, vcpkg, and Docker for RustFS. Set `LATENCY_INJECTION_FS_DIR` to a [duckdb-filesystem-latency-injection](https://github.com/dentiny/duckdb-filesystem-latency-injection) checkout to build it in for simulating storage latency; leave it unset otherwise.
+Requires `pkg-config`, `flex`, `bison`, `libtool`, `cargo`, vcpkg, and Docker and curl 7.75 or later for RustFS. Set `LATENCY_INJECTION_FS_DIR` to a [duckdb-filesystem-latency-injection](https://github.com/dentiny/duckdb-filesystem-latency-injection) checkout to build it in for simulating storage latency; leave it unset otherwise.
 
 ```sh
 LATENCY_INJECTION_FS_DIR=$HOME/duckdb-filesystem-latency-injection \

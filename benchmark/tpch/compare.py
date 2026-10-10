@@ -9,9 +9,20 @@ import sys
 from pathlib import Path
 
 
+def sort_key(row):
+    # Sort numbers by value, so float rounding from merge order can't reorder rows the way string order would.
+    key = []
+    for value in row:
+        try:
+            key.append((0, float(value), ""))
+        except ValueError:
+            key.append((1, 0.0, value))
+    return key
+
+
 def rows(path):
     with open(path, newline="") as f:
-        return sorted(csv.reader(f))
+        return sorted(csv.reader(f), key=sort_key)
 
 
 def same(left, right):

@@ -72,13 +72,14 @@ wait_until_ready() {
 }
 
 create_bucket() {
-	# A signed S3 PUT creates the bucket; an existing bucket returns 200 or 409 depending on the server.
+	# A signed S3 PUT creates the bucket; an existing bucket returns 200 or 409 depending on the server. --aws-sigv4
+	# needs curl 7.75 or later. On failure curl still prints 000, so keep going to report it.
 	local status
 	status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
 		--aws-sigv4 "aws:amz:us-east-1:s3" --user "${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}" \
-		-X PUT "http://${RUSTFS_HOST}:${RUSTFS_S3_PORT}/${RUSTFS_BUCKET}")
+		-X PUT "http://${RUSTFS_HOST}:${RUSTFS_S3_PORT}/${RUSTFS_BUCKET}") || true
 	if [[ "${status}" != 200 && "${status}" != 409 ]]; then
-		echo "Failed to create bucket '${RUSTFS_BUCKET}' (HTTP ${status})" >&2
+		echo "Failed to create bucket '${RUSTFS_BUCKET}' (HTTP ${status}; 000 means curl failed, and it needs 7.75 or later)" >&2
 		return 1
 	fi
 }

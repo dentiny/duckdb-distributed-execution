@@ -120,8 +120,12 @@ start_driver() {
 			"$DIR/driver.sh" "$DRIVER_PORT" "$@" >"$log" 2>&1 &
 	else
 		remote "rm -f $REMOTE_STATE.ready $REMOTE_STATE.pid"
-		remote "DUCKDB='$REMOTE_DUCKDB' READY_FILE=$REMOTE_STATE.ready PID_FILE=$REMOTE_STATE.pid bash -s -- $DRIVER_PORT $*" \
-			<"$DIR/driver.sh" >"$log" 2>&1 &
+		# The remote bash reads driver.sh from stdin, so pass DUCKHERDER_STARTUP_SQL as a quoted export ahead of it.
+		{
+			[[ -z ${DUCKHERDER_STARTUP_SQL+x} ]] || printf 'export DUCKHERDER_STARTUP_SQL=%q\n' "$DUCKHERDER_STARTUP_SQL"
+			cat "$DIR/driver.sh"
+		} | remote "DUCKDB='$REMOTE_DUCKDB' READY_FILE=$REMOTE_STATE.ready PID_FILE=$REMOTE_STATE.pid bash -s -- $DRIVER_PORT $*" \
+			>"$log" 2>&1 &
 	fi
 	driver_pid=$!
 }
@@ -174,11 +178,10 @@ for port in ${local_ports[@]+"${local_ports[@]}"}; do
 	port_open "$port" && die "Port $port is in use; stop the running driver or worker first."
 done
 
-# Load once per data path. ObjFS allows one writer, and the driver opens the database read-write, so load first.
-marker=$WORK/.loaded-$(echo "$DATA_PATH" | tr -c 'a-zA-Z0-9\n' _)
-if ((LOAD)) && [[ ! -f $marker ]]; then
+# load.sh skips the copy when the ObjFS database already has tables. ObjFS allows one writer, and the driver opens the
+# database read-write, so load first.
+if ((LOAD)); then
 	"$DIR/load.sh" "$SF" "$DATA_PATH" | tee "$OUT/load.log"
-	touch "$marker"
 fi
 # verify.sh compares against this file; with --no-load it may not exist yet.
 if ((VERIFY)) && [[ ! -f $TPCH_FILE ]]; then
