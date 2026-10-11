@@ -41,26 +41,6 @@ QueryPlanAnalyzer::QueryAnalysis AnalyzeQuery(Connection &con, const string &sql
 
 } // namespace
 
-TEST_CASE("Preparing a client query clears planning SQL after an exception", "[worker_fragment]") {
-	DuckDB db(nullptr);
-	auto &db_config = DBConfig::GetConfig(*db.instance);
-	OptimizerExtension extension;
-	// DuckDB converts std::exception to an error result, so this must escape that handler.
-	extension.optimize_function = [](OptimizerExtensionInput &, unique_ptr<LogicalOperator> &) {
-		throw 1;
-	};
-	OptimizerExtension::Register(db_config, std::move(extension));
-	Connection client(db);
-	Connection executor_connection(db);
-	WorkerManager manager(db);
-	distributed::StorageConfig config;
-	DistributedExecutor executor(manager, executor_connection, config);
-	WorkerFragmentState state(executor, executor_connection);
-
-	REQUIRE_THROWS_AS(state.PrepareClientQuery(client, "SELECT 42"), int);
-	REQUIRE(state.PlanningQuery() == nullptr);
-}
-
 TEST_CASE("ContainsTableScan Tests", "[query_utils]") {
 	DuckDB db(nullptr);
 	Connection con(db);
@@ -246,8 +226,9 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(writer_result.ok());
 		auto writer = std::move(writer_result).ValueOrDie();
 		REQUIRE_FALSE(writer
-		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, i % 11 AS amount "
-		                          "FROM range(300000) t(i)")
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, i % 11 AS amount, "
+		                          "CASE WHEN i % 13 = 0 THEN NULL ELSE i % 4 END AS g, "
+		                          "CAST(i % 101 AS DECIMAL(15, 2)) AS price FROM range(300000) t(i)")
 		                  ->HasError());
 		REQUIRE_FALSE(
 		    writer->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")->HasError());
@@ -275,7 +256,7 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		                   "OR (d.k = 3 AND f.amount >= 5)";
 		auto expected = executor_connection->Query(sql);
 		REQUIRE_FALSE(expected->HasError());
-		auto local_prepared = state->PrepareClientQuery(*client, sql);
+		auto local_prepared = client->Prepare(sql);
 		REQUIRE_FALSE(local_prepared->HasError());
 		vector<Value> parameters;
 		auto local_result = local_prepared->Execute(parameters, /*allow_stream_result=*/false);
@@ -286,7 +267,7 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(manager.StartLocalWorkers(2).ok());
 		expected = executor_connection->Query(sql);
 		REQUIRE_FALSE(expected->HasError());
-		auto prepared = state->PrepareClientQuery(*client, sql);
+		auto prepared = client->Prepare(sql);
 		REQUIRE_FALSE(prepared->HasError());
 		auto actual = prepared->Execute(parameters, /*allow_stream_result=*/false);
 		REQUIRE_FALSE(actual->HasError());
@@ -296,10 +277,60 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 		REQUIRE(executions[0].num_tasks_generated == 2);
 
+		// Only the aggregate becomes a fragment; the operators above it run on the driver, so names, types and order
+		// match local execution.
+		for (const auto &shape_sql :
+		     {// Q12: GROUP BY a column, CASE inside the aggregates, IN, ORDER BY.
+		      "SELECT f.g, sum(CASE WHEN d.k IN (1, 2) OR d.k IS NULL THEN 1 ELSE 0 END) AS high, "
+		      "sum(CASE WHEN NOT (d.k < 5) THEN 1 ELSE 0 END) AS low, count(*) AS n FROM fact f, dim d "
+		      "WHERE f.k = d.k AND f.amount BETWEEN 2 AND 8 GROUP BY f.g ORDER BY f.g",
+		      // Q14: arithmetic over aggregates.
+		      "SELECT 100.00 * sum(CASE WHEN d.k % 2 = 0 THEN f.price * d.multiplier ELSE 0 END) / "
+		      "sum(f.price * d.multiplier) AS promo FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT avg(f.price) AS mean, avg(f.amount), d.multiplier % 3 AS bucket FROM fact f JOIN dim d "
+		      "ON f.k = d.k GROUP BY d.multiplier % 3 HAVING count(*) > 0 ORDER BY sum(f.amount) DESC LIMIT 2",
+		      // Empty input: an ungrouped count is 0 and a sum NULL.
+		      "SELECT count(*), sum(f.price), count(*) * 2 FROM fact f JOIN dim d ON f.k = d.k "
+		      "WHERE f.id::VARCHAR = 'x'"}) {
+			INFO(shape_sql);
+			auto shape_expected = executor_connection->Query(shape_sql);
+			REQUIRE_FALSE(shape_expected->HasError());
+			auto shape_actual = client->Query(shape_sql);
+			REQUIRE_FALSE(shape_actual->HasError());
+			REQUIRE(shape_actual->Equals(*shape_expected));
+			auto shape_executions = state->TakeExecutions();
+			REQUIRE(shape_executions.size() == 1);
+			REQUIRE(shape_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+			REQUIRE(shape_executions[0].num_tasks_generated == 2);
+		}
+		// Shapes whose partial results cannot be merged, or that are not inner Joins, run locally.
+		for (const auto &fallback_sql :
+		     {"SELECT count(DISTINCT f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT median(f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT sum(f.amount) FILTER (WHERE d.k > 3) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL",
+		      "SELECT sum(f.amount) FROM fact f LEFT JOIN dim d ON f.k = d.k AND d.k < 3"}) {
+			INFO(fallback_sql);
+			auto fallback_expected = executor_connection->Query(fallback_sql);
+			REQUIRE_FALSE(fallback_expected->HasError());
+			auto fallback_result = client->Query(fallback_sql);
+			REQUIRE_FALSE(fallback_result->HasError());
+			REQUIRE(fallback_result->Equals(*fallback_expected));
+			REQUIRE(state->TakeExecutions().empty());
+		}
+		// Macros are expanded before the plan is rendered, so a macro shadowing `sum` is pushed as what it computes.
+		REQUIRE_FALSE(client->Query("CREATE TEMP MACRO sum(x) AS max(x)")->HasError());
+		auto macro_result = client->Query("SELECT sum(f.amount), count(*) FROM fact f JOIN dim d ON f.k = d.k");
+		REQUIRE_FALSE(macro_result->HasError());
+		REQUIRE(macro_result->GetValue(0, 0) == Value::BIGINT(10));
+		REQUIRE(macro_result->GetValue(1, 0) == Value::BIGINT(300000));
+		REQUIRE(state->TakeExecutions().size() == 1);
+		REQUIRE_FALSE(client->Query("DROP MACRO temp.sum")->HasError());
+
 		REQUIRE_FALSE(executor_connection->Query("CREATE TABLE dim2 AS SELECT * FROM dim")->HasError());
 		const string small_sql = "SELECT sum(d.multiplier) FROM dim d JOIN dim2 e ON d.k = e.k";
 		auto small_expected = executor_connection->Query(small_sql);
-		auto small_prepared = state->PrepareClientQuery(*client, small_sql);
+		auto small_prepared = client->Prepare(small_sql);
 		REQUIRE_FALSE(small_prepared->HasError());
 		auto small_actual = small_prepared->Execute(parameters, /*allow_stream_result=*/false);
 		REQUIRE_FALSE(small_actual->HasError());
@@ -309,7 +340,7 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE_FALSE(client->Query("CREATE TEMP TABLE temp_dim AS SELECT 2 AS k, 3 AS multiplier")->HasError());
 		const string temp_sql = "SELECT sum(f.amount * d.multiplier) FROM fact f "
 		                        "JOIN temp_dim d ON f.k = d.k";
-		auto temp_prepared = state->PrepareClientQuery(*client, temp_sql);
+		auto temp_prepared = client->Prepare(temp_sql);
 		REQUIRE_FALSE(temp_prepared->HasError());
 		auto temp_result = temp_prepared->Execute(parameters, /*allow_stream_result=*/false);
 		REQUIRE_FALSE(temp_result->HasError());
@@ -327,8 +358,65 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(scan_executions.size() == 1);
 		REQUIRE(scan_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 
+		// Single-table fragments share the renderer: CASE, IN, BETWEEN, IS NULL, comparisons and expression table
+		// filters now render, so these aggregates and scans run on workers. NULL inputs must keep local semantics.
+		for (const auto &single_sql :
+		     {"SELECT sum(CASE WHEN amount > 5 THEN price ELSE 0 END), count(*) FROM fact",
+		      "SELECT sum(CASE WHEN k IN (1, 2, 3) THEN 1 ELSE 0 END), "
+		      "count(CASE WHEN amount BETWEEN 2 AND 4 THEN 1 END), "
+		      "sum(CASE WHEN g IS NULL THEN amount END), max(amount >= 7 AND NOT (k < 3)) FROM fact",
+		      "SELECT CASE WHEN g IS NULL THEN 'none' WHEN g < 2 THEN 'low' ELSE 'high' END AS bucket, sum(amount) "
+		      "FROM fact GROUP BY bucket ORDER BY bucket",
+		      "SELECT count(*), sum(amount) FROM fact WHERE id::VARCHAR = '123457'",
+		      "SELECT count(*), sum(amount) FROM fact WHERE id::VARCHAR = 'x'",
+		      "SELECT id, amount FROM fact WHERE id::VARCHAR = '123457'",
+		      // NULL semantics: NOT IN with a NULL in the list, CASE without ELSE, BETWEEN with a NULL bound, and
+		      // comparisons with NULL columns or constants.
+		      "SELECT count(CASE WHEN g NOT IN (1, NULL) THEN 1 END), count(CASE WHEN g NOT IN (1, 2) THEN 1 END), "
+		      "count(CASE WHEN g IN (1, NULL) THEN 1 END), sum(CASE WHEN g = 1 THEN amount END) FROM fact",
+		      "SELECT count(CASE WHEN g BETWEEN NULL AND 3 THEN 1 END), "
+		      "count(CASE WHEN g BETWEEN 1 AND NULL THEN 1 END), "
+		      "count(CASE WHEN g = NULL THEN 1 END), count(CASE WHEN g IS DISTINCT FROM 1 THEN 1 END), "
+		      "count(CASE WHEN NOT (g > 1) THEN 1 END), count(CASE WHEN g IS NOT NULL THEN 1 END) FROM fact",
+		      "SELECT g, count(*), sum(CASE WHEN g <> 2 OR g IS NULL THEN amount END) FROM fact "
+		      "WHERE g IS NULL OR g <> 2 GROUP BY g ORDER BY g"}) {
+			INFO(single_sql);
+			auto single_expected = executor_connection->Query(single_sql);
+			REQUIRE_FALSE(single_expected->HasError());
+			auto single_actual = client->Query(single_sql);
+			REQUIRE_FALSE(single_actual->HasError());
+			REQUIRE(single_actual->Equals(*single_expected));
+			auto single_executions = state->TakeExecutions();
+			REQUIRE(single_executions.size() == 1);
+			REQUIRE(single_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		}
+		// Aggregates that cannot be rendered stay local; only their scan runs on workers.
+		for (const auto &unrendered_sql :
+		     {"SELECT sum(COALESCE(g, 0)) FROM fact", "SELECT max([amount, k]) FROM fact"}) {
+			INFO(unrendered_sql);
+			auto unrendered_expected = executor_connection->Query(unrendered_sql);
+			REQUIRE_FALSE(unrendered_expected->HasError());
+			auto unrendered_actual = client->Query(unrendered_sql);
+			REQUIRE_FALSE(unrendered_actual->HasError());
+			REQUIRE(unrendered_actual->Equals(*unrendered_expected));
+			auto unrendered_executions = state->TakeExecutions();
+			REQUIRE(unrendered_executions.size() == 1);
+			REQUIRE_FALSE(StringUtil::Contains(unrendered_executions[0].sql, "GROUP BY"));
+			REQUIRE_FALSE(StringUtil::Contains(unrendered_executions[0].sql, "sum("));
+			REQUIRE_FALSE(StringUtil::Contains(unrendered_executions[0].sql, "max("));
+		}
+		// The executor's connection cannot see the client's temporary tables, so they are read locally.
+		REQUIRE_FALSE(client->Query("CREATE TEMP TABLE temp_fact AS SELECT * FROM fact")->HasError());
+		// The CREATE's own scan of `fact` may run on workers.
+		state->TakeExecutions();
+		auto temp_scan_result = client->Query("SELECT sum(amount), count(*) FROM temp_fact");
+		REQUIRE_FALSE(temp_scan_result->HasError());
+		REQUIRE(temp_scan_result->GetValue(0, 0) == scan_expected->GetValue(0, 0));
+		REQUIRE(temp_scan_result->GetValue(1, 0) == Value::BIGINT(300000));
+		REQUIRE(state->TakeExecutions().empty());
+
 		REQUIRE_FALSE(client->Query("BEGIN TRANSACTION")->HasError());
-		auto txn_prepared = state->PrepareClientQuery(*client, sql);
+		auto txn_prepared = client->Prepare(sql);
 		REQUIRE_FALSE(txn_prepared->HasError());
 		auto txn_result = txn_prepared->Execute(parameters, /*allow_stream_result=*/false);
 		REQUIRE_FALSE(txn_result->HasError());
@@ -337,12 +425,13 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 
 		REQUIRE_FALSE(client->Query("USE alt")->HasError());
 		const string schema_sql = "SELECT sum(f.amount * d.multiplier) AS revenue FROM fact f JOIN dim d ON f.k = d.k";
-		auto schema_expected = client->Query(schema_sql);
+		auto schema_expected = executor_connection->Query(
+		    "SELECT sum(f.amount * d.multiplier) AS revenue FROM alt.fact f JOIN alt.dim d ON f.k = d.k");
 		auto default_result = executor_connection->Query(schema_sql);
 		REQUIRE_FALSE(schema_expected->HasError());
 		REQUIRE_FALSE(default_result->HasError());
 		REQUIRE(schema_expected->GetValue(0, 0) != default_result->GetValue(0, 0));
-		auto schema_prepared = state->PrepareClientQuery(*client, schema_sql);
+		auto schema_prepared = client->Prepare(schema_sql);
 		REQUIRE_FALSE(schema_prepared->HasError());
 		auto schema_actual = schema_prepared->Execute(parameters, /*allow_stream_result=*/false);
 		REQUIRE_FALSE(schema_actual->HasError());
@@ -408,6 +497,20 @@ TEST_CASE("Two-table inner join partitions one input and merges partial sums", "
 				                               expected->GetValue(col, row)));
 			}
 		}
+	}
+
+	// A WHERE rendered from the bound plan has the OR as one conjunct and constants spelled as casts.
+	const string rendered_sql = "SELECT sum(t0.amount) FROM main.fact AS t0, main.dim AS t1 WHERE (t0.key = t1.key) "
+	                            "AND ((t1.brand = CAST('A' AS VARCHAR) AND t0.keep) OR "
+	                            "(t1.brand = CAST('B' AS VARCHAR) AND t0.amount > CAST(3 AS BIGINT)))";
+	auto rendered_plan = con.ExtractPlan(rendered_sql);
+	REQUIRE(rendered_plan != nullptr);
+	auto rendered_tasks = partitioner.ExtractPipelineTasks(*rendered_plan, rendered_sql, 3);
+	REQUIRE(rendered_tasks.size() == 3);
+	// The implied `t1.brand` disjunction is added next to the original one.
+	const string brand = "CAST('A' AS VARCHAR)";
+	for (const auto &task : rendered_tasks) {
+		REQUIRE(task.task_sql.find(brand) != task.task_sql.rfind(brand));
 	}
 
 	REQUIRE_FALSE(con.Query("CREATE TEMP TABLE temp_dim AS SELECT * FROM dim")->HasError());

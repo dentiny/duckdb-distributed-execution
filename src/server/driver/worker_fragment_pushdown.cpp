@@ -8,8 +8,6 @@
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
-#include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -24,30 +22,22 @@ namespace duckdb {
 namespace {
 
 struct WorkerFragmentBindData : public TableFunctionData {
-	WorkerFragmentBindData(string sql_p, vector<LogicalType> types_p, DistributedFragmentKind kind_p,
-	                       std::optional<QueryPlanAnalyzer::QueryAnalysis> join_analysis_p)
-	    : sql(std::move(sql_p)), types(std::move(types_p)), kind(kind_p), join_analysis(std::move(join_analysis_p)) {
+	WorkerFragmentBindData(string sql_p, vector<LogicalType> types_p, DistributedFragmentKind kind_p)
+	    : sql(std::move(sql_p)), types(std::move(types_p)), kind(kind_p) {
 	}
 
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<WorkerFragmentBindData>(sql, types, kind, join_analysis);
+		return make_uniq<WorkerFragmentBindData>(sql, types, kind);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<WorkerFragmentBindData>();
-		if (other.sql != sql || other.types != types || other.kind != kind ||
-		    other.join_analysis.has_value() != join_analysis.has_value()) {
-			return false;
-		}
-		return !join_analysis || (other.join_analysis->partial_sql == join_analysis->partial_sql &&
-		                          other.join_analysis->final_sql == join_analysis->final_sql &&
-		                          other.join_analysis->merge_strategy == join_analysis->merge_strategy);
+		return other.sql == sql && other.types == types && other.kind == kind;
 	}
 
 	string sql;
 	vector<LogicalType> types;
 	DistributedFragmentKind kind;
-	std::optional<QueryPlanAnalyzer::QueryAnalysis> join_analysis;
 };
 
 struct WorkerFragmentGlobalState : public GlobalTableFunctionState {
@@ -60,8 +50,7 @@ unique_ptr<GlobalTableFunctionState> WorkerFragmentInitGlobal(ClientContext &con
 	auto &bind_data = input.bind_data->Cast<WorkerFragmentBindData>();
 	auto result = make_uniq<WorkerFragmentGlobalState>();
 	result->chunks = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME)
-	                     ->Execute(context, bind_data.sql, bind_data.types, bind_data.kind,
-	                               bind_data.join_analysis ? &*bind_data.join_analysis : nullptr);
+	                     ->Execute(context, bind_data.sql, bind_data.types, bind_data.kind);
 	return std::move(result);
 }
 
@@ -86,9 +75,10 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 }
 
 // Returns the table `get` scans if workers can partition it, or nullptr.
+// The executor's connection cannot see the client's temporary tables.
 optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get) {
 	auto table = get.GetTable();
-	if (!table || !table->IsDuckTable() || get.extra_info.sample_options) {
+	if (!table || !table->IsDuckTable() || table->temporary || get.extra_info.sample_options) {
 		return nullptr;
 	}
 	return table;
@@ -100,10 +90,9 @@ string GetTableName(TableCatalogEntry &table) {
 }
 
 unique_ptr<LogicalGet> CreateFragment(Binder &binder, string sql, vector<LogicalType> types, vector<string> names,
-                                      DistributedFragmentKind kind = DistributedFragmentKind::TABLE,
-                                      std::optional<QueryPlanAnalyzer::QueryAnalysis> join_analysis = std::nullopt) {
+                                      DistributedFragmentKind kind = DistributedFragmentKind::TABLE) {
 	TableFunction function("worker_fragment", {}, WorkerFragmentExecute, nullptr, WorkerFragmentInitGlobal);
-	auto bind_data = make_uniq<WorkerFragmentBindData>(std::move(sql), types, kind, std::move(join_analysis));
+	auto bind_data = make_uniq<WorkerFragmentBindData>(std::move(sql), types, kind);
 	auto result = make_uniq<LogicalGet>(binder.GenerateTableIndex(), std::move(function), std::move(bind_data),
 	                                    std::move(types), std::move(names));
 	vector<ColumnIndex> column_ids;
@@ -114,18 +103,34 @@ unique_ptr<LogicalGet> CreateFragment(Binder &binder, string sql, vector<Logical
 	return result;
 }
 
-unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, LogicalAggregate &aggregate,
+unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, WorkerFragmentState &state,
+                                                       LogicalAggregate &aggregate,
                                                        vector<ReplacementBinding> &replacements) {
+	unique_ptr<RemoteAggregateQuery> query;
+	auto kind = DistributedFragmentKind::TABLE;
 	auto get = GetAggregateScan(aggregate);
-	auto table = get ? GetPartitionedTable(*get) : nullptr;
-	if (!table) {
-		return nullptr;
+	if (get) {
+		auto table = GetPartitionedTable(*get);
+		if (!table) {
+			return nullptr;
+		}
+		query = RenderAggregateQuery(aggregate, *get, *table, GetTableName(*table));
+	} else {
+		// Join tasks need a driver merge, so only create the fragment if the executor can partition it.
+		query = RenderJoinAggregateQuery(aggregate, [](LogicalGet &join_get) {
+			auto table = GetPartitionedTable(join_get);
+			return table ? GetTableName(*table) : string();
+		});
+		if (query && !state.CanPartitionJoin(aggregate, query->sql)) {
+			return nullptr;
+		}
+		kind = DistributedFragmentKind::PARTITIONED_JOIN;
 	}
-	auto query = RenderAggregateQuery(aggregate, *get, *table, GetTableName(*table));
 	if (!query) {
 		return nullptr;
 	}
-	auto fragment = CreateFragment(binder, std::move(query->sql), std::move(query->types), std::move(query->names));
+	auto fragment =
+	    CreateFragment(binder, std::move(query->sql), std::move(query->types), std::move(query->names), kind);
 	ReplaceAggregateBindings(aggregate, fragment->table_index, replacements);
 	return std::move(fragment);
 }
@@ -178,28 +183,9 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		return;
 	}
 	auto &binder = input.optimizer.binder;
+	// A Join of two scans only becomes a fragment at its aggregate; everything above it stays in the plan.
 	const auto scans = CountScans(*plan);
-	const auto *planning_query = state->PlanningQuery();
-	// Join tasks need the original two-table SQL and a driver merge, so replace the whole plan.
-	// Single-table fragments below can be rendered from individual plan nodes.
-	if (scans == 2 && planning_query) {
-		Parser parser;
-		parser.ParseQuery(*planning_query);
-		string qualified_sql;
-		QueryPlanAnalyzer::QueryAnalysis analysis;
-		if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::SELECT_STATEMENT &&
-		    state->CanPartitionJoin(*plan, parser.statements[0]->Cast<SelectStatement>(), qualified_sql, analysis)) {
-			vector<string> names;
-			names.reserve(plan->types.size());
-			for (idx_t idx = 0; idx < plan->types.size(); ++idx) {
-				names.emplace_back(StringUtil::Format("__c%llu", idx));
-			}
-			plan = CreateFragment(binder, std::move(qualified_sql), plan->types, std::move(names),
-			                      DistributedFragmentKind::PARTITIONED_JOIN, std::move(analysis));
-			return;
-		}
-	}
-	if (scans != 1) {
+	if (scans != 1 && scans != 2) {
 		return;
 	}
 	vector<ReplacementBinding> replacements;
@@ -208,7 +194,7 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-			fragment = TryCreateAggregateFragment(binder, op.Cast<LogicalAggregate>(), replacements);
+			fragment = TryCreateAggregateFragment(binder, *state, op.Cast<LogicalAggregate>(), replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			fragment = TryCreateScanFragment(binder, op.Cast<LogicalGet>(), replacements);
 		}
@@ -235,12 +221,11 @@ WorkerFragmentState::WorkerFragmentState(DistributedExecutor &executor_p, Connec
 
 vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &context, const string &sql,
                                                            const vector<LogicalType> &types,
-                                                           DistributedFragmentKind kind,
-                                                           const QueryPlanAnalyzer::QueryAnalysis *join_analysis) {
+                                                           DistributedFragmentKind kind) {
 	QueryExecutionInfo info;
 	info.sql = sql;
 	const auto start = std::chrono::steady_clock::now();
-	auto distributed = executor.ExecuteDistributed(sql, kind, join_analysis);
+	auto distributed = executor.ExecuteDistributed(sql, kind);
 	const bool ran_distributed = distributed.result != nullptr || distributed.arrow_schema != nullptr;
 	vector<unique_ptr<DataChunk>> chunks;
 	if (distributed.arrow_schema) {
@@ -276,27 +261,8 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 	return chunks;
 }
 
-unique_ptr<PreparedStatement> WorkerFragmentState::PrepareClientQuery(Connection &client_connection,
-                                                                      const string &sql) {
-	planning_query = sql;
-	// The optimizer reads this during Prepare; an escaping exception must not leave it set.
-	try {
-		auto prepared = client_connection.Prepare(sql);
-		planning_query.reset();
-		return prepared;
-	} catch (...) {
-		planning_query.reset();
-		throw;
-	}
-}
-
-const string *WorkerFragmentState::PlanningQuery() const {
-	return planning_query ? &*planning_query : nullptr;
-}
-
-bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement,
-                                           string &qualified_sql, QueryPlanAnalyzer::QueryAnalysis &analysis) {
-	return executor.CanPartitionJoin(plan, statement, qualified_sql, analysis);
+bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const string &sql) {
+	return executor.CanPartitionJoin(plan, sql);
 }
 
 vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {

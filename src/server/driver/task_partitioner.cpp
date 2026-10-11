@@ -13,6 +13,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
@@ -73,6 +74,14 @@ void FlattenConjunction(const ParsedExpression &expression, ExpressionType type,
 	}
 }
 
+// Rendered plan fragments spell constants as `CAST(<value> AS <type>)`.
+bool IsConstant(const ParsedExpression &expression) {
+	if (expression.GetExpressionClass() == ExpressionClass::CAST) {
+		return IsConstant(*expression.Cast<CastExpression>().child);
+	}
+	return expression.GetExpressionClass() == ExpressionClass::CONSTANT;
+}
+
 bool ReferencesTable(const ColumnRefExpression &column, const BaseTableRef &target,
                      const TableCatalogEntry &target_table, const BaseTableRef &other,
                      const TableCatalogEntry &other_table) {
@@ -113,11 +122,10 @@ unique_ptr<ParsedExpression> ImpliedEqualityFilter(const ParsedExpression &where
 			}
 			auto &comparison = term->Cast<ComparisonExpression>();
 			const ParsedExpression *column = nullptr;
-			if (comparison.left->GetExpressionClass() == ExpressionClass::COLUMN_REF &&
-			    comparison.right->GetExpressionClass() == ExpressionClass::CONSTANT) {
+			if (comparison.left->GetExpressionClass() == ExpressionClass::COLUMN_REF && IsConstant(*comparison.right)) {
 				column = comparison.left.get();
 			} else if (comparison.right->GetExpressionClass() == ExpressionClass::COLUMN_REF &&
-			           comparison.left->GetExpressionClass() == ExpressionClass::CONSTANT) {
+			           IsConstant(*comparison.left)) {
 				column = comparison.right.get();
 			}
 			if (!column ||
@@ -233,8 +241,7 @@ vector<DistributedPipelineTask> TaskPartitioner::CreateSingleTask(const string &
 	return tasks;
 }
 
-bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement,
-                                       string &qualified_sql, QueryPlanAnalyzer::QueryAnalysis &analysis) {
+bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement) {
 	if (!IsSimplePartitionedJoin(statement)) {
 		return false;
 	}
@@ -243,17 +250,7 @@ bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const Sele
 	if (!info || info->row_group_info.total_row_groups < 2) {
 		return false;
 	}
-	// The executor rebinds this SQL on another connection, so keep the client's bound table identities.
-	auto copy = statement.Copy();
-	auto &join = copy->Cast<SelectStatement>().node->Cast<SelectNode>().from_table->Cast<JoinRef>();
-	QualifyRef(join.left->Cast<BaseTableRef>(), *info->left_scan->GetTable());
-	QualifyRef(join.right->Cast<BaseTableRef>(), *info->right_scan->GetTable());
-	analysis = QueryPlanAnalyzer::AnalyzeQuery(logical_plan, copy->Cast<SelectStatement>());
-	if (!analysis.supports_partitioned_aggregation) {
-		return false;
-	}
-	qualified_sql = copy->ToString();
-	return true;
+	return QueryPlanAnalyzer::AnalyzeQuery(logical_plan, statement).supports_partitioned_aggregation;
 }
 
 vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOperator &logical_plan,
@@ -321,11 +318,19 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 			auto &fact = info->partition_left ? left : right;
 			auto dimension_table = info->partition_left ? right_table : left_table;
 			auto fact_table = info->partition_left ? left_table : right_table;
-			// Each OR branch may restrict the replicated input to a constant on the same column. Their
-			// disjunction is already implied by WHERE; adding it lets DuckDB filter that input before
-			// the Join on every worker without changing the result.
-			auto implied = ImpliedEqualityFilter(*select.where_clause, dimension, *dimension_table, fact, *fact_table);
-			if (implied) {
+			// Each OR branch of a WHERE conjunct may restrict the replicated input to a constant on the same column.
+			// Their disjunction is already implied by WHERE; adding it lets DuckDB filter that input before the Join on
+			// every worker without changing the result.
+			vector<const ParsedExpression *> terms;
+			FlattenConjunction(*select.where_clause, ExpressionType::CONJUNCTION_AND, terms);
+			vector<unique_ptr<ParsedExpression>> implied_filters;
+			for (const auto *term : terms) {
+				auto implied = ImpliedEqualityFilter(*term, dimension, *dimension_table, fact, *fact_table);
+				if (implied) {
+					implied_filters.emplace_back(std::move(implied));
+				}
+			}
+			for (auto &implied : implied_filters) {
 				select.where_clause = make_uniq<ConjunctionExpression>(
 				    ExpressionType::CONJUNCTION_AND, std::move(select.where_clause), std::move(implied));
 			}

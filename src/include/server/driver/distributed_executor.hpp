@@ -75,10 +75,9 @@ public:
 	                    distributed::StorageConfig storage_config_p);
 
 	// Returns an empty result when the query cannot be distributed.
-	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind,
-	                                              const QueryPlanAnalyzer::QueryAnalysis *join_analysis);
-	bool CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement, string &qualified_sql,
-	                      QueryPlanAnalyzer::QueryAnalysis &analysis);
+	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind);
+	// Whether `sql`, a Join aggregate rendered from `plan`, can run as row-group tasks with a partial aggregate merge.
+	bool CanPartitionJoin(LogicalOperator &plan, const string &sql);
 
 private:
 	WorkerManager &worker_manager;

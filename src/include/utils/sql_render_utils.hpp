@@ -7,6 +7,8 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 
+#include <functional>
+
 namespace duckdb {
 
 // Forward declaration.
@@ -30,8 +32,10 @@ string RemoteFilterToSQL(const TableFilter &filter, const string &column);
 // Returns the quoted name and type of a physical or virtual column of `table`.
 string GetColumnSQL(const TableCatalogEntry &table, column_t column_id, LogicalType &type);
 
-// Renders the filters of `get` on `table` as SQL predicates, or returns false if one cannot be translated.
-bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates);
+// Renders the filters of `get` on `table` as SQL predicates, with columns qualified by `alias` if it is not empty, or
+// returns false if one cannot be translated.
+bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates,
+                       const string &alias = "");
 
 // Renders `SELECT <select_list> FROM <table_name> [WHERE <predicates>]`.
 string RenderSelectQuery(const vector<string> &select_list, const string &table_name, const vector<string> &predicates);
@@ -50,6 +54,13 @@ struct RemoteAggregateQuery {
 // translated with identical semantics.
 unique_ptr<RemoteAggregateQuery> RenderAggregateQuery(LogicalAggregate &aggregate, const LogicalGet &get,
                                                       const TableCatalogEntry &table, const string &table_name);
+
+// Renders `aggregate` over an inner comparison Join of two scans, with filters and projections in between, as
+// `SELECT <groups>, <aggregates> FROM <a> AS t0, <b> AS t1 WHERE <conditions and filters> [GROUP BY 1, ..., k]`.
+// `table_name` returns the name to query a scanned table by, or an empty string if it cannot be used. Returns nullptr
+// if the plan has another shape or cannot be translated with identical semantics.
+unique_ptr<RemoteAggregateQuery> RenderJoinAggregateQuery(LogicalAggregate &aggregate,
+                                                          const std::function<string(LogicalGet &)> &table_name);
 
 // Redirects the group and aggregate bindings of `aggregate` to the columns of the scan `table_index` returning
 // the result of `RenderAggregateQuery`.

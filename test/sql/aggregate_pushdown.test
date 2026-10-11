@@ -121,6 +121,55 @@ WHERE sql LIKE '%sum("*"(amount, %GROUP BY 1' OR sql LIKE '%"upper"(region)%"len
 ----
 2
 
+# CASE, IN, BETWEEN, IS NULL and comparisons are part of the remote query, with local NULL semantics.
+query IIIII
+SELECT sum(CASE WHEN region IN ('r0', 'r1') THEN amount ELSE 0 END), count(CASE WHEN id BETWEEN 100 AND 199 THEN 1 END),
+    count(CASE WHEN region IS NULL THEN 1 END), count(CASE WHEN region NOT IN ('r0', NULL) THEN 1 END),
+    sum(CASE WHEN amount > 20 THEN 1 END)
+FROM dh.sales;
+----
+7500.00	100	100	0	190
+
+query III
+SELECT region IS NULL OR id < 500 AS low, count(*), sum(CASE WHEN amount BETWEEN 5 AND 10 THEN 0 ELSE amount END)
+FROM dh.sales WHERE id >= 100 GROUP BY low ORDER BY low;
+----
+false	450	4950.00
+true	450	4770.00
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE 'SELECT sum(CASE WHEN (region IN (%' OR sql LIKE 'SELECT ((id < CAST(500 AS INTEGER)) OR (region IS NULL)), count(*), sum(CASE %GROUP BY 1';
+----
+2
+
+# Compressed materialization wraps this string group in internal functions that cannot be bound from SQL, so the
+# aggregate is computed locally.
+query III
+SELECT CASE WHEN region IS NULL THEN 'none' WHEN id < 500 THEN 'low' ELSE 'high' END AS bucket, count(*),
+    sum(CASE WHEN amount BETWEEN 5 AND 10 THEN 0 ELSE amount END)
+FROM dh.sales WHERE id >= 100 GROUP BY bucket ORDER BY bucket;
+----
+high	450	4950.00
+low	360	3960.00
+none	90	810.00
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%compress%';
+----
+0
+
+# COALESCE does not render, so its aggregate is computed locally.
+query I
+SELECT sum(COALESCE(amount, 0)) FROM dh.sales;
+----
+12375.00
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%COALESCE%';
+----
+0
+
 # Cases that are not pushed down are still computed locally.
 query I
 SELECT count(*) FROM (SELECT sum(random()) FROM dh.sales);

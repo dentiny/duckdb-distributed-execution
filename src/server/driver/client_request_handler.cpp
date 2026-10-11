@@ -233,9 +233,7 @@ arrow::Status ClientRequestHandler::ScanTable(const distributed::ScanTableReques
 		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
 	}
 
-	auto prepared = registration.worker_fragments
-	                    ? registration.worker_fragments->PrepareClientQuery(*registration.connection, sql)
-	                    : registration.connection->Prepare(sql);
+	auto prepared = registration.connection->Prepare(sql);
 	if (prepared->HasError()) {
 		return arrow::Status::Invalid("Query error: " + prepared->GetError());
 	}

@@ -35,13 +35,19 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 	task_partitioner = make_uniq<TaskPartitioner>(conn, *plan_analyzer);
 }
 
-bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectStatement &statement,
-                                           string &qualified_sql, QueryPlanAnalyzer::QueryAnalysis &analysis) {
+bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const string &sql) {
 	if (storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET ||
 	    worker_manager.GetAvailableWorkers().size() < 2 || !IsSupportedPlan(plan)) {
 		return false;
 	}
-	return task_partitioner->CanPartitionJoin(plan, statement, qualified_sql, analysis);
+	Parser parser;
+	try {
+		parser.ParseQuery(sql);
+	} catch (const ParserException &) {
+		return false;
+	}
+	return parser.statements.size() == 1 && parser.statements[0]->type == StatementType::SELECT_STATEMENT &&
+	       task_partitioner->CanPartitionJoin(plan, parser.statements[0]->Cast<SelectStatement>());
 }
 
 // Distributed execution Driver implementing DuckDB's parallel execution model.
@@ -61,9 +67,7 @@ bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const SelectSt
 // 3. Each worker executes its partition (LocalState semantics) [WORKER]
 // 4. Driver collects and combines results (GlobalState semantics) [Driver]
 // 5. Final result is returned to client [Driver]
-DistributedExecutionResult
-DistributedExecutor::ExecuteDistributed(const string &sql, DistributedFragmentKind kind,
-                                        const QueryPlanAnalyzer::QueryAnalysis *join_analysis) {
+DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string &sql, DistributedFragmentKind kind) {
 	DistributedExecutionResult exec_result;
 	auto &db_instance = *conn.context->db;
 
@@ -101,9 +105,7 @@ DistributedExecutor::ExecuteDistributed(const string &sql, DistributedFragmentKi
 		return exec_result;
 	}
 
-	// The Join's aggregate rewrite was validated against the client plan during Prepare.
-	QueryPlanAnalyzer::QueryAnalysis query_analysis =
-	    join_analysis ? *join_analysis : QueryPlanAnalyzer::AnalyzeQuery(*logical_plan, statement);
+	QueryPlanAnalyzer::QueryAnalysis query_analysis = QueryPlanAnalyzer::AnalyzeQuery(*logical_plan, statement);
 	const bool partitioned_aggregation = query_analysis.supports_partitioned_aggregation &&
 	                                     storage_config.storage_case() != distributed::StorageConfig::STORAGE_NOT_SET;
 	if (kind == DistributedFragmentKind::PARTITIONED_JOIN && !partitioned_aggregation) {

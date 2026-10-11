@@ -7,12 +7,19 @@
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_between_expression.hpp"
+#include "duckdb/planner/expression/bound_case_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/list.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
+#include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/table_filter.hpp"
@@ -25,11 +32,28 @@ bool IsPushableAggregate(const string &name) {
 	return name == "count_star" || name == "count" || name == "sum" || name == "min" || name == "max" || name == "avg";
 }
 
-// Bindings visible to the aggregate: scan columns, and expressions of an optional projection above the scan.
+// Bindings visible to the aggregate: scan columns, and expressions of projections between the scans and the aggregate.
 struct RemoteScope {
 	column_binding_map_t<string> columns;
 	column_binding_map_t<optional_ptr<const Expression>> projections;
+	// The column an expression table filter refers to by reference.
+	string filter_column;
 };
+
+string RenderExpression(const RemoteScope &scope, const Expression &expr);
+
+// Renders each of `children` into `result`, or returns false if one cannot be translated.
+bool RenderChildren(const RemoteScope &scope, const vector<unique_ptr<Expression>> &children, vector<string> &result) {
+	result.reserve(result.size() + children.size());
+	for (const auto &child : children) {
+		auto sql = RenderExpression(scope, *child);
+		if (sql.empty()) {
+			return false;
+		}
+		result.emplace_back(std::move(sql));
+	}
+	return true;
+}
 
 // Renders `expr` as SQL on the remote table, or returns an empty string if it cannot be translated with identical
 // semantics.
@@ -48,6 +72,8 @@ string RenderExpression(const RemoteScope &scope, const Expression &expr) {
 		auto projection = scope.projections.find(binding);
 		return projection == scope.projections.end() ? "" : RenderExpression(scope, *projection->second);
 	}
+	case ExpressionClass::BOUND_REF:
+		return scope.filter_column;
 	case ExpressionClass::BOUND_CONSTANT: {
 		auto &value = expr.Cast<BoundConstantExpression>().value;
 		return StringUtil::Format("CAST(%s AS %s)", value.ToSQLString(), type.ToString());
@@ -62,20 +88,87 @@ string RenderExpression(const RemoteScope &scope, const Expression &expr) {
 	}
 	case ExpressionClass::BOUND_FUNCTION: {
 		auto &function = expr.Cast<BoundFunctionExpression>();
-		if (function.function.GetStability() != FunctionStability::CONSISTENT) {
+		// Optimizer-internal functions, such as compressed materialization's, cannot be bound from SQL.
+		if (function.function.GetStability() != FunctionStability::CONSISTENT ||
+		    StringUtil::StartsWith(function.function.name, "__internal_")) {
 			return "";
 		}
 		vector<string> args;
-		for (auto &child : function.children) {
-			auto arg = RenderExpression(scope, *child);
-			if (arg.empty()) {
-				return "";
-			}
-			args.emplace_back(std::move(arg));
+		if (!RenderChildren(scope, function.children, args)) {
+			return "";
 		}
 		// Quoting also calls operators by name, e.g. "+"(a, b).
 		return StringUtil::Format("%s(%s)", KeywordHelper::WriteQuoted(function.function.name, '"'),
 		                          StringUtil::Join(args, ", "));
+	}
+	case ExpressionClass::BOUND_COMPARISON: {
+		auto &comparison = expr.Cast<BoundComparisonExpression>();
+		const auto op = ExpressionTypeToOperator(expr.GetExpressionType());
+		auto left = RenderExpression(scope, *comparison.left);
+		auto right = RenderExpression(scope, *comparison.right);
+		if (op.empty() || left.empty() || right.empty()) {
+			return "";
+		}
+		return StringUtil::Format("(%s %s %s)", left, op, right);
+	}
+	case ExpressionClass::BOUND_CONJUNCTION: {
+		vector<string> children;
+		if (!RenderChildren(scope, expr.Cast<BoundConjunctionExpression>().children, children)) {
+			return "";
+		}
+		return StringUtil::Format(
+		    "(%s)",
+		    StringUtil::Join(children, StringUtil::Format(" %s ", ExpressionTypeToOperator(expr.GetExpressionType()))));
+	}
+	case ExpressionClass::BOUND_OPERATOR: {
+		vector<string> children;
+		if (!RenderChildren(scope, expr.Cast<BoundOperatorExpression>().children, children)) {
+			return "";
+		}
+		switch (expr.GetExpressionType()) {
+		case ExpressionType::OPERATOR_NOT:
+			return StringUtil::Format("(NOT %s)", children[0]);
+		case ExpressionType::OPERATOR_IS_NULL:
+			return StringUtil::Format("(%s IS NULL)", children[0]);
+		case ExpressionType::OPERATOR_IS_NOT_NULL:
+			return StringUtil::Format("(%s IS NOT NULL)", children[0]);
+		case ExpressionType::COMPARE_IN:
+		case ExpressionType::COMPARE_NOT_IN: {
+			auto input = std::move(children[0]);
+			children.erase(children.begin());
+			return StringUtil::Format("(%s %s (%s))", input,
+			                          expr.GetExpressionType() == ExpressionType::COMPARE_IN ? "IN" : "NOT IN",
+			                          StringUtil::Join(children, ", "));
+		}
+		default:
+			return "";
+		}
+	}
+	case ExpressionClass::BOUND_BETWEEN: {
+		// BETWEEN evaluates as the conjunction of its two comparisons.
+		auto &between = expr.Cast<BoundBetweenExpression>();
+		auto input = RenderExpression(scope, *between.input);
+		auto lower = RenderExpression(scope, *between.lower);
+		auto upper = RenderExpression(scope, *between.upper);
+		if (input.empty() || lower.empty() || upper.empty()) {
+			return "";
+		}
+		return StringUtil::Format("(%s %s %s AND %s %s %s)", input, between.lower_inclusive ? ">=" : ">", lower, input,
+		                          between.upper_inclusive ? "<=" : "<", upper);
+	}
+	case ExpressionClass::BOUND_CASE: {
+		auto &case_expr = expr.Cast<BoundCaseExpression>();
+		string sql = "CASE";
+		for (const auto &check : case_expr.case_checks) {
+			auto when = RenderExpression(scope, *check.when_expr);
+			auto then = RenderExpression(scope, *check.then_expr);
+			if (when.empty() || then.empty()) {
+				return "";
+			}
+			sql += StringUtil::Format(" WHEN %s THEN %s", when, then);
+		}
+		auto else_sql = RenderExpression(scope, *case_expr.else_expr);
+		return else_sql.empty() ? "" : StringUtil::Format("%s ELSE %s END", sql, else_sql);
 	}
 	default:
 		return "";
@@ -127,6 +220,123 @@ bool IsRemoteFilter(const TableFilter &filter) {
 	default:
 		return false;
 	}
+}
+
+// Makes the expressions of `projection` visible to expressions above it.
+void AddProjection(const LogicalProjection &projection, RemoteScope &scope) {
+	for (idx_t idx = 0; idx < projection.expressions.size(); ++idx) {
+		scope.projections.emplace(ColumnBinding(projection.table_index, idx), projection.expressions[idx].get());
+	}
+}
+
+// Makes the columns `get` reads visible, qualified with `alias` if it is not empty.
+void AddScanColumns(const LogicalGet &get, const TableCatalogEntry &table, const string &alias, RemoteScope &scope) {
+	auto &column_ids = get.GetColumnIds();
+	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
+		auto column_id = column_ids[idx].GetPrimaryIndex();
+		if (column_id == COLUMN_IDENTIFIER_EMPTY || column_ids[idx].HasChildren()) {
+			continue;
+		}
+		LogicalType type;
+		auto column = GetColumnSQL(table, column_id, type);
+		scope.columns.emplace(ColumnBinding(get.table_index, idx),
+		                      alias.empty() ? column : StringUtil::Format("%s.%s", alias, column));
+	}
+}
+
+// Adds the scans, filters and inner comparison Joins below an aggregate, through projections, to `scope`, `tables` and
+// `predicates`. Returns false for any other operator, a scan `table_name` rejects, or an untranslatable predicate.
+bool RenderJoinInput(LogicalOperator &op, const std::function<string(LogicalGet &)> &table_name, RemoteScope &scope,
+                     vector<string> &tables, vector<string> &predicates) {
+	for (auto &child : op.children) {
+		if (!RenderJoinInput(*child, table_name, scope, tables, predicates)) {
+			return false;
+		}
+	}
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_GET: {
+		auto &get = op.Cast<LogicalGet>();
+		auto name = table_name(get);
+		if (name.empty()) {
+			return false;
+		}
+		// Aliases keep the columns of the two tables apart.
+		const auto alias = StringUtil::Format("t%llu", tables.size());
+		tables.emplace_back(StringUtil::Format("%s AS %s", name, alias));
+		AddScanColumns(get, *get.GetTable(), alias, scope);
+		return RenderScanFilters(get, *get.GetTable(), predicates, alias);
+	}
+	case LogicalOperatorType::LOGICAL_PROJECTION:
+		AddProjection(op.Cast<LogicalProjection>(), scope);
+		return true;
+	case LogicalOperatorType::LOGICAL_FILTER:
+		return RenderChildren(scope, op.expressions, predicates);
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
+		auto &join = op.Cast<LogicalComparisonJoin>();
+		if (join.join_type != JoinType::INNER) {
+			return false;
+		}
+		// An inner Join keeps the pairs satisfying all conditions, as a WHERE over both tables does.
+		for (const auto &condition : join.conditions) {
+			const auto comparison = ExpressionTypeToOperator(condition.comparison);
+			auto left = RenderExpression(scope, *condition.left);
+			auto right = RenderExpression(scope, *condition.right);
+			if (comparison.empty() || left.empty() || right.empty()) {
+				return false;
+			}
+			predicates.emplace_back(StringUtil::Format("(%s %s %s)", left, comparison, right));
+		}
+		if (join.predicate) {
+			auto predicate = RenderExpression(scope, *join.predicate);
+			if (predicate.empty()) {
+				return false;
+			}
+			predicates.emplace_back(std::move(predicate));
+		}
+		return true;
+	}
+	default:
+		return false;
+	}
+}
+
+// Renders `aggregate` as `SELECT <groups>, <aggregates> FROM <from> [WHERE <predicates>] [GROUP BY 1, ..., k]`, or
+// returns nullptr if it cannot be translated with identical semantics.
+unique_ptr<RemoteAggregateQuery> RenderGroupedQuery(const LogicalAggregate &aggregate, const RemoteScope &scope,
+                                                    const string &from, const vector<string> &predicates) {
+	if (aggregate.grouping_sets.size() > 1 || !aggregate.grouping_functions.empty()) {
+		return nullptr;
+	}
+	if (!aggregate.grouping_sets.empty() && aggregate.grouping_sets[0].size() != aggregate.groups.size()) {
+		return nullptr;
+	}
+	auto result = make_uniq<RemoteAggregateQuery>();
+	vector<string> select_list;
+	vector<string> group_by;
+	for (auto &group : aggregate.groups) {
+		auto sql = RenderExpression(scope, *group);
+		if (sql.empty()) {
+			return nullptr;
+		}
+		select_list.emplace_back(std::move(sql));
+		group_by.emplace_back(std::to_string(group_by.size() + 1));
+		result->types.emplace_back(group->return_type);
+		result->names.emplace_back(group->GetName());
+	}
+	for (auto &expr : aggregate.expressions) {
+		auto sql = RenderAggregate(scope, *expr);
+		if (sql.empty()) {
+			return nullptr;
+		}
+		select_list.emplace_back(std::move(sql));
+		result->types.emplace_back(expr->return_type);
+		result->names.emplace_back(expr->GetName());
+	}
+	result->sql = RenderSelectQuery(select_list, from, predicates);
+	if (!group_by.empty()) {
+		result->sql += " GROUP BY " + StringUtil::Join(group_by, ", ");
+	}
+	return result;
 }
 
 } // namespace
@@ -200,10 +410,24 @@ string GetColumnSQL(const TableCatalogEntry &table, column_t column_id, LogicalT
 	return KeywordHelper::WriteOptionallyQuoted(column.Name());
 }
 
-bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates) {
+bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates,
+                       const string &alias) {
 	for (auto &entry : get.table_filters.filters) {
 		LogicalType type;
 		auto column = GetColumnSQL(table, entry.first, type);
+		if (!alias.empty()) {
+			column = StringUtil::Format("%s.%s", alias, column);
+		}
+		if (entry.second->filter_type == TableFilterType::EXPRESSION_FILTER) {
+			RemoteScope scope;
+			scope.filter_column = column;
+			auto predicate = RenderExpression(scope, *entry.second->Cast<ExpressionFilter>().expr);
+			if (predicate.empty()) {
+				return false;
+			}
+			predicates.emplace_back(std::move(predicate));
+			continue;
+		}
 		if (!SupportsRemoteFilterPushdown(type) || !IsRemoteFilter(*entry.second)) {
 			return false;
 		}
@@ -237,62 +461,27 @@ optional_ptr<LogicalGet> GetAggregateScan(LogicalAggregate &aggregate) {
 
 unique_ptr<RemoteAggregateQuery> RenderAggregateQuery(LogicalAggregate &aggregate, const LogicalGet &get,
                                                       const TableCatalogEntry &table, const string &table_name) {
-	if (aggregate.grouping_sets.size() > 1 || !aggregate.grouping_functions.empty()) {
-		return nullptr;
-	}
-	if (!aggregate.grouping_sets.empty() && aggregate.grouping_sets[0].size() != aggregate.groups.size()) {
-		return nullptr;
-	}
 	RemoteScope scope;
 	if (aggregate.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-		auto &projection = aggregate.children[0]->Cast<LogicalProjection>();
-		for (idx_t idx = 0; idx < projection.expressions.size(); ++idx) {
-			scope.projections.emplace(ColumnBinding(projection.table_index, idx), projection.expressions[idx].get());
-		}
+		AddProjection(aggregate.children[0]->Cast<LogicalProjection>(), scope);
 	}
-	auto &column_ids = get.GetColumnIds();
-	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
-		auto column_id = column_ids[idx].GetPrimaryIndex();
-		if (column_id == COLUMN_IDENTIFIER_EMPTY || column_ids[idx].HasChildren()) {
-			continue;
-		}
-		LogicalType type;
-		scope.columns.emplace(ColumnBinding(get.table_index, idx), GetColumnSQL(table, column_id, type));
-	}
-
+	AddScanColumns(get, table, "", scope);
 	vector<string> predicates;
 	if (!RenderScanFilters(get, table, predicates)) {
 		return nullptr;
 	}
+	return RenderGroupedQuery(aggregate, scope, table_name, predicates);
+}
 
-	auto result = make_uniq<RemoteAggregateQuery>();
-	vector<string> select_list;
-	vector<string> group_by;
-	for (auto &group : aggregate.groups) {
-		auto sql = RenderExpression(scope, *group);
-		if (sql.empty()) {
-			return nullptr;
-		}
-		select_list.emplace_back(std::move(sql));
-		group_by.emplace_back(std::to_string(group_by.size() + 1));
-		result->types.emplace_back(group->return_type);
-		result->names.emplace_back(group->GetName());
+unique_ptr<RemoteAggregateQuery> RenderJoinAggregateQuery(LogicalAggregate &aggregate,
+                                                          const std::function<string(LogicalGet &)> &table_name) {
+	RemoteScope scope;
+	vector<string> tables;
+	vector<string> predicates;
+	if (!RenderJoinInput(*aggregate.children[0], table_name, scope, tables, predicates) || tables.size() != 2) {
+		return nullptr;
 	}
-	for (auto &expr : aggregate.expressions) {
-		auto sql = RenderAggregate(scope, *expr);
-		if (sql.empty()) {
-			return nullptr;
-		}
-		select_list.emplace_back(std::move(sql));
-		result->types.emplace_back(expr->return_type);
-		result->names.emplace_back(expr->GetName());
-	}
-
-	result->sql = RenderSelectQuery(select_list, table_name, predicates);
-	if (!group_by.empty()) {
-		result->sql += " GROUP BY " + StringUtil::Join(group_by, ", ");
-	}
-	return result;
+	return RenderGroupedQuery(aggregate, scope, StringUtil::Join(tables, ", "), predicates);
 }
 
 void ReplaceAggregateBindings(const LogicalAggregate &aggregate, idx_t table_index,
