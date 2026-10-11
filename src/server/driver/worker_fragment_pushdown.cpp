@@ -103,8 +103,9 @@ unique_ptr<LogicalGet> CreateFragment(Binder &binder, string sql, vector<Logical
 	return result;
 }
 
+// `scans` counts the scans below `aggregate`; only a Join of two scans is rendered as a Join aggregate.
 unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, WorkerFragmentState &state,
-                                                       LogicalAggregate &aggregate,
+                                                       LogicalAggregate &aggregate, idx_t scans,
                                                        vector<ReplacementBinding> &replacements) {
 	unique_ptr<RemoteAggregateQuery> query;
 	auto kind = DistributedFragmentKind::TABLE;
@@ -115,7 +116,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, WorkerFra
 			return nullptr;
 		}
 		query = RenderAggregateQuery(aggregate, *get, *table, GetTableName(*table));
-	} else {
+	} else if (scans == 2) {
 		// Join tasks need a driver merge, so only create the fragment if the executor can partition it.
 		query = RenderJoinAggregateQuery(aggregate, [](LogicalGet &join_get) {
 			auto table = GetPartitionedTable(join_get);
@@ -194,7 +195,7 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-			fragment = TryCreateAggregateFragment(binder, *state, op.Cast<LogicalAggregate>(), replacements);
+			fragment = TryCreateAggregateFragment(binder, *state, op.Cast<LogicalAggregate>(), scans, replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			fragment = TryCreateScanFragment(binder, op.Cast<LogicalGet>(), replacements);
 		}
