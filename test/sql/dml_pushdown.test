@@ -77,3 +77,18 @@ SELECT id, value FROM dh.dml_source ORDER BY id;
 1	one
 2	two
 3	three
+
+# A table alias matching the client catalog must remain correlated in the remote DELETE.
+statement ok
+INSERT INTO dh.dml_source VALUES (12, 'twelve');
+
+statement ok
+DELETE FROM dh.dml_source AS dh
+WHERE EXISTS (SELECT 1 FROM dh.dml_target AS s WHERE s.id = dh.id);
+
+query IT
+SELECT id, value FROM dh.dml_source ORDER BY id;
+----
+1	one
+2	two
+3	three
