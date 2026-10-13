@@ -420,6 +420,14 @@ TEST_CASE("Worker fragments only read tables of the served catalog", "[worker_fr
 		REQUIRE(served_executions[0].num_tasks_generated == 2);
 		REQUIRE(served_executions[0].sql ==
 		        "aggregate sum((amount * multiplier)) over object_db.main.fact (partitioned), object_db.main.dim");
+
+		// Multi-table Joins only distribute when every table belongs to the served catalog.
+		const string three_table_sql = "SELECT sum(f.amount * d.multiplier * o.multiplier) FROM object_db.main.fact f "
+		                               "JOIN object_db.main.dim d ON f.k = d.k JOIN %s.main.dim o ON f.k = o.k";
+		REQUIRE(fixture.RequireLocalResult(StringUtil::Format(three_table_sql, "\"other catalog\"")).empty());
+		auto multi_executions = fixture.RequireLocalResult(StringUtil::Format(three_table_sql, "object_db"));
+		REQUIRE(multi_executions.size() == 1);
+		REQUIRE(multi_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 	}
 	std::filesystem::remove_all(root);
 }
@@ -494,9 +502,13 @@ TEST_CASE("Only scans every output row comes from one row of are partitioned", "
 		const string three_table_sql =
 		    "SELECT e.bucket, sum(s.amount * d.multiplier), count(*) FROM skew s "
 		    "JOIN dim d ON s.k = d.k JOIN dim2 e ON d.k = e.k GROUP BY e.bucket ORDER BY ALL";
-		for (const auto &sql : {correlated_sql, aggregate_join_sql, three_table_sql}) {
+		for (const auto &sql : {correlated_sql, aggregate_join_sql}) {
 			REQUIRE(fixture.RequireLocalResult(sql).empty());
 		}
+		auto executions = fixture.RequireLocalResult(three_table_sql);
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(executions[0].num_tasks_generated == 3);
 	}
 	std::filesystem::remove_all(root);
 }

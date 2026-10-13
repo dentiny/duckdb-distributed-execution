@@ -348,13 +348,13 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		return nullptr;
 	}
 	CollectPartitionableScans(*aggregate.children[0], candidates);
-	// Only one table or an inner Join of two tables is distributed.
+	// Only one table or an inner Join of tables is distributed.
 	if (candidates.empty() || candidates.size() != scans.size()) {
 		return nullptr;
 	}
-	// A Join partitions the input with the most estimated bytes, so each worker repeats the cheaper one. Use the Join's
-	// input roots so filters and projections above the scans contribute to the estimate; serialization drops the
-	// estimates, so this is decided here.
+	// A Join partitions the input with the most estimated bytes, so each worker repeats the cheaper ones. Estimates
+	// are taken at the Join's inputs, so filters and projections above the scans count. Serialized plans lose the
+	// estimates, so the choice is made here on the driver.
 	idx_t partitioned_idx = 0;
 	vector<JoinInputCost> costs;
 	if (scans.size() > 1) {
@@ -456,8 +456,15 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		// Bound the replicated hash build estimate and charge for every additional scan/build. Only distribute when
 		// the parallel scan savings exceed this duplicated work.
 		constexpr double MAX_REPLICATED_BUILD_BYTES = 64 * 1024 * 1024;
+		// Every other input is replicated, so their costs add up.
 		const auto &partition_cost = costs[partitioned_idx];
-		const auto &replicated_cost = costs[1 - partitioned_idx];
+		JoinInputCost replicated_cost {0, 0};
+		for (idx_t idx = 0; idx < costs.size(); ++idx) {
+			if (idx != partitioned_idx) {
+				replicated_cost.scan_bytes += costs[idx].scan_bytes;
+				replicated_cost.build_bytes += costs[idx].build_bytes;
+			}
+		}
 		const auto extra_replication =
 		    static_cast<double>(num_tasks - 1) * (replicated_cost.scan_bytes + replicated_cost.build_bytes);
 		const auto parallel_savings = partition_cost.scan_bytes * (1.0 - 1.0 / static_cast<double>(num_tasks));
@@ -565,14 +572,6 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 	return std::move(result);
 }
 
-idx_t CountScans(LogicalOperator &op) {
-	idx_t count = op.type == LogicalOperatorType::LOGICAL_GET ? 1 : 0;
-	for (auto &child : op.children) {
-		count += CountScans(*child);
-	}
-	return count;
-}
-
 void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	// Fragments run outside the client's transaction, so they would miss its snapshot in an explicit transaction.
 	auto state = input.context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME);
@@ -580,11 +579,6 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		return;
 	}
 	auto &binder = input.optimizer.binder;
-	// A Join of two scans only becomes a fragment at its aggregate; everything above it stays in the plan.
-	const auto scans = CountScans(*plan);
-	if (scans != 1 && scans != 2) {
-		return;
-	}
 	vector<ReplacementBinding> replacements;
 	reference<unique_ptr<LogicalOperator>> node = plan;
 	while (true) {
