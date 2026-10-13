@@ -250,14 +250,15 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	                       /*description=*/"Starts a standalone Duckherder worker on the given port.",
 	                       /*examples=*/ {"SELECT duckherder_start_standalone_worker(8816);"},
 	                       /*categories=*/ {"duckherder", "distributed_execution", "worker"});
-	ScalarFunction enable("duckherder_test_enable_worker_fragments", {LogicalType::VARCHAR, LogicalType::UBIGINT},
-	                      LogicalType::BOOLEAN, EnableWorkerFragments);
-	enable.SetVolatile();
-	loader.RegisterFunction(enable);
-	ScalarFunction disable("duckherder_test_disable_worker_fragments", {}, LogicalType::BOOLEAN,
-	                       DisableWorkerFragments);
-	disable.SetVolatile();
-	loader.RegisterFunction(disable);
+	ScalarFunction enable_worker_fragments("duckherder_test_enable_worker_fragments",
+	                                       {LogicalType::VARCHAR, LogicalType::UBIGINT}, LogicalType::BOOLEAN,
+	                                       EnableWorkerFragments);
+	enable_worker_fragments.SetVolatile();
+	loader.RegisterFunction(enable_worker_fragments);
+	ScalarFunction disable_worker_fragments("duckherder_test_disable_worker_fragments", {}, LogicalType::BOOLEAN,
+	                                        DisableWorkerFragments);
+	disable_worker_fragments.SetVolatile();
+	loader.RegisterFunction(disable_worker_fragments);
 	loader.RegisterFunction(
 	    TableFunction("duckherder_test_worker_fragments", {}, ScanExecutions, BindExecutions, InitExecutions));
 }
