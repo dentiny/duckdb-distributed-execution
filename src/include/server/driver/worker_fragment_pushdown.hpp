@@ -30,8 +30,8 @@ public:
 	vector<QueryExecutionInfo> TakeExecutions();
 	// Whether workers can run `sql`, rendered from the Join aggregate `plan`, as partitioned tasks.
 	bool CanPartitionJoin(LogicalOperator &plan, const string &sql);
-	// Workers only have the database served by this executor, not other driver attachments.
-	bool CanPartitionTable(const TableCatalogEntry &table) const;
+	// Whether the table belongs to the catalog served by this executor.
+	bool IsSameCatalog(const TableCatalogEntry &table) const;
 
 private:
 	DistributedExecutor &executor;

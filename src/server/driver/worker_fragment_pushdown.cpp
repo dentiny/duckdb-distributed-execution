@@ -82,7 +82,7 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get, const WorkerFragmentState &state) {
 	auto table = get.GetTable();
 	if (!table || !table->IsDuckTable() || table->temporary || get.extra_info.sample_options ||
-	    !state.CanPartitionTable(*table)) {
+	    !state.IsSameCatalog(*table)) {
 		return nullptr;
 	}
 	return table;
@@ -274,7 +274,7 @@ bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const string &
 	return executor.CanPartitionJoin(plan, sql);
 }
 
-bool WorkerFragmentState::CanPartitionTable(const TableCatalogEntry &table) const {
+bool WorkerFragmentState::IsSameCatalog(const TableCatalogEntry &table) const {
 	return &table.catalog == &catalog;
 }
 
