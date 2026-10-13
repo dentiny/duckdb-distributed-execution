@@ -137,15 +137,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 
 	exec_result.partition_strategy = tasks.size() == 1 ? PartitionStrategy::NONE : PartitionStrategy::ROW_GROUP_ALIGNED;
 
-	// Map tasks to workers using round-robin
-	// The partitioner creates at most one task per worker; tables with fewer row groups than workers yield M < N.
-	// Maps from worker_id -> [task_indices]
-	vector<vector<idx_t>> worker_to_tasks(workers.size());
-	for (idx_t idx = 0; idx < tasks.size(); ++idx) {
-		const idx_t worker_id = idx % workers.size();
-		worker_to_tasks[worker_id].emplace_back(idx);
-	}
-
 	// Phase 3: Prepare result schema and type information。
 	auto prepared = conn.Prepare(sql);
 	if (prepared->HasError()) {
@@ -191,7 +182,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	}
 
 	vector<arrow::RecordBatchVector> task_batches(tasks.size());
-	vector<arrow::Status> task_statuses(tasks.size());
 	Value thread_setting;
 	if (!db_instance.TryGetCurrentSetting("duckherder_async_threads", thread_setting)) {
 		throw InternalException("Duckherder async thread setting is not registered");
@@ -208,21 +198,15 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 	auto pool = *pool_result;
 	vector<arrow::Future<>> dispatches;
 	arrow::Status dispatch_error = arrow::Status::OK();
-	dispatches.reserve(workers.size());
-	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
-		if (worker_to_tasks[worker_id].empty()) {
-			continue;
-		}
-		// Flight calls block while the worker runs; keep their waits outside DuckDB's CPU-sized task pool.
-		auto submitted = pool->Submit([&, worker_id]() -> arrow::Status {
-			for (auto task_idx : worker_to_tasks[worker_id]) {
-				task_statuses[task_idx] =
-				    workers[worker_id]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
-				if (!task_statuses[task_idx].ok()) {
-					return arrow::Status::OK();
-				}
-			}
-			return arrow::Status::OK();
+	// The partitioner creates at most one task per worker; extra workers remain
+	// idle.
+	D_ASSERT(tasks.size() <= workers.size());
+	dispatches.reserve(tasks.size());
+	for (idx_t task_idx = 0; task_idx < tasks.size(); ++task_idx) {
+		// Flight calls block while the worker runs; keep their waits outside
+		// DuckDB's CPU-sized task pool.
+		auto submitted = pool->Submit([&, task_idx]() -> arrow::Status {
+			return workers[task_idx]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
 		});
 		if (!submitted.ok()) {
 			dispatch_error = submitted.status();
@@ -230,29 +214,25 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		}
 		dispatches.emplace_back(*submitted);
 	}
+	// Complete every submitted task before returning or throwing: their captures
+	// refer to this stack frame.
 	for (auto &dispatch : dispatches) {
-		const auto &status = dispatch.status();
-		if (!status.ok() && dispatch_error.ok()) {
-			dispatch_error = status;
-		}
+		dispatch.Wait();
 	}
 	if (!dispatch_error.ok()) {
 		throw IOException("Worker dispatch failed: %s", dispatch_error.ToString());
 	}
-
-	for (idx_t worker_id = 0; worker_id < workers.size(); ++worker_id) {
-		for (auto task_idx : worker_to_tasks[worker_id]) {
-			const auto &status = task_statuses[task_idx];
-			if (!status.ok()) {
-				// Merging the remaining partitions would silently drop this task's rows.
-				DUCKDB_LOG_WARNING(db_instance,
-				                   StringUtil::Format("Worker %s failed executing task %llu, falling back to local "
-				                                      "execution: %s",
-				                                      workers[worker_id]->worker_id,
-				                                      static_cast<long long unsigned>(tasks[task_idx].task_id),
-				                                      status.ToString()));
-				return exec_result;
-			}
+	for (idx_t task_idx = 0; task_idx < dispatches.size(); ++task_idx) {
+		const auto &status = dispatches[task_idx].status();
+		if (!status.ok()) {
+			// Merging the remaining partitions would silently drop this task's rows.
+			DUCKDB_LOG_WARNING(db_instance,
+			                   StringUtil::Format("Worker %s failed executing task %llu, falling back to local "
+			                                      "execution: %s",
+			                                      workers[task_idx]->worker_id,
+			                                      static_cast<long long unsigned>(tasks[task_idx].task_id),
+			                                      status.ToString()));
+			return exec_result;
 		}
 	}
 

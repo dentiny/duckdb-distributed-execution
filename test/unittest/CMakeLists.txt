@@ -12,6 +12,7 @@ set(DUCKHERDER_UNITTEST_SOURCES
     test_arrow_map_conversion.cpp
     test_arrow_struct_conversion.cpp
     test_distributed_flight.cpp
+    test_distributed_executor.cpp
     test_distributed_flight_replay.cpp
     test_arrow_uuid_conversion.cpp
     test_duckherder_remote_endpoint.cpp
