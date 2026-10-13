@@ -440,6 +440,50 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(schema_executions.size() == 1);
 		REQUIRE(schema_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 		REQUIRE(schema_executions[0].num_tasks_generated == 2);
+		client.reset();
+		state.reset();
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Worker fragments preserve catalog identity", "[worker_fragment][catalog]") {
+	auto root = std::filesystem::temp_directory_path() /
+	            StringUtil::Format("duckherder_catalog_fragment_%s",
+	                               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	std::filesystem::create_directories(root);
+	{
+		distributed::StorageConfig config;
+		config.set_database_uri("duckdb_objfs://catalog_fragment.db");
+		config.mutable_local()->set_root(root.string());
+		auto database_result = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
+		REQUIRE(database_result.ok());
+		auto database = std::move(database_result).ValueOrDie();
+		auto &db = database->GetInstance();
+		auto &db_config = DBConfig::GetConfig(*db.instance);
+		db_config.options.disabled_optimizers.insert(OptimizerType::COMPRESSED_MATERIALIZATION);
+		OptimizerExtension::Register(db_config, GetWorkerFragmentExtension());
+		auto writer_result = database->Connect();
+		REQUIRE(writer_result.ok());
+		auto writer = std::move(writer_result).ValueOrDie();
+		REQUIRE_FALSE(writer
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, 2 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    writer->Query("CREATE TABLE dim AS SELECT i AS k, 5 AS multiplier FROM range(17) t(i)")->HasError());
+		writer.reset();
+
+		WorkerManager manager(db);
+		REQUIRE(manager.StartLocalWorkers(2).ok());
+		auto client_result = database->Connect();
+		auto executor_result = database->Connect();
+		REQUIRE(client_result.ok());
+		REQUIRE(executor_result.ok());
+		auto client = std::move(client_result).ValueOrDie();
+		auto executor_connection = std::move(executor_result).ValueOrDie();
+		DistributedExecutor executor(manager, *executor_connection, config);
+		auto state = make_shared_ptr<WorkerFragmentState>(executor, *executor_connection);
+		client->context->registered_state->Insert(WorkerFragmentState::NAME, state);
 
 		// Same schema and table names in another catalog must not resolve to the served database on workers.
 		REQUIRE_FALSE(client->Query("ATTACH ':memory:' AS \"other catalog\"")->HasError());
