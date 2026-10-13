@@ -440,6 +440,55 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(schema_executions.size() == 1);
 		REQUIRE(schema_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 		REQUIRE(schema_executions[0].num_tasks_generated == 2);
+
+		// Same schema and table names in another catalog must not resolve to the served database on workers.
+		REQUIRE_FALSE(client->Query("ATTACH ':memory:' AS \"other catalog\"")->HasError());
+		REQUIRE_FALSE(client
+		                  ->Query("CREATE TABLE \"other catalog\".main.fact AS SELECT i AS id, i % 17 AS k, "
+		                          "3 AS amount FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(client
+		                  ->Query("CREATE TABLE \"other catalog\".main.dim AS "
+		                          "SELECT i AS k, 7 AS multiplier FROM range(17) t(i)")
+		                  ->HasError());
+		for (const auto &foreign_sql : {"SELECT sum(f.amount * d.multiplier) FROM \"other catalog\".main.fact f "
+		                                "JOIN \"other catalog\".main.dim d ON f.k = d.k",
+		                                "SELECT sum(amount) FROM \"other catalog\".main.fact",
+		                                "SELECT amount FROM \"other catalog\".main.fact WHERE id = 1",
+		                                "SELECT sum(f.amount * d.multiplier) FROM \"other catalog\".main.fact f "
+		                                "JOIN object_db.main.dim d ON f.k = d.k",
+		                                "SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f "
+		                                "JOIN \"other catalog\".main.dim d ON f.k = d.k"}) {
+			INFO(foreign_sql);
+			auto foreign_expected = executor_connection->Query(foreign_sql);
+			auto foreign_actual = client->Query(foreign_sql);
+			REQUIRE_FALSE(foreign_expected->HasError());
+			REQUIRE_FALSE(foreign_actual->HasError());
+			REQUIRE(foreign_actual->Equals(*foreign_expected));
+			REQUIRE(state->TakeExecutions().empty());
+		}
+
+		// Changing the client's default catalog does not change which database the executor serves.
+		REQUIRE_FALSE(client->Query("USE \"other catalog\"")->HasError());
+		auto foreign_default = client->Query("SELECT sum(f.amount * d.multiplier) FROM fact f JOIN dim d ON f.k = d.k");
+		REQUIRE_FALSE(foreign_default->HasError());
+		REQUIRE(foreign_default->GetValue(0, 0).GetValue<int64_t>() == 6300000);
+		REQUIRE(state->TakeExecutions().empty());
+
+		// Fully qualified served tables still produce partitioned tasks after USE.
+		const string served_sql = "SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f "
+		                          "JOIN object_db.main.dim d ON f.k = d.k";
+		auto served_expected = executor_connection->Query(served_sql);
+		auto served_actual = client->Query(served_sql);
+		REQUIRE_FALSE(served_expected->HasError());
+		REQUIRE_FALSE(served_actual->HasError());
+		REQUIRE(served_actual->Equals(*served_expected));
+		auto served_executions = state->TakeExecutions();
+		REQUIRE(served_executions.size() == 1);
+		REQUIRE(served_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(served_executions[0].num_tasks_generated == 2);
+		REQUIRE(StringUtil::Contains(served_executions[0].sql, "object_db.main.fact"));
+		REQUIRE(StringUtil::Contains(served_executions[0].sql, "object_db.main.dim"));
 		client.reset();
 		state.reset();
 	}
