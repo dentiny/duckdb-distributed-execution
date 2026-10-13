@@ -18,6 +18,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/storage/storage_info.hpp"
+#include "server/driver/plan_serializer.hpp"
 #include "server/driver/query_utils.hpp"
 #include "server/driver/worker_manager.hpp"
 
