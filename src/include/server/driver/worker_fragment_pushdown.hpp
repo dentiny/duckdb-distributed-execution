@@ -9,6 +9,7 @@ namespace duckdb {
 
 class Catalog;
 class Connection;
+class DBConfig;
 class DistributedExecutor;
 class LogicalGet;
 class LogicalOperator;
@@ -55,7 +56,8 @@ private:
 vector<string> SerializeTaskPlans(ClientContext &context, LogicalOperator &plan, LogicalGet &partitioned,
                                   idx_t max_tasks);
 
-// Replaces eligible scans and aggregates, over one table or an inner Join of two, with worker fragments.
-OptimizerExtension GetWorkerFragmentExtension();
+// Registers the optimizer extension that replaces eligible scans and aggregates, over one table or an inner Join of
+// two, with worker fragments.
+void RegisterWorkerFragments(DBConfig &config);
 
 } // namespace duckdb

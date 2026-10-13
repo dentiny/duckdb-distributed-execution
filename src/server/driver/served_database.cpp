@@ -24,8 +24,7 @@ arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distribu
 			return database_result.status();
 		}
 		database = std::move(database_result).ValueOrDie();
-		OptimizerExtension::Register(DBConfig::GetConfig(*database->GetInstance().instance),
-		                             GetWorkerFragmentExtension());
+		RegisterWorkerFragments(DBConfig::GetConfig(*database->GetInstance().instance));
 	}
 	auto connection_result = database->Connect();
 	if (!connection_result.ok()) {

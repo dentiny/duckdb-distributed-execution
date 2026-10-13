@@ -72,8 +72,7 @@ struct FragmentFixture {
 		auto database_result = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
 		REQUIRE(database_result.ok());
 		database = std::move(database_result).ValueOrDie();
-		OptimizerExtension::Register(DBConfig::GetConfig(*database->GetInstance().instance),
-		                             GetWorkerFragmentExtension());
+		RegisterWorkerFragments(DBConfig::GetConfig(*database->GetInstance().instance));
 		manager = make_uniq<WorkerManager>(database->GetInstance());
 		auto client_result = database->Connect();
 		auto executor_result = database->Connect();
@@ -565,9 +564,10 @@ TEST_CASE("Prepared fragments read rows appended before they execute", "[worker_
 			prepared.emplace_back(fixture.client->Prepare(sql));
 			REQUIRE_FALSE(prepared.back()->HasError());
 		}
-		// The task ranges were planned for three row groups; the INSERT adds three more.
+		// The task ranges were planned for three row groups; the INSERT adds three more. Its keys are outside the range
+		// the plan was optimized for, which a plan compressed with the driver's statistics would wrap.
 		REQUIRE_FALSE(
-		    executor_connection->Query("INSERT INTO fact SELECT i, i % 17, i % 7 FROM range(300000, 600000) t(i)")
+		    executor_connection->Query("INSERT INTO fact SELECT i, i % 1000, i % 7 FROM range(300000, 600000) t(i)")
 		        ->HasError());
 		REQUIRE_FALSE(executor_connection->Query("CHECKPOINT")->HasError());
 		for (idx_t idx = 0; idx < queries.size(); ++idx) {

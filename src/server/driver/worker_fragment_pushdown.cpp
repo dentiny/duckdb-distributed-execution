@@ -5,11 +5,13 @@
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/enums/optimizer_type.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
@@ -697,10 +699,12 @@ idx_t WorkerFragmentState::NumWorkers() {
 	return executor.NumWorkers();
 }
 
-OptimizerExtension GetWorkerFragmentExtension() {
+void RegisterWorkerFragments(DBConfig &config) {
+	// Compressed materialization bakes the driver's statistics into the plan, and workers may read newer data.
+	config.options.disabled_optimizers.insert(OptimizerType::COMPRESSED_MATERIALIZATION);
 	OptimizerExtension extension;
 	extension.optimize_function = OptimizeWorkerFragments;
-	return extension;
+	OptimizerExtension::Register(config, std::move(extension));
 }
 
 } // namespace duckdb
