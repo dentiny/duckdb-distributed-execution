@@ -89,3 +89,37 @@ SELECT id, value FROM dh.prepared_dml ORDER BY id;
 ----
 2	TWO
 4	FOUR
+
+# Prepared RETURNING expressions are evaluated once on the client.
+statement ok
+PREPARE parameterized_insert_returning AS
+    INSERT INTO dh.prepared_dml VALUES ($1, $2) RETURNING id + 10, value || '!';
+
+query IT
+EXECUTE parameterized_insert_returning(1, 'one');
+----
+11	one!
+
+statement ok
+PREPARE parameterized_update_returning AS
+    UPDATE dh.prepared_dml SET value = $1 WHERE id = $2 RETURNING id + 10, value || '!';
+
+query IT
+EXECUTE parameterized_update_returning('uno', 1);
+----
+11	uno!
+
+statement ok
+PREPARE parameterized_delete_returning AS
+    DELETE FROM dh.prepared_dml WHERE id = $1 RETURNING id + 10, value || '!';
+
+query IT
+EXECUTE parameterized_delete_returning(1);
+----
+11	uno!
+
+query II
+SELECT id, value FROM dh.prepared_dml ORDER BY id;
+----
+2	TWO
+4	FOUR

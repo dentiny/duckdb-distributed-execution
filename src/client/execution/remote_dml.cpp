@@ -101,7 +101,8 @@ string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
 	if (prepared_entry == prepared_statements.end() || !prepared_entry->second->unbound_statement) {
 		throw InternalException("Prepared statement %s is unavailable for remote execution", execute.name);
 	}
-	auto statement_sql = prepared_entry->second->unbound_statement->ToString();
+	// The client projection evaluates RETURNING expressions, so the remote prepared statement must return raw rows.
+	auto statement_sql = ReturnCompleteRows(prepared_entry->second->unbound_statement->ToString());
 	StringUtil::RTrim(statement_sql);
 	auto prepare_sql = StringUtil::Format("PREPARE %s AS %s", statement_name, statement_sql);
 	if (prepare_sql.back() != ';') {
