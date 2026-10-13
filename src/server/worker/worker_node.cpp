@@ -99,7 +99,7 @@ arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &conte
 
 arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
                                 std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
-	// Ticket contains partition_id for retrieving results.
+	// The ticket carries the complete ExecutePartition request.
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse ticket");

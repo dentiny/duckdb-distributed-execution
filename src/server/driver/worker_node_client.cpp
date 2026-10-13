@@ -17,36 +17,8 @@ arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecuteParti
 	distributed::DistributedRequest req;
 	*req.mutable_execute_partition() = request;
 
-	std::string req_data = req.SerializeAsString();
-	arrow::flight::Action action {"execute_partition", arrow::Buffer::FromString(req_data)};
-
-	auto action_result = client->DoAction(action);
-	if (!action_result.ok()) {
-		return action_result.status();
-	}
-	auto result_stream = std::move(action_result).ValueOrDie();
-
-	auto next_result = result_stream->Next();
-	if (!next_result.ok()) {
-		return next_result.status();
-	}
-	auto result = std::move(next_result).ValueOrDie();
-	if (!result) {
-		return arrow::Status::Invalid("No response from worker");
-	}
-
-	distributed::DistributedResponse response;
-	if (!response.ParseFromArray(result->body->data(), result->body->size())) {
-		return arrow::Status::Invalid("Failed to parse response");
-	}
-
-	if (!response.success()) {
-		return arrow::Status::Invalid("Worker execution failed: " + response.error_message());
-	}
-
-	// Now get the actual data stream using DoGet with the request as ticket.
 	arrow::flight::Ticket ticket;
-	ticket.ticket = req_data;
+	ticket.ticket = req.SerializeAsString();
 	ARROW_ASSIGN_OR_RAISE(auto stream, client->DoGet(ticket));
 	ARROW_ASSIGN_OR_RAISE(batches, stream->ToRecordBatches());
 	return arrow::Status::OK();
