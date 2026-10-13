@@ -642,9 +642,8 @@ TEST_CASE("Worker fragments are cut inside materialized CTEs", "[worker_fragment
 		executions =
 		    fixture.RequireLocalResult("WITH dims AS MATERIALIZED (SELECT k, multiplier FROM dim) "
 		                               "SELECT sum(f.amount * d.multiplier) FROM fact f JOIN dims d ON f.k = d.k");
-		for (const auto &execution : executions) {
-			REQUIRE_FALSE(StringUtil::StartsWith(execution.sql, "aggregate"));
-		}
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].sql == "scan over object_db.main.dim");
 	}
 	std::filesystem::remove_all(root);
 }
@@ -672,6 +671,14 @@ TEST_CASE("Inner Joins without an aggregate become fragments that return their r
 			REQUIRE(executions.size() == 1);
 			REQUIRE(executions[0].num_tasks_generated == 2);
 			REQUIRE(executions[0].sql == "join over object_db.main.fact (partitioned), object_db.main.dim");
+		}
+		// A Join below an operator that reduces its rows stays local, including one in a CTE below an aggregate.
+		for (const auto &sql :
+		     {"SELECT DISTINCT d.multiplier FROM fact f JOIN dim d ON f.k = d.k ORDER BY ALL",
+		      "SELECT f.id, d.multiplier FROM fact f JOIN dim d ON f.k = d.k ORDER BY f.id LIMIT 10",
+		      "SELECT count(*) FROM (WITH pairs AS MATERIALIZED (SELECT f.amount, d.multiplier FROM fact f JOIN dim d "
+		      "ON f.k = d.k) SELECT * FROM pairs UNION ALL SELECT * FROM pairs)"}) {
+			REQUIRE(fixture.RequireLocalResult(sql).empty());
 		}
 	}
 	std::filesystem::remove_all(root);

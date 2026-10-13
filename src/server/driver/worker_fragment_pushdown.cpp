@@ -185,6 +185,18 @@ void CollectPartitionableScans(LogicalOperator &op, vector<reference<LogicalGet>
 	}
 }
 
+// Collects the scans of op, whose input is input. Returns false unless workers can read every scan and each is reached
+// from input through filters, projections and inner Joins, so tasks can split any of them.
+bool CollectFragmentScans(LogicalOperator &op, LogicalOperator &input, const WorkerFragmentState &state,
+                          vector<reference<LogicalGet>> &scans) {
+	if (!CollectScans(op, state, scans)) {
+		return false;
+	}
+	vector<reference<LogicalGet>> candidates;
+	CollectPartitionableScans(input, candidates);
+	return !candidates.empty() && candidates.size() == scans.size();
+}
+
 optional_ptr<LogicalGet> FindScan(LogicalOperator &op, idx_t table_index) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET && op.Cast<LogicalGet>().table_index == table_index) {
 		return op.Cast<LogicalGet>();
@@ -436,13 +448,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		return nullptr;
 	}
 	vector<reference<LogicalGet>> scans;
-	vector<reference<LogicalGet>> candidates;
-	if (!CollectScans(aggregate, state, scans)) {
-		return nullptr;
-	}
-	CollectPartitionableScans(*aggregate.children[0], candidates);
-	// Only one table or an inner Join of tables is distributed.
-	if (candidates.empty() || candidates.size() != scans.size()) {
+	if (!CollectFragmentScans(aggregate, *aggregate.children[0], state, scans)) {
 		return nullptr;
 	}
 	// Workers return the groups and partial aggregates. avg becomes a sum and a count, appended after the others.
@@ -614,12 +620,7 @@ unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder
                                                   LogicalComparisonJoin &join,
                                                   vector<ReplacementBinding> &replacements) {
 	vector<reference<LogicalGet>> scans;
-	vector<reference<LogicalGet>> candidates;
-	if (!CollectScans(join, state, scans)) {
-		return nullptr;
-	}
-	CollectPartitionableScans(join, candidates);
-	if (candidates.empty() || candidates.size() != scans.size()) {
+	if (!CollectFragmentScans(join, join, state, scans)) {
 		return nullptr;
 	}
 	WorkerFragment fragment;
@@ -643,20 +644,16 @@ unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder
 }
 
 // Replaces the first aggregate, inner Join or lone scan below root, following operators with one child, with a worker
-// fragment.
+// fragment. reduced is whether an operator above root reduces its rows.
 void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state, unique_ptr<LogicalOperator> &root,
-                 vector<ReplacementBinding> &replacements) {
+                 bool reduced, vector<ReplacementBinding> &replacements) {
 	reference<unique_ptr<LogicalOperator>> node = root;
-	// Below an aggregate kept on the driver, a Join fragment would send all its rows there, a transfer the cost model
-	// ignores.
-	bool below_aggregate = false;
 	while (true) {
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
 			fragment = TryCreateAggregateFragment(context, binder, state, op.Cast<LogicalAggregate>(), replacements);
-			below_aggregate = true;
-		} else if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN && !below_aggregate) {
+		} else if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN && !reduced) {
 			fragment = TryCreateJoinFragment(context, binder, state, op.Cast<LogicalComparisonJoin>(), replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			fragment = TryCreateScanFragment(context, binder, state, op.Cast<LogicalGet>(), replacements);
@@ -668,7 +665,7 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 		// A materialized CTE runs its definition once and the query reads the result, so each can hold a fragment.
 		if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
 			for (auto &child : op.children) {
-				CutFragment(context, binder, state, child, replacements);
+				CutFragment(context, binder, state, child, reduced, replacements);
 			}
 			return;
 		}
@@ -676,6 +673,10 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 		if (op.type == LogicalOperatorType::LOGICAL_LIMIT || op.children.size() != 1) {
 			return;
 		}
+		// A Join fragment sends all its rows to the driver, a transfer the cost model ignores, so it is only cut when
+		// the operators above only project or sort them.
+		reduced = reduced || (op.type != LogicalOperatorType::LOGICAL_PROJECTION &&
+		                      op.type != LogicalOperatorType::LOGICAL_ORDER_BY);
 		node = op.children[0];
 	}
 }
@@ -687,7 +688,7 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		return;
 	}
 	vector<ReplacementBinding> replacements;
-	CutFragment(input.context, input.optimizer.binder, *state, plan, replacements);
+	CutFragment(input.context, input.optimizer.binder, *state, plan, /*reduced=*/false, replacements);
 	ColumnBindingReplacer replacer;
 	replacer.replacement_bindings = std::move(replacements);
 	replacer.VisitOperator(*plan);
