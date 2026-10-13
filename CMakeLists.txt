@@ -90,7 +90,8 @@ set(CLIENT_SOURCES
     src/client/remote_index_registry.cpp)
 
 set(SERVER_UTIL_SOURCES src/server/object_storage_database.cpp
-                        src/server/startup_sql.cpp src/server/validation.cpp)
+                        src/server/startup_sql.cpp
+                        src/server/validation.cpp)
 
 set(SERVER_DRIVER_SOURCES
     src/server/driver/client_registration.cpp
@@ -112,7 +113,6 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/task_partitioner.cpp
     src/server/driver/transaction_request_handler.cpp
     src/server/driver/worker_fragment_pushdown.cpp
-    src/server/driver/worker_fragment_test_functions.cpp
     src/server/driver/worker_manager.cpp)
 
 set(SERVER_WORKER_SOURCES src/server/worker/row_group_range_scan.cpp
