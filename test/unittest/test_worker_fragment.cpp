@@ -196,7 +196,8 @@ TEST_CASE("Driver merges partial aggregates exactly", "[worker_fragment]") {
 		                "CASE WHEN i % 3 = 0 THEN NULL ELSE i END AS maybe FROM range(300000) t(i)")
 		        ->HasError());
 		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
-		const string aggregates = "sum(n), sum(d15), min(s), max(d38), min(g), count(maybe), count(*)";
+		const string aggregates = "sum(n), sum(d15), min(s), max(d38), min(g), count(maybe), count(*), avg(s), "
+		                          "avg(n), avg(b), avg(h), avg(d4), avg(d15), avg(d38), avg(maybe)";
 		for (const auto &sql :
 		     {StringUtil::Format("SELECT g, %s FROM agg GROUP BY g ORDER BY g", aggregates),
 		      StringUtil::Format("SELECT %s FROM agg", aggregates),
@@ -209,8 +210,8 @@ TEST_CASE("Driver merges partial aggregates exactly", "[worker_fragment]") {
 			REQUIRE(executions[0].num_tasks_generated == 3);
 			REQUIRE(StringUtil::StartsWith(executions[0].sql, "aggregate "));
 		}
-		// Aggregates without a merge, such as avg or the top-N max(x, n), are computed on the driver from a scan
-		// fragment.
+		// avg over DOUBLE runs on the driver because floating-point sums depend on row order. So do aggregates
+		// without a merge, such as median and the top-N max(x, n). Workers only scan for them.
 		for (const auto &sql : {"SELECT avg(f) FROM agg", "SELECT g, median(n) FROM agg GROUP BY g ORDER BY g",
 		                        "SELECT max(n, 3), min(s, 2) FROM agg"}) {
 			auto executions = fixture.RequireLocalResult(sql);
@@ -256,7 +257,7 @@ TEST_CASE("Workers reject plans of another build and the driver runs them locall
 
 		// A task that fails on its worker, whatever the reason, makes the driver run the fragment itself.
 		REQUIRE(fixture.manager->RegisterWorker("unreachable", "grpc://localhost:1").ok());
-		auto executions = fixture.RequireLocalResult("SELECT k, sum(id) FROM t GROUP BY k ORDER BY k");
+		auto executions = fixture.RequireLocalResult("SELECT k, sum(id), avg(id) FROM t GROUP BY k ORDER BY k");
 		REQUIRE(executions.size() == 1);
 		REQUIRE(executions[0].execution_mode == QueryExecutionMode::LOCAL);
 		REQUIRE(StringUtil::StartsWith(executions[0].sql, "aggregate "));

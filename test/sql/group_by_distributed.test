@@ -125,7 +125,7 @@ WHERE sql = 'aggregate count_star(), sum_no_overflow(value) group by (id % 3) ov
 ----
 2
 
-# `avg` is computed on the driver from a scan fragment, which also reads one row group range per task.
+# Workers return the sum and count of each avg input, which the driver divides after merging.
 query IIRR
 SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k ORDER BY k;
 ----
@@ -134,7 +134,7 @@ SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k
 2	66666	99999.5	999995.0
 
 query I
-SELECT DISTINCT num_tasks_generated FROM duckherder_get_query_execution_stats()
-WHERE sql = 'scan over object_db.main.group_by_table';
+SELECT num_tasks_generated FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE 'aggregate count_star(), avg(id), avg(value) group by %';
 ----
 2

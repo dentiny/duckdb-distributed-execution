@@ -6,6 +6,8 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hugeint.hpp"
+#include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/connection.hpp"
@@ -18,6 +20,7 @@
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
@@ -215,6 +218,58 @@ void AddRowIdRange(LogicalGet &get, idx_t start, optional_idx end) {
 	get.table_filters.PushFilter(ColumnIndex(COLUMN_IDENTIFIER_ROW_ID), std::move(filter));
 }
 
+// Whether BindAverage reproduces avg over type exactly. Floating-point sums depend on the order of the rows.
+bool IsExactAverageInput(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::DECIMAL:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// Finishes avg over input_type from the merged sum and count of its input as DuckDB's avg does: it divides the
+// integer sum by the count times the decimal scale, in double for SMALLINT and DECIMAL(4) inputs and in long double
+// otherwise.
+unique_ptr<Expression> BindAverage(const LogicalType &input_type, unique_ptr<Expression> sum,
+                                   unique_ptr<Expression> count) {
+	const bool decimal = input_type.id() == LogicalTypeId::DECIMAL;
+	const bool int64_sum = input_type.InternalType() == PhysicalType::INT16;
+	const double scale = decimal ? Hugeint::Cast<double>(Hugeint::POWERS_OF_TEN[DecimalType::GetScale(input_type)]) : 1;
+	ScalarFunction function("duckherder_merge_avg", {sum->return_type, count->return_type}, LogicalType::DOUBLE,
+	                        [decimal, int64_sum, scale](DataChunk &args, ExpressionState &state, Vector &result) {
+		                        BinaryExecutor::ExecuteWithNulls<hugeint_t, hugeint_t, double>(
+		                            args.data[0], args.data[1], result, args.size(),
+		                            [&](hugeint_t total, hugeint_t rows, ValidityMask &mask, idx_t idx) {
+			                            const auto row_count = Hugeint::Cast<uint64_t>(rows);
+			                            if (row_count == 0) {
+				                            mask.SetInvalid(idx);
+				                            return 0.0;
+			                            }
+			                            if (int64_sum) {
+				                            auto divisor = static_cast<double>(row_count);
+				                            if (decimal) {
+					                            divisor *= scale;
+				                            }
+				                            return static_cast<double>(Hugeint::Cast<int64_t>(total)) / divisor;
+			                            }
+			                            auto divisor = static_cast<long double>(row_count);
+			                            if (decimal) {
+				                            divisor *= scale;
+			                            }
+			                            return static_cast<double>(Hugeint::Cast<long double>(total) / divisor);
+		                            });
+	                        });
+	vector<unique_ptr<Expression>> children;
+	children.emplace_back(std::move(sum));
+	children.emplace_back(std::move(count));
+	return make_uniq<BoundFunctionExpression>(LogicalType::DOUBLE, std::move(function), std::move(children), nullptr);
+}
+
 // Binds the aggregate name over child, or returns nullptr if it has no overload for the child's type.
 unique_ptr<Expression> BindAggregate(ClientContext &context, const string &name, unique_ptr<Expression> child) {
 	// The untyped lookup avoids odr-using AggregateFunctionCatalogEntry::Name, which GCC then defines twice.
@@ -250,8 +305,8 @@ string DescribeFragment(const string &head, const vector<reference<LogicalGet>> 
 }
 
 // Replaces aggregate with a fragment whose tasks each run it on one row group range of its table. The driver merges
-// the tasks' partial aggregates with a second aggregate, and a projection above it finishes count and takes over the
-// original aggregate's bindings.
+// the tasks' partial aggregates with a second aggregate, and a projection above it finishes count and avg and takes
+// over the original aggregate's bindings.
 unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, Binder &binder,
                                                        WorkerFragmentState &state, LogicalAggregate &aggregate,
                                                        vector<ReplacementBinding> &replacements) {
@@ -278,8 +333,8 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		}
 	}
 
-	// Workers return the groups and partial aggregates.
-	enum class MergeKind { SAME, COUNT };
+	// Workers return the groups and partial aggregates. avg becomes a sum and a count, appended after the others.
+	enum class MergeKind { SAME, COUNT, AVG };
 	vector<MergeKind> kinds;
 	vector<string> merge_names;
 	kinds.reserve(aggregate.expressions.size());
@@ -303,6 +358,10 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		} else if (name == "count" || name == "count_star") {
 			kinds.emplace_back(MergeKind::COUNT);
 			merge_names.emplace_back("sum");
+		} else if (name == "avg" && partial.children.size() == 1 &&
+		           IsExactAverageInput(partial.children[0]->return_type)) {
+			kinds.emplace_back(MergeKind::AVG);
+			merge_names.emplace_back("sum");
 		} else {
 			return nullptr;
 		}
@@ -313,7 +372,18 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		// Copy through the serializer, as the worker reads it, and leave the client's plan unchanged.
 		worker_plan = aggregate.Copy(context);
 		auto &worker = worker_plan->Cast<LogicalAggregate>();
-		// A projection keeps the columns the driver expects if the worker's optimizer merges duplicate aggregates.
+		for (idx_t idx = 0; idx < kinds.size(); ++idx) {
+			if (kinds[idx] != MergeKind::AVG) {
+				continue;
+			}
+			auto &input = worker.expressions[idx]->Cast<BoundAggregateExpression>().children[0];
+			auto count = BindAggregate(context, "count", input->Copy());
+			worker.expressions[idx] = BindAggregate(context, "sum", input->Copy());
+			worker.expressions.emplace_back(std::move(count));
+			merge_names.emplace_back("sum");
+		}
+		// A projection keeps the columns the driver expects if the worker's optimizer merges duplicate aggregates, such
+		// as a sum added for avg.
 		worker.ResolveOperatorTypes();
 		auto bindings = worker.GetColumnBindings();
 		vector<unique_ptr<Expression>> columns;
@@ -362,8 +432,8 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		auto merge =
 		    BindAggregate(context, merge_names[idx], ColumnRef(partial_types[column], get->table_index, column));
 		// A partial aggregate merged with the same function must keep its type, e.g. sum over DECIMAL(38, 2).
-		if (!merge ||
-		    (kinds[idx] == MergeKind::SAME && merge->return_type != aggregate.expressions[idx]->return_type)) {
+		if (!merge || (idx < kinds.size() && kinds[idx] == MergeKind::SAME &&
+		               merge->return_type != aggregate.expressions[idx]->return_type)) {
 			return nullptr;
 		}
 		merges.emplace_back(std::move(merge));
@@ -377,12 +447,18 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		outputs.emplace_back(ColumnRef(partial_types[idx], merge->group_index, idx));
 	}
 	merge->grouping_sets = aggregate.grouping_sets;
+	idx_t avg_count = kinds.size();
 	for (idx_t idx = 0; idx < kinds.size(); ++idx) {
 		auto &merged = *merge->expressions[idx];
 		auto output = ColumnRef(merged.return_type, merge->aggregate_index, idx);
 		if (kinds[idx] == MergeKind::COUNT) {
 			// Every task returns a count, also for empty input, so the merged sum is never NULL.
 			output = BoundCastExpression::AddCastToType(context, std::move(output), LogicalType::BIGINT);
+		} else if (kinds[idx] == MergeKind::AVG) {
+			auto &count = *merge->expressions[avg_count];
+			auto &input_type = aggregate.expressions[idx]->Cast<BoundAggregateExpression>().children[0]->return_type;
+			output = BindAverage(input_type, std::move(output),
+			                     ColumnRef(count.return_type, merge->aggregate_index, avg_count++));
 		}
 		outputs.emplace_back(std::move(output));
 	}
