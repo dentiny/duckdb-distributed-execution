@@ -663,7 +663,7 @@ TEST_CASE("Inner Joins without an aggregate become fragments that return their r
 		        ->HasError());
 		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
 
-		// The driver sorts the rows the tasks return, in the selected column order.
+		// The columns are selected in another order than the Join returns them, and the driver sorts the rows.
 		for (const auto &sql : {"SELECT d.multiplier, f.id FROM fact f JOIN dim d ON f.k = d.k WHERE f.amount = 3 "
 		                        "ORDER BY f.id",
 		                        "WITH pairs AS MATERIALIZED (SELECT f.amount, d.multiplier FROM fact f JOIN dim d "

@@ -338,8 +338,8 @@ string DescribeFragment(const string &head, const vector<reference<LogicalGet>> 
 	return StringUtil::Format("%s over %s", head, StringUtil::Join(tables, ", "));
 }
 
-// Wraps plan in a projection of its columns, which keeps the columns the driver expects if the worker's optimizer
-// changes them, e.g. by merging duplicate aggregates or swapping a Join's inputs.
+// Wraps plan in a projection of its columns, so workers return them in this order even if their optimizer changes the
+// plan, e.g. by merging duplicate aggregates or swapping a Join's inputs.
 unique_ptr<LogicalOperator> ProjectColumns(Binder &binder, unique_ptr<LogicalOperator> plan) {
 	plan->ResolveOperatorTypes();
 	auto bindings = plan->GetColumnBindings();
@@ -354,9 +354,9 @@ unique_ptr<LogicalOperator> ProjectColumns(Binder &binder, unique_ptr<LogicalOpe
 	return std::move(root);
 }
 
-// Sets fragment's plan and task plans to worker_plan, the workers' copy of a plan over input, and split to whether
-// the tasks split each of scans, the scans of input. A Join splits the input that reads the most, and inputs ordered
-// on a key they are equi-joined on with it; the others are replicated. Returns false if a Join should stay local.
+// Writes fragment's plan and task plans from worker_plan, the workers' copy of a plan over input, and marks in split
+// which of scans the tasks split. A Join splits its input that reads the most, plus inputs ordered on a key they are
+// equi-joined on with it; the others are replicated. Returns false if a Join should stay local.
 bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperator &input,
                const vector<reference<LogicalGet>> &scans, LogicalOperator &worker_plan, WorkerFragment &fragment,
                vector<bool> &split) {
@@ -426,10 +426,9 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
 	return true;
 }
 
-// Replaces aggregate with a fragment whose tasks each run it on one part of its largest partitionable table, reading
-// any other tables in full. Tables equi-joined with it on a key they are all ordered on are split by key ranges
-// instead. The driver merges the tasks' partial aggregates with a second
-// aggregate, and a projection above it finishes count and avg and takes over the original aggregate's bindings.
+// Replaces aggregate with a fragment whose tasks each aggregate their part of the input, split as PlanTasks decides.
+// The driver merges the partial aggregates with a second aggregate, and a projection above it finishes count and avg
+// and takes over the original aggregate's bindings.
 unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, Binder &binder,
                                                        WorkerFragmentState &state, LogicalAggregate &aggregate,
                                                        vector<ReplacementBinding> &replacements) {
@@ -610,7 +609,7 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 }
 
 // Replaces join, an inner Join of tables, with a fragment whose tasks each return the Join's rows for their part of
-// its largest table. The driver concatenates the rows.
+// the input, split as PlanTasks decides. The driver concatenates the rows.
 unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state,
                                                   LogicalComparisonJoin &join,
                                                   vector<ReplacementBinding> &replacements) {
@@ -643,13 +642,13 @@ unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder
 	return std::move(result);
 }
 
-// Replaces the first aggregate, inner Join or lone scan below root, through operators with one child, with a worker
+// Replaces the first aggregate, inner Join or lone scan below root, following operators with one child, with a worker
 // fragment.
 void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state, unique_ptr<LogicalOperator> &root,
                  vector<ReplacementBinding> &replacements) {
 	reference<unique_ptr<LogicalOperator>> node = root;
-	// Below an aggregate that stays on the driver, a Join fragment would send all its rows there, which the cost model
-	// does not weigh.
+	// Below an aggregate kept on the driver, a Join fragment would send all its rows there, a transfer the cost model
+	// ignores.
 	bool below_aggregate = false;
 	while (true) {
 		auto &op = *node.get();
