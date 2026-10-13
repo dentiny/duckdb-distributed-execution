@@ -358,14 +358,15 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		} else if (name == "count" || name == "count_star") {
 			kinds.emplace_back(MergeKind::COUNT);
 			merge_names.emplace_back("sum");
-		} else if (name == "avg" && partial.children.size() == 1 &&
-		           IsExactAverageInput(partial.children[0]->return_type)) {
+		} else if (name == "avg" && IsExactAverageInput(partial.children[0]->return_type)) {
 			kinds.emplace_back(MergeKind::AVG);
 			merge_names.emplace_back("sum");
 		} else {
 			return nullptr;
 		}
 	}
+	// Maps from the index of each avg to the column of the count added for it.
+	vector<idx_t> count_columns(kinds.size());
 	unique_ptr<LogicalOperator> worker_plan;
 	WorkerFragment fragment;
 	try {
@@ -377,9 +378,14 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 				continue;
 			}
 			auto &input = worker.expressions[idx]->Cast<BoundAggregateExpression>().children[0];
+			auto sum = BindAggregate(context, "sum", input->Copy());
 			auto count = BindAggregate(context, "count", input->Copy());
-			worker.expressions[idx] = BindAggregate(context, "sum", input->Copy());
+			if (!sum || !count) {
+				return nullptr;
+			}
+			worker.expressions[idx] = std::move(sum);
 			worker.expressions.emplace_back(std::move(count));
+			count_columns[idx] = worker.expressions.size() - 1;
 			merge_names.emplace_back("sum");
 		}
 		// A projection keeps the columns the driver expects if the worker's optimizer merges duplicate aggregates, such
@@ -447,7 +453,6 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		outputs.emplace_back(ColumnRef(partial_types[idx], merge->group_index, idx));
 	}
 	merge->grouping_sets = aggregate.grouping_sets;
-	idx_t avg_count = kinds.size();
 	for (idx_t idx = 0; idx < kinds.size(); ++idx) {
 		auto &merged = *merge->expressions[idx];
 		auto output = ColumnRef(merged.return_type, merge->aggregate_index, idx);
@@ -455,10 +460,15 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 			// Every task returns a count, also for empty input, so the merged sum is never NULL.
 			output = BoundCastExpression::AddCastToType(context, std::move(output), LogicalType::BIGINT);
 		} else if (kinds[idx] == MergeKind::AVG) {
-			auto &count = *merge->expressions[avg_count];
+			auto &count = *merge->expressions[count_columns[idx]];
+			// BindAverage reads both merged sums as hugeints.
+			if (merged.return_type.InternalType() != PhysicalType::INT128 ||
+			    count.return_type.InternalType() != PhysicalType::INT128) {
+				return nullptr;
+			}
 			auto &input_type = aggregate.expressions[idx]->Cast<BoundAggregateExpression>().children[0]->return_type;
 			output = BindAverage(input_type, std::move(output),
-			                     ColumnRef(count.return_type, merge->aggregate_index, avg_count++));
+			                     ColumnRef(count.return_type, merge->aggregate_index, count_columns[idx]));
 		}
 		outputs.emplace_back(std::move(output));
 	}
