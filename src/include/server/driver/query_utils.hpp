@@ -11,22 +11,19 @@ namespace duckdb {
 class LogicalGet;
 class LogicalOperator;
 
-// Estimated bytes of a Join input: read by its scan, and held as a hash table build side.
+// Estimated bytes a Join input reads and, as the build side, holds in a hash table.
 struct JoinInputCost {
 	double scan_bytes;
 	double build_bytes;
 };
 
-// Estimates the cost of input, a Join input reading scan. The scan reads every row of the table, as filters only drop
-// rows it has read, at the width of the columns it reads. The build holds the projected tuples input passes to the
-// Join after its filters, with the same small penalties for variable-size payloads as DuckDB's build-side optimizer.
-// Returns nothing if neither operator has an estimated cardinality.
+// Estimates the cost of `input`, a Join input reading `scan`. The scan reads every table row, since filters only drop
+// rows after reading them. The build holds the filtered tuples, sized like DuckDB's build-side optimizer.
+// Returns nothing without a cardinality estimate.
 std::optional<JoinInputCost> EstimateJoinInputCost(LogicalOperator &input, LogicalGet &scan);
 
-// Whether a Join finishes sooner as num_tasks tasks, each reading its share of partitioned and all of every replicated
-// input, than on one node of the same size. A hash Join builds on its smaller input. Every task reads the replicated
-// inputs from the same storage, so each is charged for half of the other tasks' copies. A task's replicated hash tables
-// must fit in max_build_bytes.
+// Whether one of `num_tasks` tasks, reading its share of `partitioned` and all of each `replicated` input, finishes
+// before a single node would. Each task's hash tables must fit in `max_build_bytes`.
 bool ShouldPartitionJoin(const JoinInputCost &partitioned, const vector<JoinInputCost> &replicated, idx_t num_tasks,
                          double max_build_bytes);
 

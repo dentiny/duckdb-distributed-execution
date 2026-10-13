@@ -359,9 +359,8 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	if (scans.size() > 1 && join_partitioning == "never") {
 		return nullptr;
 	}
-	// A Join partitions the input that reads the most bytes, so each worker repeats the cheaper one. Use the Join's
-	// input roots so filters and projections above the scans contribute to the build estimate; serialization drops the
-	// estimates, so this is decided here.
+	// Partition the input that reads the most, so workers repeat the cheaper ones. Estimates are lost in serialization,
+	// so this is decided here, at the Join's inputs.
 	idx_t partitioned_idx = 0;
 	vector<JoinInputCost> costs;
 	if (scans.size() > 1) {

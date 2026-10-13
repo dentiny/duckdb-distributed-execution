@@ -12,7 +12,7 @@ constexpr const char *STARTUP_SQL_VARIABLE = "DUCKHERDER_STARTUP_SQL";
 } // namespace
 
 arrow::Status RunStartupSQL(DuckDB &db) {
-	// Every instance has the setting, so the same startup SQL can set it on the driver and workers.
+	// Register before the startup SQL, which runs on the driver and workers alike.
 	RegisterJoinPartitioningSetting(DBConfig::GetConfig(*db.instance));
 	const char *sql = std::getenv(STARTUP_SQL_VARIABLE);
 	if (!sql) {

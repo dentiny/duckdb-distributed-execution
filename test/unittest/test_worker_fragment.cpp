@@ -337,25 +337,25 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 
 TEST_CASE("Join partitioning weighs the shared scan against the repeated one", "[worker_fragment]") {
 	constexpr double MEMORY = 4e9;
-	// TPC-H Q12 at SF10: lineitem reads 60M rows although few pass its filters; orders reads 15M and is built.
-	const JoinInputCost lineitem {2.6e9, 0.15e9};
-	const JoinInputCost orders {0.48e9, 0.96e9};
-	REQUIRE(ShouldPartitionJoin(lineitem, {orders}, 3, MEMORY));
-	// Partitioning orders makes every task read all of lineitem.
-	REQUIRE_FALSE(ShouldPartitionJoin(orders, {lineitem}, 3, MEMORY));
+	// A large input whose filters keep few rows still reads every row, so it is the one to partition.
+	const JoinInputCost selective {2.6e9, 0.15e9};
+	const JoinInputCost unfiltered {0.48e9, 0.96e9};
+	REQUIRE(ShouldPartitionJoin(selective, {unfiltered}, 3, MEMORY));
+	// Partitioning the smaller input makes every task read all of the larger one.
+	REQUIRE_FALSE(ShouldPartitionJoin(unfiltered, {selective}, 3, MEMORY));
 	// A small replicated table is cheap to repeat, unless its hash table does not fit a worker's memory.
 	const JoinInputCost fact {1e9, 2e9};
 	const JoinInputCost dim {1e7, 1e7};
 	REQUIRE(ShouldPartitionJoin(fact, {dim}, 3, MEMORY));
 	REQUIRE_FALSE(ShouldPartitionJoin(fact, {dim}, 3, 1e6));
-	// A replicated input larger than a task's share of the partitioned one is probed, not built, so memory does not
-	// bound it.
+	// A task builds on its share of the partitioned input when that is smaller, so that share must fit instead.
 	REQUIRE(ShouldPartitionJoin({1e9, 1e6}, {{1e8, 1e9}}, 3, 1e6));
+	REQUIRE_FALSE(ShouldPartitionJoin({1e9, 6e6}, {{1e8, 1e9}}, 3, 1e6));
 	// Repeating most of the work in every task does not pay off; the more tasks, the more storage they share.
 	const JoinInputCost filtered {0.9e9, 1e6};
 	REQUIRE(ShouldPartitionJoin(fact, {filtered}, 2, MEMORY));
 	REQUIRE_FALSE(ShouldPartitionJoin(fact, {filtered}, 4, MEMORY));
-	// TPC-H Q18 at SF10: the IN subquery reads all of lineitem again, and orders and customer are replicated too.
+	// Replicating an input as large as the partitioned one, plus two more, costs more than it saves.
 	REQUIRE_FALSE(
 	    ShouldPartitionJoin({1.44e9, 3.36e9}, {{1.44e9, 0.12e9}, {0.48e9, 0.84e9}, {0.06e9, 0.1e9}}, 3, MEMORY));
 }

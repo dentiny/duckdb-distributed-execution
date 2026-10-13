@@ -56,8 +56,7 @@ private:
 vector<string> SerializeTaskPlans(ClientContext &context, LogicalOperator &plan, LogicalGet &partitioned,
                                   idx_t max_tasks);
 
-// How Joins are split across workers: "auto" weighs the estimated costs, "always" splits any Join with more than one
-// task, and "never" runs Joins on the driver.
+// "auto" splits a Join when the cost model favors it, "always" whenever it has two tasks, "never" not at all.
 constexpr const char *JOIN_PARTITIONING_SETTING = "duckherder_join_partitioning";
 
 // Registers JOIN_PARTITIONING_SETTING.

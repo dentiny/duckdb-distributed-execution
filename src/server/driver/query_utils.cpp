@@ -79,8 +79,7 @@ std::optional<JoinInputCost> EstimateJoinInputCost(LogicalOperator &input, Logic
 	if (!table || (!input.has_estimated_cardinality && !scan.has_estimated_cardinality)) {
 		return std::nullopt;
 	}
-	// Charges every row; skipping row groups whose zone maps fail the scan's filters would need their
-	// metadata loaded during planning, and TPC-H filters prune none.
+	// Zone-map pruning is ignored, since it would need row group metadata at planning time.
 	vector<LogicalType> read_types;
 	for (const auto &column : scan.GetColumnIds()) {
 		read_types.emplace_back(scan.GetColumnType(column));
@@ -97,20 +96,17 @@ std::optional<JoinInputCost> EstimateJoinInputCost(LogicalOperator &input, Logic
 bool ShouldPartitionJoin(const JoinInputCost &partitioned, const vector<JoinInputCost> &replicated, idx_t num_tasks,
                          double max_build_bytes) {
 	const auto tasks = double(num_tasks);
-	// The other tasks' copies of a replicated input share storage, but not CPUs, with this task's: charge half of each.
+	// Tasks share storage but not CPUs, so a replicated read also pays half of each other task's copy.
 	const auto contention = (tasks + 1) / 2;
 	double local = partitioned.scan_bytes;
 	double task = partitioned.scan_bytes / tasks;
 	double task_builds = 0;
 	for (const auto &input : replicated) {
 		local += input.scan_bytes + MinValue(input.build_bytes, partitioned.build_bytes);
-		// A task's Join builds on whichever is smaller: this input or the task's share of the partitioned one.
-		if (input.build_bytes <= partitioned.build_bytes / tasks) {
-			task += contention * (input.scan_bytes + input.build_bytes);
-			task_builds += input.build_bytes;
-		} else {
-			task += contention * input.scan_bytes + partitioned.build_bytes / tasks;
-		}
+		// A task builds on the smaller side: this input or its share of the partitioned one.
+		const auto build = MinValue(input.build_bytes, partitioned.build_bytes / tasks);
+		task += contention * input.scan_bytes + build;
+		task_builds += build;
 	}
 	return task_builds <= max_build_bytes && task < local;
 }
