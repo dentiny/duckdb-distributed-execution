@@ -14,10 +14,6 @@
 
 namespace duckdb {
 
-#ifdef DUCKHERDER_TEST_FUNCTIONS
-void RegisterWorkerFragmentTestFunctions(ExtensionLoader &loader);
-#endif
-
 namespace {
 
 void SetAsyncThreads(ClientContext &, SetScope scope, Value &parameter) {
@@ -62,9 +58,6 @@ void LoadInternal(ExtensionLoader &loader) {
 	SetInstanceState(db, make_shared_ptr<DuckherderInstanceState>());
 
 	RegisterDuckherderFunctions(loader);
-#ifdef DUCKHERDER_TEST_FUNCTIONS
-	RegisterWorkerFragmentTestFunctions(loader);
-#endif
 }
 
 } // namespace

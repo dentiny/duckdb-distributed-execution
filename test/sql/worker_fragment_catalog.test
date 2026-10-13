@@ -28,7 +28,6 @@ statement ok
 CREATE TABLE dim AS SELECT i AS k, 10 + i % 2 AS multiplier FROM range(17) t(i);
 
 # Install the driver optimizer on this connection so SQL can access its other attachments.
-# The helper only exists in builds with BUILD_UNITTESTS enabled.
 statement ok
 SELECT duckherder_test_enable_worker_fragments('duckdb_objfs://fragment_catalog.db', 2);
 

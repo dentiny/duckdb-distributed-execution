@@ -153,6 +153,7 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	                       /*description=*/"Starts a standalone Duckherder worker on the given port.",
 	                       /*examples=*/ {"SELECT duckherder_start_standalone_worker(8816);"},
 	                       /*categories=*/ {"duckherder", "distributed_execution", "worker"});
+	RegisterWorkerFragmentTestFunctions(loader);
 }
 
 } // namespace duckdb

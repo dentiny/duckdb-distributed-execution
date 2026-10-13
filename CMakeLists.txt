@@ -112,6 +112,7 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/task_partitioner.cpp
     src/server/driver/transaction_request_handler.cpp
     src/server/driver/worker_fragment_pushdown.cpp
+    src/server/driver/worker_fragment_test_functions.cpp
     src/server/driver/worker_manager.cpp)
 
 set(SERVER_WORKER_SOURCES src/server/worker/row_group_range_scan.cpp
@@ -135,16 +136,6 @@ set(EXTENSION_SOURCES
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
-
-# SQLLogicTests need to exercise the driver optimizer on native attached
-# catalogs.
-if(${BUILD_UNITTESTS})
-  foreach(TARGET ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME})
-    target_sources(${TARGET}
-                   PRIVATE test/unittest/worker_fragment_test_functions.cpp)
-    target_compile_definitions(${TARGET} PRIVATE DUCKHERDER_TEST_FUNCTIONS)
-  endforeach()
-endif()
 
 set_target_properties(
   ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME}

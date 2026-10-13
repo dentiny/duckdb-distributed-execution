@@ -3,6 +3,7 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckherder_functions.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/worker_fragment_pushdown.hpp"
 #include "server/driver/worker_manager.hpp"
@@ -11,7 +12,7 @@ namespace duckdb {
 
 namespace {
 
-// Test-only wiring: ordinary client SQL cannot create attachments in a remote driver's context.
+// SQL test wiring: ordinary client SQL cannot create attachments in a remote driver's context.
 struct WorkerFragmentTestState : public ClientContextState {
 	static constexpr const char *NAME = "worker_fragment_test";
 
