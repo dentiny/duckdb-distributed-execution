@@ -1,5 +1,8 @@
 #include "server/startup_sql.hpp"
 
+#include "duckdb/main/config.hpp"
+#include "server/driver/worker_fragment_pushdown.hpp"
+
 #include <cstdlib>
 
 namespace duckdb {
@@ -9,6 +12,8 @@ constexpr const char *STARTUP_SQL_VARIABLE = "DUCKHERDER_STARTUP_SQL";
 } // namespace
 
 arrow::Status RunStartupSQL(DuckDB &db) {
+	// Every instance has the setting, so the same startup SQL can set it on the driver and workers.
+	RegisterJoinPartitioningSetting(DBConfig::GetConfig(*db.instance));
 	const char *sql = std::getenv(STARTUP_SQL_VARIABLE);
 	if (!sql) {
 		return arrow::Status::OK();

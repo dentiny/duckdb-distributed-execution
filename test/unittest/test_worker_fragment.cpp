@@ -335,34 +335,70 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 	std::filesystem::remove_all(root);
 }
 
-TEST_CASE("Join fragments only replicate inputs that are cheap enough", "[worker_fragment]") {
+TEST_CASE("Join partitioning weighs the shared scan against the repeated one", "[worker_fragment]") {
+	constexpr double MEMORY = 4e9;
+	// TPC-H Q12 at SF10: lineitem reads 60M rows although few pass its filters; orders reads 15M and is built.
+	const JoinInputCost lineitem {2.6e9, 0.15e9};
+	const JoinInputCost orders {0.48e9, 0.96e9};
+	REQUIRE(ShouldPartitionJoin(lineitem, {orders}, 3, MEMORY));
+	// Partitioning orders makes every task read all of lineitem.
+	REQUIRE_FALSE(ShouldPartitionJoin(orders, {lineitem}, 3, MEMORY));
+	// A small replicated table is cheap to repeat, unless its hash table does not fit a worker's memory.
+	const JoinInputCost fact {1e9, 2e9};
+	const JoinInputCost dim {1e7, 1e7};
+	REQUIRE(ShouldPartitionJoin(fact, {dim}, 3, MEMORY));
+	REQUIRE_FALSE(ShouldPartitionJoin(fact, {dim}, 3, 1e6));
+	// A replicated input larger than a task's share of the partitioned one is probed, not built, so memory does not
+	// bound it.
+	REQUIRE(ShouldPartitionJoin({1e9, 1e6}, {{1e8, 1e9}}, 3, 1e6));
+	// Repeating most of the work in every task does not pay off; the more tasks, the more storage they share.
+	const JoinInputCost filtered {0.9e9, 1e6};
+	REQUIRE(ShouldPartitionJoin(fact, {filtered}, 2, MEMORY));
+	REQUIRE_FALSE(ShouldPartitionJoin(fact, {filtered}, 4, MEMORY));
+	// TPC-H Q18 at SF10: the IN subquery reads all of lineitem again, and orders and customer are replicated too.
+	REQUIRE_FALSE(
+	    ShouldPartitionJoin({1.44e9, 3.36e9}, {{1.44e9, 0.12e9}, {0.48e9, 0.84e9}, {0.06e9, 0.1e9}}, 3, MEMORY));
+}
+
+TEST_CASE("Join fragments partition the input that reads the most", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_join_cost");
 	{
 		FragmentFixture fixture(root);
+		auto &client = fixture.client;
 		auto &executor_connection = fixture.executor_connection;
-		// wide has more rows than fact, but few of them pass an equality filter on g.
-		REQUIRE_FALSE(executor_connection
-		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 1000 AS k, i % 11 AS amount, "
-		                          "i % 7 AS c FROM range(300000) t(i)")
-		                  ->HasError());
-		REQUIRE_FALSE(executor_connection
-		                  ->Query("CREATE TABLE wide AS SELECT i AS id, i % 1000 AS k, i % 1000 AS g "
-		                          "FROM range(600000) t(i)")
-		                  ->HasError());
-		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+		for (const auto &table : {"big", "mid", "small"}) {
+			const auto rows = string(table) == "big" ? 600000 : string(table) == "mid" ? 400000 : 200000;
+			REQUIRE_FALSE(executor_connection
+			                  ->Query(StringUtil::Format("CREATE TABLE %s AS SELECT i %% 1000 AS k, i %% 1000 AS g "
+			                                             "FROM range(%d) t(i)",
+			                                             table, rows))
+			                  ->HasError());
+		}
+		REQUIRE(fixture.manager->StartLocalWorkers(4).ok());
 
-		// The filtered wide is the cheaper input, so fact is partitioned although it has fewer rows.
-		auto executions = fixture.RequireLocalResult(
-		    "SELECT sum(f.amount * f.c), count(*) FROM fact f JOIN wide w ON f.k = w.k WHERE w.g = 3");
+		// Few rows of big pass its filter, but every task would read all of them if small were partitioned.
+		const string selective_sql = "SELECT sum(b.g), count(*) FROM big b JOIN small s ON b.k = s.k WHERE b.g = 3";
+		auto executions = fixture.RequireLocalResult(selective_sql);
 		REQUIRE(executions.size() == 1);
-		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
-		REQUIRE(executions[0].num_tasks_generated == 2);
+		REQUIRE(executions[0].num_tasks_generated == 4);
 		INFO(executions[0].sql);
-		REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.fact (partitioned)"));
+		REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.big (partitioned)"));
 
-		// Unfiltered, every worker would read and build all of the other input, which costs more than it saves.
-		executions = fixture.RequireLocalResult("SELECT sum(f.amount), count(*) FROM fact f JOIN wide w ON f.k = w.k");
-		REQUIRE(executions.empty());
+		// Every task would read all of mid, two thirds the size of big, while sharing storage with three other tasks.
+		const string replicated_sql = "SELECT sum(b.g), count(*) FROM big b JOIN mid m ON b.k = m.k WHERE m.g = 3";
+		REQUIRE(fixture.RequireLocalResult(replicated_sql).empty());
+
+		REQUIRE_FALSE(client->Query("SET duckherder_join_partitioning = 'always'")->HasError());
+		executions = fixture.RequireLocalResult(replicated_sql);
+		REQUIRE(executions.size() == 1);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.big (partitioned)"));
+		REQUIRE_FALSE(client->Query("SET duckherder_join_partitioning = 'NEVER'")->HasError());
+		REQUIRE(fixture.RequireLocalResult(selective_sql).empty());
+		// Single tables are still distributed.
+		REQUIRE(fixture.RequireLocalResult("SELECT sum(g) FROM big").size() == 1);
+		REQUIRE(client->Query("SET duckherder_join_partitioning = 'sometimes'")->HasError());
+		REQUIRE_FALSE(client->Query("RESET duckherder_join_partitioning")->HasError());
+		REQUIRE(fixture.RequireLocalResult(selective_sql).size() == 1);
 	}
 	std::filesystem::remove_all(root);
 }

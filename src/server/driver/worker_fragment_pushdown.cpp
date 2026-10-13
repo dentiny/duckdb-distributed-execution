@@ -29,6 +29,7 @@
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/row_group_segment_tree.hpp"
@@ -352,9 +353,15 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	if (candidates.empty() || candidates.size() != scans.size()) {
 		return nullptr;
 	}
-	// A Join partitions the input with the most estimated bytes, so each worker repeats the cheaper ones. Estimates
-	// are taken at the Join's inputs, so filters and projections above the scans count. Serialized plans lose the
-	// estimates, so the choice is made here on the driver.
+	Value setting;
+	context.TryGetCurrentSetting(JOIN_PARTITIONING_SETTING, setting);
+	const auto join_partitioning = setting.IsNull() ? string("auto") : StringUtil::Lower(setting.ToString());
+	if (scans.size() > 1 && join_partitioning == "never") {
+		return nullptr;
+	}
+	// A Join partitions the input that reads the most bytes, so each worker repeats the cheaper one. Use the Join's
+	// input roots so filters and projections above the scans contribute to the build estimate; serialization drops the
+	// estimates, so this is decided here.
 	idx_t partitioned_idx = 0;
 	vector<JoinInputCost> costs;
 	if (scans.size() > 1) {
@@ -453,22 +460,17 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		if (num_tasks < 2) {
 			return nullptr;
 		}
-		// Bound the replicated hash build estimate and charge for every additional scan/build. Only distribute when
-		// the parallel scan savings exceed this duplicated work.
-		constexpr double MAX_REPLICATED_BUILD_BYTES = 64 * 1024 * 1024;
-		// Every other input is replicated, so their costs add up.
-		const auto &partition_cost = costs[partitioned_idx];
-		JoinInputCost replicated_cost {0, 0};
+		// Every other input is replicated.
+		vector<JoinInputCost> replicated_costs;
 		for (idx_t idx = 0; idx < costs.size(); ++idx) {
 			if (idx != partitioned_idx) {
-				replicated_cost.scan_bytes += costs[idx].scan_bytes;
-				replicated_cost.build_bytes += costs[idx].build_bytes;
+				replicated_costs.push_back(costs[idx]);
 			}
 		}
-		const auto extra_replication =
-		    static_cast<double>(num_tasks - 1) * (replicated_cost.scan_bytes + replicated_cost.build_bytes);
-		const auto parallel_savings = partition_cost.scan_bytes * (1.0 - 1.0 / static_cast<double>(num_tasks));
-		if (replicated_cost.build_bytes > MAX_REPLICATED_BUILD_BYTES || extra_replication >= parallel_savings) {
+		// Workers do not report their memory, so assume each has the driver's.
+		if (join_partitioning == "auto" &&
+		    !ShouldPartitionJoin(costs[partitioned_idx], replicated_costs, num_tasks,
+		                         static_cast<double>(BufferManager::GetBufferManager(context).GetMaxMemory()))) {
 			return nullptr;
 		}
 	}
@@ -690,6 +692,17 @@ vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {
 
 idx_t WorkerFragmentState::NumWorkers() {
 	return executor.NumWorkers();
+}
+
+void RegisterJoinPartitioningSetting(DBConfig &config) {
+	config.AddExtensionOption(
+	    JOIN_PARTITIONING_SETTING, "How Joins are split across workers: auto (estimated costs), always or never",
+	    LogicalType::VARCHAR, Value("auto"), [](ClientContext &, SetScope, Value &parameter) {
+		    const auto mode = parameter.IsNull() ? string("auto") : StringUtil::Lower(parameter.ToString());
+		    if (mode != "auto" && mode != "always" && mode != "never") {
+			    throw InvalidInputException("%s must be 'auto', 'always' or 'never'", JOIN_PARTITIONING_SETTING);
+		    }
+	    });
 }
 
 void RegisterWorkerFragments(DBConfig &config) {
