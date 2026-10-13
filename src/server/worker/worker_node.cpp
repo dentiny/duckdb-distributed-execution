@@ -3,6 +3,9 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/parser/statement/logical_plan_statement.hpp"
+#include "server/driver/plan_serializer.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/startup_sql.hpp"
 #include "server/validation.hpp"
@@ -106,19 +109,37 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 // Execute a pipeline task.
 arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
                                               unique_ptr<QueryResult> &result) {
-	if (!result && !req.sql().empty()) {
-		// Stream the result so it is converted to Arrow as it is produced instead of being materialized first.
-		result = task_conn.SendQuery(req.sql());
+	if (!req.serialized_plan().empty()) {
+		return ExecutePlanFragment(req, task_conn, result);
 	}
-
-	// Validate result.
-	if (!result) {
-		return arrow::Status::Invalid("Worker produced no query result for task");
+	if (req.sql().empty()) {
+		return arrow::Status::Invalid("Task has neither a plan fragment nor SQL");
 	}
+	// Stream the result so it is converted to Arrow as it is produced instead of being materialized first.
+	result = task_conn.SendQuery(req.sql());
 	if (result->HasError()) {
 		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
 	}
+	return arrow::Status::OK();
+}
 
+arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
+                                              unique_ptr<QueryResult> &result) {
+	const auto build_id = PlanSerializer::BuildId();
+	if (req.build_id() != build_id) {
+		return arrow::Status::Invalid("Plan fragment from build ", req.build_id(), " cannot run on worker ", worker_id,
+		                              " of build ", build_id);
+	}
+	unique_ptr<LogicalOperator> plan;
+	try {
+		plan = PlanSerializer::DeserializeLogicalPlan(*task_conn.context, req.serialized_plan());
+	} catch (const std::exception &ex) {
+		return arrow::Status::Invalid("Plan fragment deserialization failed: ", ErrorData(ex).Message());
+	}
+	result = task_conn.SendQuery(make_uniq<LogicalPlanStatement>(std::move(plan)));
+	if (result->HasError()) {
+		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
+	}
 	return arrow::Status::OK();
 }
 

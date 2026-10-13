@@ -40,9 +40,11 @@ private:
 	arrow::Status HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
 	                                     distributed::DistributedResponse &resp,
 	                                     std::shared_ptr<arrow::RecordBatchReader> &reader);
-
 	// Execute a pipeline task on task_conn, which must outlive the result.
 	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
+	                                  unique_ptr<QueryResult> &result);
+	// Run the task's serialized plan fragment on task_conn, which must outlive the result.
+	arrow::Status ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
 	                                  unique_ptr<QueryResult> &result);
 
 	// Return this worker's read-only instance for the configuration, attaching it on first use.

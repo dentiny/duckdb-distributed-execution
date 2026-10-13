@@ -16,7 +16,8 @@ set(DUCKHERDER_UNITTEST_SOURCES
     test_arrow_uuid_conversion.cpp
     test_duckherder_remote_endpoint.cpp
     test_query_plan_analyzer.cpp
-    test_row_group_range_scan.cpp)
+    test_row_group_range_scan.cpp
+    test_worker_fragment.cpp)
 
 add_executable(unittest_duckherder ${DUCKHERDER_UNITTEST_SOURCES})
 
