@@ -17,6 +17,7 @@ Feel free to play around with it, give me feedback, and ping me for feature requ
 - [Distributed Execution System](#distributed-execution-system)
 - [Installation](#installation)
 - [Object Storage](#object-storage)
+- [Caching](#caching)
 - [Usage](#usage)
 - [Current Limitations and Unsupported Features](#current-limitations-and-unsupported-features)
 - [Roadmap](#roadmap)
@@ -366,6 +367,53 @@ ATTACH 'localhost:8815/database.db' AS dh (
 Duckherder resolves the secret and sends the required S3 configuration to the control node and workers, which
 create temporary S3 secrets before initializing `duckdb_object_storage`. The current Flight transport does not
 encrypt these credentials; use S3 attachments only on a trusted network until TLS transport is supported.
+
+## Caching
+
+Two DuckDB community extensions complement Duckherder's object-storage-backed deployment by caching at different
+layers: [`cache_httpfs`](https://github.com/dentiny/duck-read-cache-fs) caches the bytes read from remote storage,
+while [`query_condition_cache`](https://github.com/dentiny/duckdb-query-condition-cache) caches which parts of a table
+match a filter predicate.
+
+Duckherder does not load or configure either extension on workers automatically yet. Each cache is local to the
+DuckDB process that loads it, so a cache built on one worker does not benefit the others.
+
+### cache_httpfs
+
+`cache_httpfs` is a drop-in wrapper around DuckDB's `httpfs` filesystem. It caches file metadata, glob results, file
+handles, and data blocks for HTTP and S3 reads, which reduces repeated object-storage requests and egress cost when
+the same snapshot is scanned more than once. It also registers the `S3` secret type used in
+[Configuring the DuckDB S3 Secret](#configuring-the-duckdb-s3-secret).
+
+```sql
+INSTALL cache_httpfs FROM community;
+LOAD cache_httpfs;
+
+-- 'on_disk' (default) persists blocks locally; 'in_mem' keeps them in an LRU cache; 'noop' behaves like httpfs.
+SET cache_httpfs_type = 'on_disk';
+SET cache_httpfs_cache_directory = '/tmp/duckdb_cache_httpfs_cache';
+```
+
+### Query Condition Cache
+
+`query_condition_cache` remembers which row-group vectors contain rows matching a predicate. When the same filter is
+seen again, DuckDB skips vectors and row groups already known to have no matches, before reading their data blocks.
+This fits recurring read paths such as dashboards and log investigation. `INSERT`, `UPDATE`, `DELETE`, and `MERGE`
+invalidate the affected row groups.
+
+```sql
+INSTALL query_condition_cache FROM community;
+LOAD query_condition_cache;
+
+-- Build cache entries on demand for filtered table scans and reuse them on later queries.
+SET use_query_condition_cache = true;
+
+-- Or build an entry explicitly for a known table and predicate.
+SELECT * FROM condition_cache_build('t', 'val > 100');
+
+-- Inspect how many row groups and vectors the entry covers.
+SELECT * FROM condition_cache_info('t', 'val > 100');
+```
 
 ## Usage
 
