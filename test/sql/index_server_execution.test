@@ -65,3 +65,31 @@ query I
 SELECT COUNT(*) FROM dh.index_existing_duplicates WHERE id = 1;
 ----
 2
+
+# Catalog qualifiers in string literals must keep their meaning in index expressions.
+statement ok
+CREATE TABLE dh.index_literal_target (v VARCHAR);
+
+statement ok
+INSERT INTO dh.index_literal_target VALUES ('dh.a'), ('a');
+
+statement error
+CREATE UNIQUE INDEX index_literal_unique ON dh.index_literal_target ((replace(v, 'dh.', '')));
+----
+Data contains duplicates
+
+statement ok
+DELETE FROM dh.index_literal_target WHERE v = 'dh.a';
+
+statement ok
+CREATE UNIQUE INDEX index_literal_unique ON dh.index_literal_target ((replace(v, 'dh.', '')));
+
+statement error
+INSERT INTO dh.index_literal_target VALUES ('dh.a');
+----
+Duplicate key
+
+query T
+SELECT v FROM dh.index_literal_target;
+----
+a

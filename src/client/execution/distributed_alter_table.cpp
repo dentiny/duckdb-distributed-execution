@@ -59,8 +59,8 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
 		return SourceResultType::FINISHED;
 	}
 
-	// Generate ALTER TABLE SQL and remove catalog prefix for remote execution.
-	string alter_sql = SanitizeQuery(info->ToString(), catalog_name);
+	// The server strips catalog qualifiers by token, preserving SQL literals.
+	string alter_sql = info->ToString();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
@@ -69,7 +69,7 @@ SourceResultType PhysicalRemoteAlterTableOperator::GetDataInternal(ExecutionCont
 	schema.AlterLocal(std::move(transaction), *info);
 
 	auto &client = GetDistributedClient(context.client, catalog);
-	auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT);
+	auto result = client.ExecuteStatement(alter_sql, StatementType::ALTER_STATEMENT, catalog_name);
 	if (result->HasError()) {
 		throw CatalogException("Failed to alter table on server: %s", result->GetError());
 	}

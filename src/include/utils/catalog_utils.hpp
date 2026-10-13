@@ -15,9 +15,6 @@ class DistributedClient;
 // actual DML statement, so unwrap it before storing SQL in a remote operator.
 string GetRemoteStatementSQL(ClientContext &context);
 
-// Util function to sanitize query and remove all occurrences of the catalog prefix from SQL string.
-string SanitizeQuery(const string &sql, const string &catalog_name);
-
 // Generate SQL statement to alter table.
 string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name);
 

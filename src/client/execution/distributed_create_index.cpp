@@ -63,12 +63,12 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	auto &entry = catalog.GetEntry(context.client, CatalogType::TABLE_ENTRY, schema_name, table_name);
 	auto &table = entry.Cast<TableCatalogEntry>();
 
-	// Generate CREATE INDEX SQL and remove catalog prefix for remote execution.
-	string create_sql = SanitizeQuery(info->ToString(), catalog_name);
+	// The server strips catalog qualifiers by token, preserving literals in index expressions.
+	string create_sql = info->ToString();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing CREATE INDEX on remote server: %s", create_sql));
 
 	auto &client = GetDistributedClient(context.client, catalog);
-	auto result = client.ExecuteStatement(create_sql, StatementType::CREATE_STATEMENT);
+	auto result = client.ExecuteStatement(create_sql, StatementType::CREATE_STATEMENT, catalog_name);
 	if (result->HasError()) {
 		throw CatalogException("Failed to create index on server: %s", result->GetError());
 	}
