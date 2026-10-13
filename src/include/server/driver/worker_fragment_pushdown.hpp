@@ -7,9 +7,11 @@
 
 namespace duckdb {
 
+class Catalog;
 class Connection;
 class DistributedExecutor;
 class LogicalOperator;
+class TableCatalogEntry;
 
 enum class DistributedFragmentKind;
 
@@ -28,10 +30,13 @@ public:
 	vector<QueryExecutionInfo> TakeExecutions();
 	// Whether workers can run `sql`, rendered from the Join aggregate `plan`, as partitioned tasks.
 	bool CanPartitionJoin(LogicalOperator &plan, const string &sql);
+	// Workers only have the database served by this executor, not other driver attachments.
+	bool CanPartitionTable(const TableCatalogEntry &table) const;
 
 private:
 	DistributedExecutor &executor;
 	Connection &connection;
+	Catalog &catalog;
 	vector<QueryExecutionInfo> executions;
 };
 

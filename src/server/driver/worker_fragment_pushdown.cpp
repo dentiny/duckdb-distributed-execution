@@ -1,10 +1,13 @@
 #include "server/driver/worker_fragment_pushdown.hpp"
 
 #include "arrow_utils.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/connection.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -76,16 +79,18 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 
 // Returns the table `get` scans if workers can partition it, or nullptr.
 // The executor's connection cannot see the client's temporary tables.
-optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get) {
+optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get, const WorkerFragmentState &state) {
 	auto table = get.GetTable();
-	if (!table || !table->IsDuckTable() || table->temporary || get.extra_info.sample_options) {
+	if (!table || !table->IsDuckTable() || table->temporary || get.extra_info.sample_options ||
+	    !state.CanPartitionTable(*table)) {
 		return nullptr;
 	}
 	return table;
 }
 
 string GetTableName(TableCatalogEntry &table) {
-	return KeywordHelper::WriteOptionallyQuoted(table.schema.name) + "." +
+	return KeywordHelper::WriteOptionallyQuoted(table.catalog.GetName()) + "." +
+	       KeywordHelper::WriteOptionallyQuoted(table.schema.name) + "." +
 	       KeywordHelper::WriteOptionallyQuoted(table.name);
 }
 
@@ -111,15 +116,15 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, WorkerFra
 	auto kind = DistributedFragmentKind::TABLE;
 	auto get = GetAggregateScan(aggregate);
 	if (get) {
-		auto table = GetPartitionedTable(*get);
+		auto table = GetPartitionedTable(*get, state);
 		if (!table) {
 			return nullptr;
 		}
 		query = RenderAggregateQuery(aggregate, *get, *table, GetTableName(*table));
 	} else if (scans == 2) {
 		// Join tasks need a driver merge, so only create the fragment if the executor can partition it.
-		query = RenderJoinAggregateQuery(aggregate, [](LogicalGet &join_get) {
-			auto table = GetPartitionedTable(join_get);
+		query = RenderJoinAggregateQuery(aggregate, [&state](LogicalGet &join_get) {
+			auto table = GetPartitionedTable(join_get, state);
 			return table ? GetTableName(*table) : string();
 		});
 		if (query && !state.CanPartitionJoin(aggregate, query->sql)) {
@@ -136,9 +141,9 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(Binder &binder, WorkerFra
 	return std::move(fragment);
 }
 
-unique_ptr<LogicalOperator> TryCreateScanFragment(Binder &binder, LogicalGet &get,
+unique_ptr<LogicalOperator> TryCreateScanFragment(Binder &binder, const WorkerFragmentState &state, LogicalGet &get,
                                                   vector<ReplacementBinding> &replacements) {
-	auto table = GetPartitionedTable(get);
+	auto table = GetPartitionedTable(get, state);
 	auto &column_ids = get.GetColumnIds();
 	if (!table || column_ids.empty()) {
 		return nullptr;
@@ -197,7 +202,7 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
 			fragment = TryCreateAggregateFragment(binder, *state, op.Cast<LogicalAggregate>(), scans, replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
-			fragment = TryCreateScanFragment(binder, op.Cast<LogicalGet>(), replacements);
+			fragment = TryCreateScanFragment(binder, *state, op.Cast<LogicalGet>(), replacements);
 		}
 		if (fragment) {
 			node.get() = std::move(fragment);
@@ -217,7 +222,10 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 } // namespace
 
 WorkerFragmentState::WorkerFragmentState(DistributedExecutor &executor_p, Connection &connection_p)
-    : executor(executor_p), connection(connection_p) {
+    : executor(executor_p), connection(connection_p),
+      catalog(DatabaseManager::Get(*connection_p.context)
+                  .GetDatabase(DatabaseManager::GetDefaultDatabase(*connection_p.context))
+                  ->GetCatalog()) {
 }
 
 vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &context, const string &sql,
@@ -264,6 +272,10 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 
 bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const string &sql) {
 	return executor.CanPartitionJoin(plan, sql);
+}
+
+bool WorkerFragmentState::CanPartitionTable(const TableCatalogEntry &table) const {
+	return &table.catalog == &catalog;
 }
 
 vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {

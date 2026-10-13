@@ -90,8 +90,7 @@ set(CLIENT_SOURCES
     src/client/remote_index_registry.cpp)
 
 set(SERVER_UTIL_SOURCES src/server/object_storage_database.cpp
-                        src/server/startup_sql.cpp
-                        src/server/validation.cpp)
+                        src/server/startup_sql.cpp src/server/validation.cpp)
 
 set(SERVER_DRIVER_SOURCES
     src/server/driver/client_registration.cpp
@@ -136,6 +135,16 @@ set(EXTENSION_SOURCES
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
+
+# SQLLogicTests need to exercise the driver optimizer on native attached
+# catalogs.
+if(${BUILD_UNITTESTS})
+  foreach(TARGET ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME})
+    target_sources(${TARGET}
+                   PRIVATE test/unittest/worker_fragment_test_functions.cpp)
+    target_compile_definitions(${TARGET} PRIVATE DUCKHERDER_TEST_FUNCTIONS)
+  endforeach()
+endif()
 
 set_target_properties(
   ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME}
