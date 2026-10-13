@@ -18,8 +18,8 @@ public:
 	TaskPartitioner(Connection &conn, QueryPlanAnalyzer &analyzer);
 
 	// Whether `statement`, a two-table Join aggregate over the scans in `logical_plan`, can be split into row-group
-	// tasks whose partial aggregates the driver merges.
-	bool CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement);
+	// tasks whose partial aggregates the driver merges, with replication cost justified for num_workers.
+	bool CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement, idx_t num_workers);
 
 	// Extract distributed pipeline tasks from logical plan.
 	// Creates tasks aligned with native DuckDB row groups when possible.

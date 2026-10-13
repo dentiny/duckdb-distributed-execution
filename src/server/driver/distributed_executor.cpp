@@ -36,8 +36,9 @@ DistributedExecutor::DistributedExecutor(WorkerManager &worker_manager_p, Connec
 }
 
 bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const string &sql) {
-	if (storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET ||
-	    worker_manager.GetAvailableWorkers().size() < 2 || !IsSupportedPlan(plan)) {
+	const auto num_workers = worker_manager.GetWorkerCount();
+	if (storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET || num_workers < 2 ||
+	    !IsSupportedPlan(plan)) {
 		return false;
 	}
 	Parser parser;
@@ -47,7 +48,7 @@ bool DistributedExecutor::CanPartitionJoin(LogicalOperator &plan, const string &
 		return false;
 	}
 	return parser.statements.size() == 1 && parser.statements[0]->type == StatementType::SELECT_STATEMENT &&
-	       task_partitioner->CanPartitionJoin(plan, parser.statements[0]->Cast<SelectStatement>());
+	       task_partitioner->CanPartitionJoin(plan, parser.statements[0]->Cast<SelectStatement>(), num_workers);
 }
 
 // Distributed execution Driver implementing DuckDB's parallel execution model.

@@ -4,6 +4,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "server/driver/distributed_executor.hpp"
@@ -535,6 +536,73 @@ TEST_CASE("Worker fragments preserve catalog identity", "[worker_fragment][catal
 		REQUIRE(StringUtil::Contains(served_executions[0].sql, "object_db.main.dim"));
 		client.reset();
 		state.reset();
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Join partitioning considers filtered cardinality and projected width", "[task_partitioner][join_cost]") {
+	auto root = std::filesystem::temp_directory_path() /
+	            StringUtil::Format("duckherder_join_cost_%s",
+	                               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	std::filesystem::create_directories(root);
+	{
+		DuckDB db(nullptr);
+		Connection con(db);
+		DBConfig::GetConfig(*db.instance).options.disabled_optimizers.insert(OptimizerType::COMPRESSED_MATERIALIZATION);
+		REQUIRE_FALSE(con.Query("ATTACH " + KeywordHelper::WriteQuoted((root / "cost.db").string()) +
+		                        " AS cost_db (ROW_GROUP_SIZE 2048)")
+		                  ->HasError());
+		REQUIRE_FALSE(con.Query("USE cost_db")->HasError());
+		REQUIRE_FALSE(con.Query("CREATE TABLE fact AS SELECT i AS id, i % 100 AS k, i // 20 AS category, "
+		                        "i % 11 AS amount FROM range(20000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    con.Query("CREATE TABLE dim AS SELECT i % 100 AS k, i % 7 AS amount FROM range(12000) t(i)")->HasError());
+		vector<string> columns, values;
+		for (idx_t col = 0; col < 64; ++col) {
+			auto name = StringUtil::Format("v%llu", col);
+			columns.push_back(StringUtil::Format("i * %llu AS %s", col + 1, name));
+			values.push_back("w." + name);
+		}
+		REQUIRE_FALSE(con.Query("CREATE TABLE wide AS SELECT i % 100 AS k, " + StringUtil::Join(columns, ", ") +
+		                        " FROM range(12000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(con.Query("ANALYZE")->HasError());
+		// Small row groups are persisted at checkpoint, rather than left in the append buffer.
+		REQUIRE_FALSE(con.Query("CHECKPOINT")->HasError());
+		QueryPlanAnalyzer analyzer(con);
+		TaskPartitioner partitioner(con, analyzer);
+
+		auto check_partition = [&](const string &sql, const string &partitioned_alias) {
+			INFO(sql);
+			auto plan = con.ExtractPlan(sql);
+			auto statements = con.ExtractStatements(sql);
+			REQUIRE(plan != nullptr);
+			REQUIRE(partitioner.CanPartitionJoin(*plan, statements[0]->Cast<SelectStatement>(), 3));
+			auto tasks = partitioner.ExtractPipelineTasks(*plan, sql, 3);
+			REQUIRE(tasks.size() == 3);
+			for (const auto &task : tasks) {
+				REQUIRE(StringUtil::Contains(task.task_sql, partitioned_alias + ".rowid"));
+			}
+			REQUIRE_FALSE(partitioner.CanPartitionJoin(*plan, statements[0]->Cast<SelectStatement>(), 1));
+		};
+		// The physically larger fact has a selective filter; replicate it and partition dim instead.
+		check_partition("SELECT sum(f.amount + d.amount) FROM fact f JOIN dim d ON f.k = d.k WHERE f.category = 42",
+		                "d");
+		// A smaller table with many projected columns is more expensive to repeat than the narrow fact.
+		check_partition(
+		    "SELECT sum(f.amount + " + StringUtil::Join(values, " + ") + ") FROM fact f JOIN wide w ON f.k = w.k", "w");
+
+		// Do not charge for unreferenced columns in wide; both narrow inputs are too costly to replicate.
+		for (const auto &sql : {"SELECT sum(f.amount + w.v0) FROM fact f JOIN wide w ON f.k = w.k",
+		                        "SELECT sum(f.amount + d.amount) FROM fact f JOIN dim d ON f.k = d.k"}) {
+			INFO(sql);
+			auto plan = con.ExtractPlan(sql);
+			auto statements = con.ExtractStatements(sql);
+			REQUIRE(plan != nullptr);
+			REQUIRE_FALSE(partitioner.CanPartitionJoin(*plan, statements[0]->Cast<SelectStatement>(), 3));
+			REQUIRE(partitioner.ExtractPipelineTasks(*plan, sql, 3).size() == 1);
+		}
 	}
 	std::filesystem::remove_all(root);
 }

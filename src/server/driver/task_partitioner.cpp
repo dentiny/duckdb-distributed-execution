@@ -13,6 +13,9 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/type_visitor.hpp"
+#include "duckdb/common/types/row/tuple_data_layout.hpp"
+#include "duckdb/execution/ht_entry.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
@@ -28,21 +31,22 @@ namespace duckdb {
 
 namespace {
 
-bool HasEquiJoin(const LogicalOperator &op) {
+optional_ptr<LogicalComparisonJoin> FindEquiJoin(LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-		const auto &join = op.Cast<LogicalComparisonJoin>();
+		auto &join = op.Cast<LogicalComparisonJoin>();
 		for (const auto &condition : join.conditions) {
 			if (condition.comparison == ExpressionType::COMPARE_EQUAL) {
-				return true;
+				return &join;
 			}
 		}
 	}
 	for (const auto &child : op.children) {
-		if (HasEquiJoin(*child)) {
-			return true;
+		auto join = FindEquiJoin(*child);
+		if (join) {
+			return join;
 		}
 	}
-	return false;
+	return nullptr;
 }
 
 bool MatchesRef(const BaseTableRef &ref, const TableCatalogEntry &table) {
@@ -147,6 +151,37 @@ unique_ptr<ParsedExpression> ImpliedEqualityFilter(const ParsedExpression &where
 	return make_uniq<ConjunctionExpression>(ExpressionType::CONJUNCTION_OR, std::move(implied));
 }
 
+// Estimate the projected tuples reaching the Join, after input filters. Variable-size payloads use the same
+// small penalties as DuckDB's build-side optimizer; these are estimates, not memory bounds.
+struct JoinInputCost {
+	double scan_bytes;
+	double build_bytes;
+};
+
+std::optional<JoinInputCost> EstimateJoinInputCost(LogicalOperator &input, LogicalGet &scan) {
+	if (!input.has_estimated_cardinality && !scan.has_estimated_cardinality) {
+		return std::nullopt;
+	}
+	const auto cardinality = input.has_estimated_cardinality ? input.estimated_cardinality : scan.estimated_cardinality;
+	input.ResolveOperatorTypes();
+	TupleDataLayout layout;
+	layout.Initialize(input.types, TupleDataValidityType::CAN_HAVE_NULL_VALUES);
+	auto row_width = layout.GetRowWidth();
+	for (const auto &type : input.types) {
+		TypeVisitor::VisitReplace(type, [&](const LogicalType &visited) {
+			if (visited.InternalType() == PhysicalType::VARCHAR) {
+				row_width += 8;
+			} else if (visited.InternalType() == PhysicalType::LIST || visited.InternalType() == PhysicalType::ARRAY) {
+				row_width += 32;
+			}
+			return visited;
+		});
+	}
+	// A build tuple also stores its hash and, on average, three hash-table entries.
+	return JoinInputCost {double(cardinality) * double(row_width),
+	                      double(cardinality) * double(row_width + sizeof(hash_t) + 3 * sizeof(ht_entry_t))};
+}
+
 struct JoinPartitionInfo {
 	LogicalGet *left_scan;
 	LogicalGet *right_scan;
@@ -157,12 +192,13 @@ struct JoinPartitionInfo {
 // A worker reads one rowid range from one table and all rows from the other. Require exactly two
 // distinct native scans that match the SQL references before rewriting either table.
 std::optional<JoinPartitionInfo> GetJoinPartitionInfo(LogicalOperator &logical_plan, const SelectNode &select,
-                                                      QueryPlanAnalyzer &analyzer) {
+                                                      QueryPlanAnalyzer &analyzer, idx_t num_workers) {
 	if (select.from_table->sample || !select.from_table->column_name_alias.empty()) {
 		return std::nullopt;
 	}
 	const auto &join = select.from_table->Cast<JoinRef>();
-	if (!join.alias.empty() || !HasEquiJoin(logical_plan)) {
+	auto logical_join = FindEquiJoin(logical_plan);
+	if (!join.alias.empty() || !logical_join) {
 		return std::nullopt;
 	}
 	const auto &left = join.left->Cast<BaseTableRef>();
@@ -214,9 +250,45 @@ std::optional<JoinPartitionInfo> GetJoinPartitionInfo(LogicalOperator &logical_p
 	if (!left_groups.valid || !right_groups.valid) {
 		return std::nullopt;
 	}
-	// Partition the larger side so each worker repeats the smaller scan.
-	// Row-group count approximates input size.
-	const bool partition_left = left_groups.total_row_groups >= right_groups.total_row_groups;
+	// Use the Join's input roots so filters and projections above the scans contribute to the estimate.
+	auto find_input = [&](LogicalGet &scan) -> optional_ptr<LogicalOperator> {
+		for (auto &child : logical_join->children) {
+			auto *op = child.get();
+			while (op->children.size() == 1) {
+				op = op->children[0].get();
+			}
+			if (op == &scan) {
+				return child.get();
+			}
+		}
+		return nullptr;
+	};
+	auto left_input = find_input(*left_scan);
+	auto right_input = find_input(*right_scan);
+	if (!left_input || !right_input) {
+		return std::nullopt;
+	}
+	auto left_cost = EstimateJoinInputCost(*left_input, *left_scan);
+	auto right_cost = EstimateJoinInputCost(*right_input, *right_scan);
+	if (!left_cost || !right_cost) {
+		return std::nullopt;
+	}
+	const bool partition_left = left_cost->scan_bytes >= right_cost->scan_bytes;
+	const auto &partition_cost = partition_left ? *left_cost : *right_cost;
+	const auto &replicated_cost = partition_left ? *right_cost : *left_cost;
+	const auto &partition_groups = partition_left ? left_groups : right_groups;
+	const auto num_tasks = MinValue(num_workers, partition_groups.total_row_groups);
+	if (num_tasks < 2) {
+		return std::nullopt;
+	}
+	// Bound the replicated hash build estimate and charge for every additional scan/build. Only distribute when
+	// the parallel scan savings exceed this duplicated work. Recheck using the actual task count at execution.
+	constexpr double MAX_REPLICATED_BUILD_BYTES = 64 * 1024 * 1024;
+	const auto extra_replication = double(num_tasks - 1) * (replicated_cost.scan_bytes + replicated_cost.build_bytes);
+	const auto parallel_savings = partition_cost.scan_bytes * (1.0 - 1.0 / double(num_tasks));
+	if (replicated_cost.build_bytes > MAX_REPLICATED_BUILD_BYTES || extra_replication >= parallel_savings) {
+		return std::nullopt;
+	}
 	return JoinPartitionInfo {.left_scan = left_scan,
 	                          .right_scan = right_scan,
 	                          .partition_left = partition_left,
@@ -241,11 +313,12 @@ vector<DistributedPipelineTask> TaskPartitioner::CreateSingleTask(const string &
 	return tasks;
 }
 
-bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement) {
+bool TaskPartitioner::CanPartitionJoin(LogicalOperator &logical_plan, const SelectStatement &statement,
+                                       idx_t num_workers) {
 	if (!IsSimplePartitionedJoin(statement)) {
 		return false;
 	}
-	auto info = GetJoinPartitionInfo(logical_plan, statement.node->Cast<SelectNode>(), analyzer);
+	auto info = GetJoinPartitionInfo(logical_plan, statement.node->Cast<SelectNode>(), analyzer, num_workers);
 	// One row group yields one task, so there is no Join work to spread across workers.
 	if (!info || info->row_group_info.total_row_groups < 2) {
 		return false;
@@ -298,7 +371,7 @@ vector<DistributedPipelineTask> TaskPartitioner::ExtractPipelineTasks(LogicalOpe
 		if (!IsSimplePartitionedJoin(statement)) {
 			return CreateSingleTask(base_sql);
 		}
-		auto info = GetJoinPartitionInfo(logical_plan, select, analyzer);
+		auto info = GetJoinPartitionInfo(logical_plan, select, analyzer, num_workers);
 		if (!info) {
 			return CreateSingleTask(base_sql);
 		}
