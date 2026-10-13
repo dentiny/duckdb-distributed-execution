@@ -147,6 +147,9 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 	case LogicalOperatorType::LOGICAL_LIMIT:
 	case LogicalOperatorType::LOGICAL_TOP_N:
 	case LogicalOperatorType::LOGICAL_SAMPLE:
+	// These read results computed elsewhere in the client's plan, which workers do not have.
+	case LogicalOperatorType::LOGICAL_CTE_REF:
+	case LogicalOperatorType::LOGICAL_DELIM_GET:
 		return false;
 	default:
 		break;
@@ -593,27 +596,28 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 	return std::move(result);
 }
 
-void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
-	// Fragments run outside the client's transaction, so they would miss its snapshot in an explicit transaction.
-	auto state = input.context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME);
-	if (!state || !input.context.transaction.IsAutoCommit() || state->NumWorkers() == 0) {
-		return;
-	}
-	auto &binder = input.optimizer.binder;
-	vector<ReplacementBinding> replacements;
-	reference<unique_ptr<LogicalOperator>> node = plan;
+// Replaces the first aggregate or lone scan below root, through operators with one child, with a worker fragment.
+void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state, unique_ptr<LogicalOperator> &root,
+                 vector<ReplacementBinding> &replacements) {
+	reference<unique_ptr<LogicalOperator>> node = root;
 	while (true) {
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-			fragment =
-			    TryCreateAggregateFragment(input.context, binder, *state, op.Cast<LogicalAggregate>(), replacements);
+			fragment = TryCreateAggregateFragment(context, binder, state, op.Cast<LogicalAggregate>(), replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
-			fragment = TryCreateScanFragment(input.context, binder, *state, op.Cast<LogicalGet>(), replacements);
+			fragment = TryCreateScanFragment(context, binder, state, op.Cast<LogicalGet>(), replacements);
 		}
 		if (fragment) {
 			node.get() = std::move(fragment);
-			break;
+			return;
+		}
+		// A materialized CTE runs its definition once and the query reads the result, so each can hold a fragment.
+		if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+			for (auto &child : op.children) {
+				CutFragment(context, binder, state, child, replacements);
+			}
+			return;
 		}
 		// Below a limit only a few rows may be needed, which the driver reads faster than workers transfer the table.
 		if (op.type == LogicalOperatorType::LOGICAL_LIMIT || op.children.size() != 1) {
@@ -621,6 +625,16 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		}
 		node = op.children[0];
 	}
+}
+
+void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	// Fragments run outside the client's transaction, so they would miss its snapshot in an explicit transaction.
+	auto state = input.context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME);
+	if (!state || !input.context.transaction.IsAutoCommit() || state->NumWorkers() == 0) {
+		return;
+	}
+	vector<ReplacementBinding> replacements;
+	CutFragment(input.context, input.optimizer.binder, *state, plan, replacements);
 	ColumnBindingReplacer replacer;
 	replacer.replacement_bindings = std::move(replacements);
 	replacer.VisitOperator(*plan);

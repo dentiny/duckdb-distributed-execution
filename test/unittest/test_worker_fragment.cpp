@@ -615,6 +615,40 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Worker fragments are cut inside materialized CTEs", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_cte");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, i % 11 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// The CTE's definition becomes a fragment; the query reading it twice stays on the driver.
+		auto executions = fixture.RequireLocalResult(
+		    "WITH totals AS MATERIALIZED (SELECT k, sum(amount) AS total FROM fact GROUP BY k) "
+		    "SELECT d.multiplier, t.total FROM totals t JOIN dim d ON t.k = d.k "
+		    "WHERE t.total = (SELECT max(total) FROM totals)");
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(executions[0].sql == "aggregate sum_no_overflow(amount) group by k over object_db.main.fact");
+
+		// Workers do not have the CTE's result, so no fragment may read it.
+		executions =
+		    fixture.RequireLocalResult("WITH dims AS MATERIALIZED (SELECT k, multiplier FROM dim) "
+		                               "SELECT sum(f.amount * d.multiplier) FROM fact f JOIN dims d ON f.k = d.k");
+		for (const auto &execution : executions) {
+			REQUIRE_FALSE(StringUtil::StartsWith(execution.sql, "aggregate"));
+		}
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Workers reject plans of another build and the driver runs them locally", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_build_mismatch");
 	{
