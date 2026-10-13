@@ -204,5 +204,17 @@ SELECT count(*) FROM dh.cachecase;
 ----
 5
 
+# ALTER must preserve quoted column names.
+statement ok
+ALTER TABLE dh.cachecase ADD COLUMN "extra value" INTEGER DEFAULT 7;
+
+statement ok
+ALTER TABLE dh.cachecase RENAME COLUMN id TO "new id";
+
+query II
+SELECT "new id", "extra value" FROM dh.cachecase WHERE "new id" = 1;
+----
+1	7
+
 statement ok
 DROP TABLE dh.cachecase;
