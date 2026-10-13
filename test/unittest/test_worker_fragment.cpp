@@ -568,6 +568,11 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		// The same orders in hash order, so no key range prunes its row groups.
 		REQUIRE_FALSE(
 		    executor_connection->Query("CREATE TABLE shuffled AS SELECT * FROM ord ORDER BY hash(o_key)")->HasError());
+		// Three keys over twelve row groups, so the cuts repeat and fewer ranges are used.
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE coarse AS SELECT i // 600000 AS c_key, i % 11 AS amount "
+		                          "FROM range(1400000) t(i)")
+		                  ->HasError());
 		// Workers attach their snapshot of the database at their first task, after the INSERTs below.
 		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
 
@@ -597,9 +602,15 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		executions = fixture.RequireLocalResult(StringUtil::Format(join_sql, "ord"));
 		REQUIRE(executions.size() == 1);
 		REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
-		for (const auto &execution : fixture.RequireLocalResult(StringUtil::Format(join_sql, "shuffled"))) {
-			REQUIRE_FALSE(StringUtil::Contains(execution.sql, "shuffled (partitioned)"));
-		}
+		executions = fixture.RequireLocalResult(StringUtil::Format(join_sql, "shuffled"));
+		REQUIRE(executions.size() == 1);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "item (partitioned)"));
+		REQUIRE_FALSE(StringUtil::Contains(executions[0].sql, "shuffled (partitioned)"));
+		executions = fixture.RequireLocalResult("SELECT o.flag, sum(c.amount), count(*) FROM coarse c JOIN ord o "
+		                                        "ON c.c_key = o.o_key GROUP BY o.flag ORDER BY ALL");
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].num_tasks_generated == 2);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
 	}
 	std::filesystem::remove_all(root);
 }

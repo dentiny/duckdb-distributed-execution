@@ -475,13 +475,13 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		if (num_tasks < 2) {
 			return nullptr;
 		}
-		// Split inputs count as partitioned; the others are replicated.
-		JoinInputCost partitioned_cost {0, 0};
+		// Split inputs count as partitioned; the others are replicated. A replicated input joins the stream of the
+		// largest split input, so only that input's build is compared with it.
+		JoinInputCost partitioned_cost {0, costs[partitioned_idx].build_bytes};
 		vector<JoinInputCost> replicated_costs;
 		for (idx_t idx = 0; idx < costs.size(); ++idx) {
 			if (split[idx]) {
 				partitioned_cost.scan_bytes += costs[idx].scan_bytes;
-				partitioned_cost.build_bytes += costs[idx].build_bytes;
 			} else {
 				replicated_costs.push_back(costs[idx]);
 			}

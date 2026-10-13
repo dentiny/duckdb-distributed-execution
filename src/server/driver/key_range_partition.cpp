@@ -135,7 +135,13 @@ bool ReadRowGroupMinimums(LogicalGet &get, column_t column, vector<Value> &minim
 	auto row_groups = table.GetStorage().GetRowGroupCollection()->GetRowGroups();
 	Value previous_max;
 	for (auto segment = row_groups->GetRootSegment(); segment; segment = row_groups->GetNextSegment(*segment)) {
-		auto stats = segment->GetNode().GetStatistics(definition.StorageOid());
+		unique_ptr<BaseStatistics> stats;
+		try {
+			stats = segment->GetNode().GetStatistics(definition.StorageOid());
+		} catch (const std::exception &) {
+			// The scan can still be split by rowid.
+			return false;
+		}
 		if (!stats) {
 			return false;
 		}
@@ -156,17 +162,16 @@ bool ReadRowGroupMinimums(LogicalGet &get, column_t column, vector<Value> &minim
 	return !minimums.empty();
 }
 
-// Cuts the keys into at most max_tasks ranges with about as many row groups each. Returns no cuts if that gives fewer
-// than two ranges.
+// Cuts the keys into at most max_tasks ranges with about as many row groups each. Repeated cuts are skipped, so a key
+// spanning many row groups gives fewer ranges. Returns no cuts if only one range is left.
 vector<Value> CutKeyRanges(const vector<Value> &minimums, idx_t max_tasks) {
 	const auto num_tasks = MinValue<idx_t>(max_tasks, minimums.size());
 	vector<Value> cuts;
 	for (idx_t task = 1; task < num_tasks; ++task) {
 		const auto &cut = minimums[task * minimums.size() / num_tasks];
-		if (cut <= minimums[0] || (!cuts.empty() && cut <= cuts.back())) {
-			return {};
+		if (cut > minimums[0] && (cuts.empty() || cut > cuts.back())) {
+			cuts.emplace_back(cut);
 		}
-		cuts.emplace_back(cut);
 	}
 	return cuts;
 }
@@ -202,6 +207,23 @@ bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, cons
                            const vector<JoinInputCost> &costs, idx_t max_tasks, KeyRangePartition &result) {
 	vector<KeyPair> pairs;
 	CollectKeyPairs(input, pairs);
+	// Whether each scan column checked so far has its row groups ordered on it.
+	struct CheckedColumn {
+		KeyRangeScan column;
+		bool ordered;
+	};
+	vector<CheckedColumn> checked;
+	auto is_ordered = [&](LogicalGet &scan, column_t column) {
+		const KeyRangeScan key {scan.table_index, column};
+		for (const auto &entry : checked) {
+			if (SameColumn(entry.column, key)) {
+				return entry.ordered;
+			}
+		}
+		vector<Value> unused;
+		checked.push_back({key, ReadRowGroupMinimums(scan, column, unused)});
+		return checked.back().ordered;
+	};
 	vector<column_t> tried;
 	double best_bytes = 0;
 	for (const auto &pair : pairs) {
@@ -226,10 +248,9 @@ bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, cons
 					continue;
 				}
 				for (const auto &column : equal_columns) {
-					vector<Value> unused;
 					if (column.table_index == scan.table_index &&
 					    scan.GetTable()->GetColumn(LogicalIndex(column.column)).Type() == key_type &&
-					    ReadRowGroupMinimums(scan, column.column, unused)) {
+					    is_ordered(scan, column.column)) {
 						candidate.scans.emplace_back(column);
 						bytes += costs[idx].scan_bytes;
 						break;
