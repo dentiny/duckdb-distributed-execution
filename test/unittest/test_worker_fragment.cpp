@@ -10,9 +10,12 @@
 #include "server/driver/plan_serializer.hpp"
 #include "server/driver/worker_fragment_pushdown.hpp"
 #include "server/driver/worker_manager.hpp"
+#include "server/driver/worker_node_client.hpp"
 #include "server/object_storage_database.hpp"
+#include "server/worker/worker_node.hpp"
 #include "utils/network_utils.hpp"
 
+#include <arrow/array.h>
 #include <chrono>
 #include <filesystem>
 
@@ -82,7 +85,7 @@ TEST_CASE("Workers reject plans of another build and run their own", "[worker_fr
 		REQUIRE_FALSE(
 		    fixture.executor_connection->Query("CREATE TABLE t AS SELECT i AS id, i % 7 AS k FROM range(300000) t(i)")
 		        ->HasError());
-		auto plan = OptimizePlan(*fixture.executor_connection, "SELECT sum(id) FROM t");
+		auto plan = OptimizePlan(*fixture.executor_connection, "SELECT count(*), max(id) FROM t");
 		REQUIRE(plan != nullptr);
 
 		WorkerNode worker("mismatch_worker", "localhost", GetAvailablePort(9500));
@@ -99,6 +102,12 @@ TEST_CASE("Workers reject plans of another build and run their own", "[worker_fr
 		REQUIRE(StringUtil::Contains(status.ToString(), "cannot run on worker mismatch_worker"));
 		request.set_build_id(PlanSerializer::BuildId());
 		REQUIRE(worker_client.ExecutePartition(request, batches).ok());
+		REQUIRE(batches.size() == 1);
+		REQUIRE(batches[0]->num_rows() == 1);
+		REQUIRE(batches[0]->column(0)->type_id() == arrow::Type::INT64);
+		REQUIRE(batches[0]->column(1)->type_id() == arrow::Type::INT64);
+		REQUIRE(std::static_pointer_cast<arrow::Int64Array>(batches[0]->column(0))->Value(0) == 300000);
+		REQUIRE(std::static_pointer_cast<arrow::Int64Array>(batches[0]->column(1))->Value(0) == 299999);
 		worker.Shutdown();
 	}
 	std::filesystem::remove_all(root);

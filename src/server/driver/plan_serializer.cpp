@@ -1,5 +1,6 @@
 #include "server/driver/plan_serializer.hpp"
 
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
@@ -36,6 +37,9 @@ unique_ptr<LogicalOperator> PlanSerializer::DeserializeLogicalPlan(ClientContext
 		bound_parameter_map_t parameters;
 		plan = BinaryDeserializer::Deserialize<LogicalOperator>(stream, context, parameters);
 	});
+	if (!plan) {
+		throw SerializationException("Deserialized plan is empty");
+	}
 	plan->ResolveOperatorTypes();
 	return plan;
 }
