@@ -8,18 +8,11 @@ namespace duckdb {
 
 // Forward declarations.
 class LogicalGet;
-class PhysicalOperator;
 class LogicalOperator;
-class SelectStatement;
+class PhysicalOperator;
 
 // Return true if there's any TABLE_SCAN operator in the physical plan tree.
 bool ContainsTableScan(const PhysicalOperator &op);
-
-// Return true if the logical plan contains only supported operators.
-bool IsSupportedPlan(LogicalOperator &op);
-
-// Whether the client SQL has the simple two-table inner join shape supported by row-group partitioning.
-bool IsSimplePartitionedJoin(const SelectStatement &statement);
 
 // Estimated bytes of a Join input, as scanned and as a hash table build side.
 struct JoinInputCost {

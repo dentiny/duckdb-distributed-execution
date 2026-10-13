@@ -103,14 +103,10 @@ set(SERVER_DRIVER_SOURCES
     src/server/driver/distributed_server_function.cpp
     src/server/driver/distributed_server_main.cpp
     src/server/driver/worker_node_client.cpp
-    src/server/driver/partition_sql_generator.cpp
     src/server/driver/plan_serializer.cpp
     src/server/driver/query_history.cpp
-    src/server/driver/query_plan_analyzer.cpp
     src/server/driver/query_utils.cpp
-    src/server/driver/result_merger.cpp
     src/server/driver/served_database.cpp
-    src/server/driver/task_partitioner.cpp
     src/server/driver/transaction_request_handler.cpp
     src/server/driver/worker_fragment_pushdown.cpp
     src/server/driver/worker_manager.cpp)

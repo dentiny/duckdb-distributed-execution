@@ -3,7 +3,6 @@
 #include "distributed.pb.h"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
-#include "server/driver/query_plan_analyzer.hpp"
 #include "utils/mutex.hpp"
 
 #include <chrono>
@@ -17,19 +16,26 @@ enum class QueryExecutionMode {
 	ROW_GROUP_PARTITION // Distributed with row-group-aligned partitioning
 };
 
+// How the driver merges the results of a fragment's tasks.
+enum class MergeStrategy {
+	CONCATENATE,     // Scans: concatenate the task results
+	AGGREGATE_MERGE, // Aggregates without groups: merge partial aggregates
+	GROUP_BY_MERGE   // GROUP BY: merge partial aggregates per group
+};
+
 // Structure to store query execution information.
 struct QueryExecutionInfo {
-	string sql;                                                 // The SQL query
+	string sql;                                                 // The SQL query, or a plan fragment description
 	QueryExecutionMode execution_mode;                          // Partitioning strategy used
-	QueryPlanAnalyzer::MergeStrategy merge_strategy;            // How results were merged
+	MergeStrategy merge_strategy;                               // How results were merged
 	std::chrono::milliseconds query_duration;                   // Total query duration
 	std::chrono::system_clock::time_point execution_start_time; // When query started (wall-clock time)
 	idx_t num_workers_used = 0;                                 // Number of workers used
 	idx_t num_tasks_generated = 0;                              // Number of tasks created
 
 	QueryExecutionInfo()
-	    : execution_mode(QueryExecutionMode::LOCAL), merge_strategy(QueryPlanAnalyzer::MergeStrategy::CONCATENATE),
-	      query_duration(0), execution_start_time(std::chrono::system_clock::now()) {
+	    : execution_mode(QueryExecutionMode::LOCAL), merge_strategy(MergeStrategy::CONCATENATE), query_duration(0),
+	      execution_start_time(std::chrono::system_clock::now()) {
 	}
 };
 

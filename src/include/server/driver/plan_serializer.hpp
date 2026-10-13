@@ -3,7 +3,6 @@
 #include "duckdb.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/common/string.hpp"
-#include "duckdb/common/types/value.hpp"
 
 namespace duckdb {
 

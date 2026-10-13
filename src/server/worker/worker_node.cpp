@@ -106,23 +106,6 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	return arrow::Status::OK();
 }
 
-// Execute a pipeline task.
-arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
-                                              unique_ptr<QueryResult> &result) {
-	if (!req.serialized_plan().empty()) {
-		return ExecutePlanFragment(req, task_conn, result);
-	}
-	if (req.sql().empty()) {
-		return arrow::Status::Invalid("Task has neither a plan fragment nor SQL");
-	}
-	// Stream the result so it is converted to Arrow as it is produced instead of being materialized first.
-	result = task_conn.SendQuery(req.sql());
-	if (result->HasError()) {
-		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
-	}
-	return arrow::Status::OK();
-}
-
 arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
                                               unique_ptr<QueryResult> &result) {
 	const auto build_id = PlanSerializer::BuildId();
@@ -154,9 +137,8 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	ARROW_ASSIGN_OR_RAISE(auto object_storage_database, GetOrOpenObjectStorageDatabase(req.storage_config()));
 	ARROW_ASSIGN_OR_RAISE(auto task_conn, object_storage_database->Connect());
 
-	// Execute the pipeline task with state tracking
 	unique_ptr<QueryResult> result;
-	auto exec_status = ExecutePipelineTask(req, *task_conn, result);
+	auto exec_status = ExecutePlanFragment(req, *task_conn, result);
 
 	if (!exec_status.ok()) {
 		resp.set_success(false);

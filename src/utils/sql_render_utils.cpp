@@ -19,7 +19,6 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/list.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
-#include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/table_filter.hpp"
@@ -229,8 +228,8 @@ void AddProjection(const LogicalProjection &projection, RemoteScope &scope) {
 	}
 }
 
-// Makes the columns `get` reads visible, qualified with `alias` if it is not empty.
-void AddScanColumns(const LogicalGet &get, const TableCatalogEntry &table, const string &alias, RemoteScope &scope) {
+// Makes the columns get reads visible.
+void AddScanColumns(const LogicalGet &get, const TableCatalogEntry &table, RemoteScope &scope) {
 	auto &column_ids = get.GetColumnIds();
 	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
 		auto column_id = column_ids[idx].GetPrimaryIndex();
@@ -239,64 +238,7 @@ void AddScanColumns(const LogicalGet &get, const TableCatalogEntry &table, const
 		}
 		LogicalType type;
 		auto column = GetColumnSQL(table, column_id, type);
-		scope.columns.emplace(ColumnBinding(get.table_index, idx),
-		                      alias.empty() ? column : StringUtil::Format("%s.%s", alias, column));
-	}
-}
-
-// Adds the scans, filters and inner comparison Joins below an aggregate, through projections, to `scope`, `tables` and
-// `predicates`. Returns false for any other operator, a scan `table_name` rejects, or an untranslatable predicate.
-bool RenderJoinInput(LogicalOperator &op, const std::function<string(LogicalGet &)> &table_name, RemoteScope &scope,
-                     vector<string> &tables, vector<string> &predicates) {
-	for (auto &child : op.children) {
-		if (!RenderJoinInput(*child, table_name, scope, tables, predicates)) {
-			return false;
-		}
-	}
-	switch (op.type) {
-	case LogicalOperatorType::LOGICAL_GET: {
-		auto &get = op.Cast<LogicalGet>();
-		auto name = table_name(get);
-		if (name.empty()) {
-			return false;
-		}
-		// Aliases keep the columns of the two tables apart.
-		const auto alias = StringUtil::Format("t%llu", tables.size());
-		tables.emplace_back(StringUtil::Format("%s AS %s", name, alias));
-		AddScanColumns(get, *get.GetTable(), alias, scope);
-		return RenderScanFilters(get, *get.GetTable(), predicates, alias);
-	}
-	case LogicalOperatorType::LOGICAL_PROJECTION:
-		AddProjection(op.Cast<LogicalProjection>(), scope);
-		return true;
-	case LogicalOperatorType::LOGICAL_FILTER:
-		return RenderChildren(scope, op.expressions, predicates);
-	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
-		auto &join = op.Cast<LogicalComparisonJoin>();
-		if (join.join_type != JoinType::INNER) {
-			return false;
-		}
-		// An inner Join keeps the pairs satisfying all conditions, as a WHERE over both tables does.
-		for (const auto &condition : join.conditions) {
-			const auto comparison = ExpressionTypeToOperator(condition.comparison);
-			auto left = RenderExpression(scope, *condition.left);
-			auto right = RenderExpression(scope, *condition.right);
-			if (comparison.empty() || left.empty() || right.empty()) {
-				return false;
-			}
-			predicates.emplace_back(StringUtil::Format("(%s %s %s)", left, comparison, right));
-		}
-		if (join.predicate) {
-			auto predicate = RenderExpression(scope, *join.predicate);
-			if (predicate.empty()) {
-				return false;
-			}
-			predicates.emplace_back(std::move(predicate));
-		}
-		return true;
-	}
-	default:
-		return false;
+		scope.columns.emplace(ColumnBinding(get.table_index, idx), std::move(column));
 	}
 }
 
@@ -410,14 +352,13 @@ string GetColumnSQL(const TableCatalogEntry &table, column_t column_id, LogicalT
 	return KeywordHelper::WriteOptionallyQuoted(column.Name());
 }
 
-bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates,
-                       const string &alias) {
+namespace {
+
+// Renders the filters of get on table as SQL predicates, or returns false if one cannot be translated.
+bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates) {
 	for (auto &entry : get.table_filters.filters) {
 		LogicalType type;
 		auto column = GetColumnSQL(table, entry.first, type);
-		if (!alias.empty()) {
-			column = StringUtil::Format("%s.%s", alias, column);
-		}
 		if (entry.second->filter_type == TableFilterType::EXPRESSION_FILTER) {
 			RemoteScope scope;
 			scope.filter_column = column;
@@ -438,6 +379,8 @@ bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, ve
 	}
 	return true;
 }
+
+} // namespace
 
 string RenderSelectQuery(const vector<string> &select_list, const string &table_name,
                          const vector<string> &predicates) {
@@ -465,23 +408,12 @@ unique_ptr<RemoteAggregateQuery> RenderAggregateQuery(LogicalAggregate &aggregat
 	if (aggregate.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
 		AddProjection(aggregate.children[0]->Cast<LogicalProjection>(), scope);
 	}
-	AddScanColumns(get, table, "", scope);
+	AddScanColumns(get, table, scope);
 	vector<string> predicates;
 	if (!RenderScanFilters(get, table, predicates)) {
 		return nullptr;
 	}
 	return RenderGroupedQuery(aggregate, scope, table_name, predicates);
-}
-
-unique_ptr<RemoteAggregateQuery> RenderJoinAggregateQuery(LogicalAggregate &aggregate,
-                                                          const std::function<string(LogicalGet &)> &table_name) {
-	RemoteScope scope;
-	vector<string> tables;
-	vector<string> predicates;
-	if (!RenderJoinInput(*aggregate.children[0], table_name, scope, tables, predicates) || tables.size() != 2) {
-		return nullptr;
-	}
-	return RenderGroupedQuery(aggregate, scope, StringUtil::Join(tables, ", "), predicates);
 }
 
 void ReplaceAggregateBindings(const LogicalAggregate &aggregate, idx_t table_index,

@@ -24,7 +24,7 @@ struct WorkerFragment {
 	vector<LogicalType> types;
 	// Recorded in the query execution stats.
 	string description;
-	QueryPlanAnalyzer::MergeStrategy merge_strategy = QueryPlanAnalyzer::MergeStrategy::CONCATENATE;
+	MergeStrategy merge_strategy = MergeStrategy::CONCATENATE;
 };
 
 // Runs fragments of a client's queries through the distributed executor, which uses its own connection because the

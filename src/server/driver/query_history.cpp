@@ -39,17 +39,14 @@ void QueryHistory::FillStatsResponse(distributed::DistributedResponse &resp) con
 		}
 
 		switch (exec_info.merge_strategy) {
-		case QueryPlanAnalyzer::MergeStrategy::CONCATENATE:
+		case MergeStrategy::CONCATENATE:
 			query_info->set_merge_strategy("CONCATENATE");
 			break;
-		case QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE:
+		case MergeStrategy::AGGREGATE_MERGE:
 			query_info->set_merge_strategy("AGGREGATE");
 			break;
-		case QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE:
+		case MergeStrategy::GROUP_BY_MERGE:
 			query_info->set_merge_strategy("GROUP_BY");
-			break;
-		case QueryPlanAnalyzer::MergeStrategy::DISTINCT_MERGE:
-			query_info->set_merge_strategy("DISTINCT");
 			break;
 		}
 

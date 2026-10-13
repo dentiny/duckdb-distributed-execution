@@ -484,8 +484,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	}
 	fragment.types = partial_types;
 	fragment.description = DescribeFragment(head, scans, partitioned);
-	fragment.merge_strategy = groups.empty() ? QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE
-	                                         : QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE;
+	fragment.merge_strategy = groups.empty() ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
 	auto get = CreateFragment(binder, std::move(fragment));
 
 	vector<unique_ptr<Expression>> merges;
