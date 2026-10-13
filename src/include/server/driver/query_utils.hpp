@@ -9,10 +9,6 @@ namespace duckdb {
 // Forward declarations.
 class LogicalGet;
 class LogicalOperator;
-class PhysicalOperator;
-
-// Return true if there's any TABLE_SCAN operator in the physical plan tree.
-bool ContainsTableScan(const PhysicalOperator &op);
 
 // Estimated bytes of a Join input, as scanned and as a hash table build side.
 struct JoinInputCost {

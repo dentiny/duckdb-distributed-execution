@@ -4,7 +4,6 @@
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/row/tuple_data_layout.hpp"
 #include "duckdb/execution/ht_entry.hpp"
-#include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/logical_operator.hpp"
@@ -23,18 +22,6 @@ idx_t TokenEnd(const string &sql, const vector<SimplifiedToken> &tokens, idx_t i
 }
 
 } // namespace
-
-bool ContainsTableScan(const PhysicalOperator &op) {
-	if (op.type == PhysicalOperatorType::TABLE_SCAN) {
-		return true;
-	}
-	for (auto &child : op.children) {
-		if (ContainsTableScan(child.get())) {
-			return true;
-		}
-	}
-	return false;
-}
 
 string StripClientCatalog(const string &sql, const string &client_catalog) {
 	if (client_catalog.empty()) {
