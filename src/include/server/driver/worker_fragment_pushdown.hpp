@@ -19,7 +19,7 @@ class TableCatalogEntry;
 struct WorkerFragment {
 	// The whole fragment, run on the driver if workers cannot run the tasks.
 	string plan;
-	// One plan per worker task, each reading a disjoint range of row groups of the partitioned table.
+	// One plan per worker task, each reading a disjoint row group or key range of the split tables.
 	vector<string> task_plans;
 	vector<LogicalType> types;
 	// Recorded in the query execution stats.

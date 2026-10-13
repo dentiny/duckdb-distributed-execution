@@ -549,6 +549,61 @@ TEST_CASE("Only scans every output row comes from one row of are partitioned", "
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_key_ranges");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		// Both tables are stored in key order. Seven items share a key, so keys cross row group boundaries.
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE ord AS SELECT i AS o_key, i % 5 AS flag FROM range(200000) t(i)")
+		        ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection
+		        ->Query("CREATE TABLE item AS SELECT i // 7 AS i_key, i % 11 AS amount FROM range(1400000) t(i)")
+		        ->HasError());
+		// Items without a key never join.
+		REQUIRE_FALSE(
+		    executor_connection->Query("INSERT INTO item SELECT NULL, i % 11 FROM range(1000) t(i)")->HasError());
+		// The same orders in hash order, so no key range prunes its row groups.
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE shuffled AS SELECT * FROM ord ORDER BY hash(o_key)")->HasError());
+		// Workers attach their snapshot of the database at their first task, after the INSERTs below.
+		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
+
+		const string join_sql = "SELECT o.flag, sum(i.amount), count(*) FROM item i JOIN %s o ON i.i_key = o.o_key "
+		                        "GROUP BY o.flag ORDER BY ALL";
+		// The last key range is open above, so rows appended in key order after planning are still read once.
+		auto prepared = fixture.client->Prepare(StringUtil::Format(join_sql, "ord"));
+		REQUIRE_FALSE(prepared->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("INSERT INTO ord SELECT i, i % 5 FROM range(200000, 210000) t(i)")->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("INSERT INTO item SELECT i // 7, i % 11 FROM range(1400000, 1470000) t(i)")
+		        ->HasError());
+		REQUIRE_FALSE(executor_connection->Query("CHECKPOINT")->HasError());
+		auto expected = executor_connection->Query(StringUtil::Format(join_sql, "ord"));
+		REQUIRE_FALSE(expected->HasError());
+		vector<Value> parameters;
+		auto actual = prepared->Execute(parameters, /*allow_stream_result=*/false);
+		REQUIRE_FALSE(actual->HasError());
+		REQUIRE(actual->Equals(*expected));
+		auto executions = fixture.state->TakeExecutions();
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].num_tasks_generated == 3);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "item (partitioned)"));
+		REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
+
+		executions = fixture.RequireLocalResult(StringUtil::Format(join_sql, "ord"));
+		REQUIRE(executions.size() == 1);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
+		for (const auto &execution : fixture.RequireLocalResult(StringUtil::Format(join_sql, "shuffled"))) {
+			REQUIRE_FALSE(StringUtil::Contains(execution.sql, "shuffled (partitioned)"));
+		}
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Workers reject plans of another build and the driver runs them locally", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_build_mismatch");
 	{

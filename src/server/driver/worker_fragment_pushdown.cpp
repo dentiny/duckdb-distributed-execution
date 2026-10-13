@@ -34,6 +34,7 @@
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/row_group_segment_tree.hpp"
 #include "server/driver/distributed_executor.hpp"
+#include "server/driver/key_range_partition.hpp"
 #include "server/driver/plan_serializer.hpp"
 #include "server/driver/query_utils.hpp"
 #include "utils/sql_render_utils.hpp"
@@ -322,21 +323,22 @@ unique_ptr<Expression> ColumnRef(const LogicalType &type, idx_t table_index, idx
 	return make_uniq<BoundColumnRefExpression>(type, ColumnBinding(table_index, column_index));
 }
 
-string DescribeFragment(const string &head, const vector<reference<LogicalGet>> &scans, LogicalGet &partitioned) {
+string DescribeFragment(const string &head, const vector<reference<LogicalGet>> &scans, const vector<bool> &split) {
 	vector<string> tables;
 	tables.reserve(scans.size());
-	for (const auto &scan : scans) {
-		tables.emplace_back(GetTableName(*scan.get().GetTable()));
-		if (scans.size() > 1 && &scan.get() == &partitioned) {
+	for (idx_t idx = 0; idx < scans.size(); ++idx) {
+		tables.emplace_back(GetTableName(*scans[idx].get().GetTable()));
+		if (scans.size() > 1 && split[idx]) {
 			tables.back() = StringUtil::Format("%s (partitioned)", tables.back());
 		}
 	}
 	return StringUtil::Format("%s over %s", head, StringUtil::Join(tables, ", "));
 }
 
-// Replaces aggregate with a fragment whose tasks each run it on one row group range of its largest partitionable
-// table, reading any other tables in full. The driver merges the tasks' partial aggregates with a second aggregate,
-// and a projection above it finishes count and avg and takes over the original aggregate's bindings.
+// Replaces aggregate with a fragment whose tasks each run it on one part of its largest partitionable table, reading
+// any other tables in full. Tables equi-joined with it on a key they are all ordered on are split by key ranges
+// instead. The driver merges the tasks' partial aggregates with a second
+// aggregate, and a projection above it finishes count and avg and takes over the original aggregate's bindings.
 unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, Binder &binder,
                                                        WorkerFragmentState &state, LogicalAggregate &aggregate,
                                                        vector<ReplacementBinding> &replacements) {
@@ -414,6 +416,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	vector<idx_t> count_columns(kinds.size());
 	unique_ptr<LogicalOperator> worker_plan;
 	WorkerFragment fragment;
+	KeyRangePartition key_ranges;
 	try {
 		// Copy through the serializer, as the worker reads it, and leave the client's plan unchanged.
 		worker_plan = aggregate.Copy(context);
@@ -447,11 +450,24 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		worker_plan = std::move(root);
 		worker_plan->ResolveOperatorTypes();
 		fragment.plan = PlanSerializer::SerializeLogicalPlan(*worker_plan);
-		fragment.task_plans = SerializeTaskPlans(context, *worker_plan,
-		                                         *FindScan(*worker_plan, partitioned.table_index), state.NumWorkers());
+		if (scans.size() > 1 &&
+		    FindKeyRangePartition(*aggregate.children[0], partitioned, scans, costs, state.NumWorkers(), key_ranges)) {
+			fragment.task_plans = SerializeKeyRangeTaskPlans(context, *worker_plan, key_ranges);
+		} else {
+			fragment.task_plans = SerializeTaskPlans(
+			    context, *worker_plan, *FindScan(*worker_plan, partitioned.table_index), state.NumWorkers());
+		}
 	} catch (const std::exception &) {
 		// Some operators and table filters cannot be serialized.
 		return nullptr;
+	}
+	// Maps from the index of each scan to whether the tasks split it.
+	vector<bool> split(scans.size());
+	for (idx_t idx = 0; idx < scans.size(); ++idx) {
+		split[idx] = &scans[idx].get() == &partitioned;
+		for (const auto &scan : key_ranges.scans) {
+			split[idx] = split[idx] || scan.table_index == scans[idx].get().table_index;
+		}
 	}
 	// Repeating the other tables' scans in every task only pays off if a Join is split across workers.
 	if (scans.size() > 1) {
@@ -459,16 +475,20 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		if (num_tasks < 2) {
 			return nullptr;
 		}
-		// Every other input is replicated.
+		// Split inputs count as partitioned; the others are replicated.
+		JoinInputCost partitioned_cost {0, 0};
 		vector<JoinInputCost> replicated_costs;
 		for (idx_t idx = 0; idx < costs.size(); ++idx) {
-			if (idx != partitioned_idx) {
+			if (split[idx]) {
+				partitioned_cost.scan_bytes += costs[idx].scan_bytes;
+				partitioned_cost.build_bytes += costs[idx].build_bytes;
+			} else {
 				replicated_costs.push_back(costs[idx]);
 			}
 		}
 		// Workers do not report their memory, so assume each has the driver's.
 		if (join_partitioning == "auto" &&
-		    !ShouldPartitionJoin(costs[partitioned_idx], replicated_costs, num_tasks,
+		    !ShouldPartitionJoin(partitioned_cost, replicated_costs, num_tasks,
 		                         static_cast<double>(BufferManager::GetBufferManager(context).GetMaxMemory()))) {
 			return nullptr;
 		}
@@ -491,7 +511,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		head = StringUtil::Format("%s group by %s", head, StringUtil::Join(groups, ", "));
 	}
 	fragment.types = partial_types;
-	fragment.description = DescribeFragment(head, scans, partitioned);
+	fragment.description = DescribeFragment(head, scans, split);
 	fragment.merge_strategy = groups.empty() ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
 	auto get = CreateFragment(binder, std::move(fragment));
 
