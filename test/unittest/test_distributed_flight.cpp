@@ -3,6 +3,7 @@
 #include "arrow_utils.hpp"
 #include "distributed.pb.h"
 #include "flight_test_utils.hpp"
+#include "query_common.hpp"
 #include "server/driver/worker_manager.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
@@ -146,6 +147,71 @@ TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {
 	REQUIRE(response.has_error());
 	REQUIRE(response.error().exception_type() == distributed::REMOTE_EXCEPTION_PARSER);
 	REQUIRE_FALSE(response.error().message().empty());
+}
+
+TEST_CASE("DoPut appends typed values on the client connection", "[distributed_flight][doput]") {
+	GetTestServer();
+	DistributedFlightClient client(SERVER_URL, distributed::CLIENT_ROLE_READ_WRITE);
+	REQUIRE(client.Connect().ok());
+	ExecuteAutocommit(client, "CREATE SCHEMA put_schema");
+	ExecuteAutocommit(
+	    client,
+	    "CREATE TABLE put_schema.\"put \"\"target\" (id INTEGER PRIMARY KEY, value VARCHAR, amount DECIMAL(10,2))");
+	const string table_name = "put_schema.\"put \"\"target\"";
+
+	DuckDB db(nullptr);
+	Connection conn(db);
+	auto values = conn.Query("SELECT * FROM (VALUES (1, 'one', 1.25::DECIMAL(10,2)), "
+	                         "(2, 'O''Brien', NULL), (3, NULL, -2.50::DECIMAL(10,2))) v(id, value, amount)");
+	REQUIRE_FALSE(values->HasError());
+	values->client_properties.client_context = conn.context.get();
+	std::shared_ptr<arrow::Schema> schema;
+	vector<std::shared_ptr<arrow::RecordBatch>> batches;
+	REQUIRE(QueryResultToArrowBatches(*values, schema, batches).ok());
+	REQUIRE(batches.size() == 1);
+	distributed::DistributedResponse response;
+	REQUIRE(client.InsertData(table_name, batches[0], response).ok());
+	INFO(response.error_message());
+	REQUIRE(response.success());
+
+	vector<std::shared_ptr<arrow::RecordBatch>> results;
+	REQUIRE(client.ScanTable("SELECT * FROM " + table_name + " ORDER BY id", NO_QUERY_LIMIT, NO_QUERY_OFFSET, results)
+	            .ok());
+	REQUIRE(results.size() == 1);
+	DataChunk chunk;
+	ArrowRecordBatchToDataChunk(*conn.context, *results[0], chunk);
+	REQUIRE(chunk.size() == 3);
+	REQUIRE(chunk.GetValue(0, 0) == Value::INTEGER(1));
+	REQUIRE(chunk.GetValue(0, 1) == Value::INTEGER(2));
+	REQUIRE(chunk.GetValue(0, 2) == Value::INTEGER(3));
+	REQUIRE(chunk.GetValue(1, 0) == Value("one"));
+	REQUIRE(chunk.GetValue(1, 1) == Value("O'Brien"));
+	REQUIRE(chunk.GetValue(1, 2).IsNull());
+	REQUIRE(chunk.GetValue(2, 0).ToString() == "1.25");
+	REQUIRE(chunk.GetValue(2, 1).IsNull());
+	REQUIRE(chunk.GetValue(2, 2).ToString() == "-2.50");
+
+	REQUIRE(client.InsertData(table_name, batches[0]->Slice(0, 0), response).ok());
+	REQUIRE(response.success());
+	REQUIRE(client.InsertData(table_name, batches[0], response).ok());
+	REQUIRE_FALSE(response.success());
+	REQUIRE(response.has_error());
+	REQUIRE(response.error().exception_type() == distributed::REMOTE_EXCEPTION_CONSTRAINT);
+	REQUIRE(CountRows(client, table_name) == 3);
+
+	ExecuteAutocommit(client, "DELETE FROM " + table_name);
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_BEGIN, response).ok());
+	REQUIRE(response.success());
+	REQUIRE(client.InsertData(table_name, batches[0], response).ok());
+	REQUIRE(response.success());
+	REQUIRE(client.ManageTransaction(distributed::TRANSACTION_ACTION_ROLLBACK, response).ok());
+	REQUIRE(response.success());
+	REQUIRE(CountRows(client, table_name) == 0);
+
+	ExecuteAutocommit(client, "CREATE TABLE put_catalog_target AS SELECT * FROM " + table_name + " WHERE false");
+	REQUIRE(client.InsertData("object_db.put_catalog_target", batches[0], response).ok());
+	REQUIRE(response.success());
+	REQUIRE(CountRows(client, "put_catalog_target") == 3);
 }
 
 TEST_CASE("S3 storage identity excludes credentials", "[distributed_flight][object_storage]") {

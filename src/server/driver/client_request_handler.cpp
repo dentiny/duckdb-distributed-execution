@@ -3,9 +3,12 @@
 #include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/appender.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/prepared_statement.hpp"
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/statement/insert_statement.hpp"
 #include "query_common.hpp"
 #include "server/driver/query_history.hpp"
 #include "server/driver/query_utils.hpp"
@@ -278,38 +281,30 @@ arrow::Status ClientRequestHandler::InsertData(const string &table_name,
                                                const std::shared_ptr<arrow::RecordBatch> &batch,
                                                ClientRegistration &registration,
                                                distributed::DistributedResponse &resp) {
-	// TODO(hjiang): Current implementation is pretty insufficient, which directly executes insertion statement.
-	// Better to call native duckdb APIs for ingestion.
-
-	// Build INSERT statement.
-	std::string insert_sql = "INSERT INTO " + table_name + " VALUES ";
-
-	for (int64_t row = 0; row < batch->num_rows(); row++) {
-		if (row > 0) {
-			insert_sql += ", ";
+	try {
+		// Parse only the target name; batch values stay typed throughout ingestion.
+		Parser parser;
+		parser.ParseQuery(StringUtil::Format("INSERT INTO %s DEFAULT VALUES", table_name));
+		if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::INSERT_STATEMENT) {
+			throw InvalidInputException("DoPut requires a single table name");
 		}
-		insert_sql += "(";
-
-		for (int col = 0; col < batch->num_columns(); col++) {
-			if (col > 0) {
-				insert_sql += ", ";
-			}
-
-			auto array = batch->column(col);
-			// Simple value extraction - handle NULL and basic types
-			if (array->IsNull(row)) {
-				insert_sql += "NULL";
-			} else {
-				insert_sql += "'" + array->ToString() + "'";
-			}
+		auto &insert = parser.statements[0]->Cast<InsertStatement>();
+		// Like SQL binding, a two-part name can refer to catalog.table instead of schema.table.
+		if (insert.catalog.empty() && !insert.schema.empty() &&
+		    !registration.connection->TableInfo(insert.catalog, insert.schema, insert.table)) {
+			insert.catalog = std::move(insert.schema);
+			insert.schema = DEFAULT_SCHEMA;
 		}
-		insert_sql += ")";
-	}
-
-	auto result = registration.connection->Query(insert_sql);
-	if (result->HasError()) {
+		Appender appender(*registration.connection, insert.catalog, insert.schema, insert.table);
+		DataChunk chunk;
+		ArrowRecordBatchToDataChunk(*registration.connection->context, *batch, chunk, &appender.GetActiveTypes());
+		appender.AppendDataChunk(chunk);
+		appender.Close();
+	} catch (const std::exception &ex) {
 		resp.set_success(false);
-		resp.set_error_message(result->GetError());
+		auto error = ErrorData(ex);
+		resp.set_error_message(error.Message());
+		ToRemoteError(error, *resp.mutable_error());
 		return arrow::Status::OK();
 	}
 
