@@ -56,7 +56,8 @@ unique_ptr<GlobalTableFunctionState> RowGroupRangeScanInitGlobal(ClientContext &
 	auto &filter = *GetRowIdFilter(*input.filters, input.column_indexes);
 	auto &scan_state = result->state.scan_state;
 	auto can_match = [&](SegmentNode<RowGroup> &row_group) {
-		return RowGroup::CheckRowIdFilter(filter, row_group.GetRowStart(), row_group.GetRowEnd()) !=
+		// The statistics maximum is inclusive.
+		return RowGroup::CheckRowIdFilter(filter, row_group.GetRowStart(), row_group.GetRowEnd() - 1) !=
 		       FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	};
 	while (scan_state.current_row_group && !can_match(*scan_state.current_row_group)) {

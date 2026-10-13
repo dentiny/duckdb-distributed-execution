@@ -15,7 +15,8 @@ set(DUCKHERDER_UNITTEST_SOURCES
     test_distributed_flight_replay.cpp
     test_arrow_uuid_conversion.cpp
     test_duckherder_remote_endpoint.cpp
-    test_query_plan_analyzer.cpp)
+    test_query_plan_analyzer.cpp
+    test_row_group_range_scan.cpp)
 
 add_executable(unittest_duckherder ${DUCKHERDER_UNITTEST_SOURCES})
 
