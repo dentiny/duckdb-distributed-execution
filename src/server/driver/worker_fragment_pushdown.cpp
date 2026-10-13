@@ -338,6 +338,94 @@ string DescribeFragment(const string &head, const vector<reference<LogicalGet>> 
 	return StringUtil::Format("%s over %s", head, StringUtil::Join(tables, ", "));
 }
 
+// Wraps plan in a projection of its columns, which keeps the columns the driver expects if the worker's optimizer
+// changes them, e.g. by merging duplicate aggregates or swapping a Join's inputs.
+unique_ptr<LogicalOperator> ProjectColumns(Binder &binder, unique_ptr<LogicalOperator> plan) {
+	plan->ResolveOperatorTypes();
+	auto bindings = plan->GetColumnBindings();
+	vector<unique_ptr<Expression>> columns;
+	columns.reserve(bindings.size());
+	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
+		columns.emplace_back(ColumnRef(plan->types[idx], bindings[idx].table_index, bindings[idx].column_index));
+	}
+	auto root = make_uniq<LogicalProjection>(binder.GenerateTableIndex(), std::move(columns));
+	root->children.emplace_back(std::move(plan));
+	root->ResolveOperatorTypes();
+	return std::move(root);
+}
+
+// Sets fragment's plan and task plans to worker_plan, the workers' copy of a plan over input, and split to whether
+// the tasks split each of scans, the scans of input. A Join splits the input that reads the most, and inputs ordered
+// on a key they are equi-joined on with it; the others are replicated. Returns false if a Join should stay local.
+bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperator &input,
+               const vector<reference<LogicalGet>> &scans, LogicalOperator &worker_plan, WorkerFragment &fragment,
+               vector<bool> &split) {
+	Value setting;
+	context.TryGetCurrentSetting(JOIN_PARTITIONING_SETTING, setting);
+	const auto join_partitioning = setting.IsNull() ? string("auto") : StringUtil::Lower(setting.ToString());
+	if (scans.size() > 1 && join_partitioning == "never") {
+		return false;
+	}
+	// Partition the input that reads the most, so workers repeat the cheaper ones. Estimates are lost in serialization,
+	// so this is decided here, at the Join's inputs.
+	idx_t partitioned_idx = 0;
+	vector<JoinInputCost> costs;
+	if (scans.size() > 1) {
+		for (const auto &scan : scans) {
+			auto join_input = FindJoinInput(input, scan.get());
+			auto cost = join_input ? EstimateJoinInputCost(*join_input, scan.get()) : std::nullopt;
+			if (!cost) {
+				return false;
+			}
+			costs.emplace_back(*cost);
+			if (costs.back().scan_bytes > costs[partitioned_idx].scan_bytes) {
+				partitioned_idx = costs.size() - 1;
+			}
+		}
+	}
+	auto &partitioned = scans[partitioned_idx].get();
+	fragment.plan = PlanSerializer::SerializeLogicalPlan(worker_plan);
+	KeyRangePartition key_ranges;
+	if (scans.size() > 1 && FindKeyRangePartition(input, partitioned, scans, costs, state.NumWorkers(), key_ranges)) {
+		fragment.task_plans = SerializeKeyRangeTaskPlans(context, worker_plan, key_ranges);
+	} else {
+		fragment.task_plans = SerializeTaskPlans(context, worker_plan, *FindScan(worker_plan, partitioned.table_index),
+		                                         state.NumWorkers());
+	}
+	split.assign(scans.size(), false);
+	for (idx_t idx = 0; idx < scans.size(); ++idx) {
+		split[idx] = &scans[idx].get() == &partitioned;
+		for (const auto &scan : key_ranges.scans) {
+			split[idx] = split[idx] || scan.table_index == scans[idx].get().table_index;
+		}
+	}
+	// Repeating the other tables' scans in every task only pays off if a Join is split across workers.
+	if (scans.size() > 1) {
+		const auto num_tasks = fragment.task_plans.size();
+		if (num_tasks < 2) {
+			return false;
+		}
+		// Split inputs count as partitioned; the others are replicated. A replicated input joins the stream of the
+		// largest split input, so only that input's build is compared with it.
+		JoinInputCost partitioned_cost {0, costs[partitioned_idx].build_bytes};
+		vector<JoinInputCost> replicated_costs;
+		for (idx_t idx = 0; idx < costs.size(); ++idx) {
+			if (split[idx]) {
+				partitioned_cost.scan_bytes += costs[idx].scan_bytes;
+			} else {
+				replicated_costs.push_back(costs[idx]);
+			}
+		}
+		// Workers do not report their memory, so assume each has the driver's.
+		if (join_partitioning == "auto" &&
+		    !ShouldPartitionJoin(partitioned_cost, replicated_costs, num_tasks,
+		                         static_cast<double>(BufferManager::GetBufferManager(context).GetMaxMemory()))) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Replaces aggregate with a fragment whose tasks each run it on one part of its largest partitionable table, reading
 // any other tables in full. Tables equi-joined with it on a key they are all ordered on are split by key ranges
 // instead. The driver merges the tasks' partial aggregates with a second
@@ -358,31 +446,6 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	if (candidates.empty() || candidates.size() != scans.size()) {
 		return nullptr;
 	}
-	Value setting;
-	context.TryGetCurrentSetting(JOIN_PARTITIONING_SETTING, setting);
-	const auto join_partitioning = setting.IsNull() ? string("auto") : StringUtil::Lower(setting.ToString());
-	if (scans.size() > 1 && join_partitioning == "never") {
-		return nullptr;
-	}
-	// Partition the input that reads the most, so workers repeat the cheaper ones. Estimates are lost in serialization,
-	// so this is decided here, at the Join's inputs.
-	idx_t partitioned_idx = 0;
-	vector<JoinInputCost> costs;
-	if (scans.size() > 1) {
-		for (const auto &scan : scans) {
-			auto input = FindJoinInput(*aggregate.children[0], scan.get());
-			auto cost = input ? EstimateJoinInputCost(*input, scan.get()) : std::nullopt;
-			if (!cost) {
-				return nullptr;
-			}
-			costs.emplace_back(*cost);
-			if (costs.back().scan_bytes > costs[partitioned_idx].scan_bytes) {
-				partitioned_idx = costs.size() - 1;
-			}
-		}
-	}
-	auto &partitioned = scans[partitioned_idx].get();
-
 	// Workers return the groups and partial aggregates. avg becomes a sum and a count, appended after the others.
 	enum class MergeKind { SAME, COUNT, AVG };
 	vector<MergeKind> kinds;
@@ -419,7 +482,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	vector<idx_t> count_columns(kinds.size());
 	unique_ptr<LogicalOperator> worker_plan;
 	WorkerFragment fragment;
-	KeyRangePartition key_ranges;
+	vector<bool> split;
 	try {
 		// Copy through the serializer, as the worker reads it, and leave the client's plan unchanged.
 		worker_plan = aggregate.Copy(context);
@@ -439,64 +502,14 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 			count_columns[idx] = worker.expressions.size() - 1;
 			merge_names.emplace_back("sum");
 		}
-		// A projection keeps the columns the driver expects if the worker's optimizer merges duplicate aggregates, such
-		// as a sum added for avg.
-		worker.ResolveOperatorTypes();
-		auto bindings = worker.GetColumnBindings();
-		vector<unique_ptr<Expression>> columns;
-		columns.reserve(bindings.size());
-		for (idx_t idx = 0; idx < bindings.size(); ++idx) {
-			columns.emplace_back(ColumnRef(worker.types[idx], bindings[idx].table_index, bindings[idx].column_index));
-		}
-		auto root = make_uniq<LogicalProjection>(binder.GenerateTableIndex(), std::move(columns));
-		root->children.emplace_back(std::move(worker_plan));
-		worker_plan = std::move(root);
-		worker_plan->ResolveOperatorTypes();
-		fragment.plan = PlanSerializer::SerializeLogicalPlan(*worker_plan);
-		if (scans.size() > 1 &&
-		    FindKeyRangePartition(*aggregate.children[0], partitioned, scans, costs, state.NumWorkers(), key_ranges)) {
-			fragment.task_plans = SerializeKeyRangeTaskPlans(context, *worker_plan, key_ranges);
-		} else {
-			fragment.task_plans = SerializeTaskPlans(
-			    context, *worker_plan, *FindScan(*worker_plan, partitioned.table_index), state.NumWorkers());
+		worker_plan = ProjectColumns(binder, std::move(worker_plan));
+		if (!PlanTasks(context, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
+			return nullptr;
 		}
 	} catch (const std::exception &) {
 		// Some operators and table filters cannot be serialized.
 		return nullptr;
 	}
-	// Maps from the index of each scan to whether the tasks split it.
-	vector<bool> split(scans.size());
-	for (idx_t idx = 0; idx < scans.size(); ++idx) {
-		split[idx] = &scans[idx].get() == &partitioned;
-		for (const auto &scan : key_ranges.scans) {
-			split[idx] = split[idx] || scan.table_index == scans[idx].get().table_index;
-		}
-	}
-	// Repeating the other tables' scans in every task only pays off if a Join is split across workers.
-	if (scans.size() > 1) {
-		const auto num_tasks = fragment.task_plans.size();
-		if (num_tasks < 2) {
-			return nullptr;
-		}
-		// Split inputs count as partitioned; the others are replicated. A replicated input joins the stream of the
-		// largest split input, so only that input's build is compared with it.
-		JoinInputCost partitioned_cost {0, costs[partitioned_idx].build_bytes};
-		vector<JoinInputCost> replicated_costs;
-		for (idx_t idx = 0; idx < costs.size(); ++idx) {
-			if (split[idx]) {
-				partitioned_cost.scan_bytes += costs[idx].scan_bytes;
-			} else {
-				replicated_costs.push_back(costs[idx]);
-			}
-		}
-		// Workers do not report their memory, so assume each has the driver's.
-		if (join_partitioning == "auto" &&
-		    !ShouldPartitionJoin(partitioned_cost, replicated_costs, num_tasks,
-		                         static_cast<double>(BufferManager::GetBufferManager(context).GetMaxMemory()))) {
-			return nullptr;
-		}
-	}
-
 	const auto group_count = aggregate.groups.size();
 	const auto partial_types = worker_plan->types;
 	vector<string> exprs;
@@ -596,15 +609,56 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 	return std::move(result);
 }
 
-// Replaces the first aggregate or lone scan below root, through operators with one child, with a worker fragment.
+// Replaces join, an inner Join of tables, with a fragment whose tasks each return the Join's rows for their part of
+// its largest table. The driver concatenates the rows.
+unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state,
+                                                  LogicalComparisonJoin &join,
+                                                  vector<ReplacementBinding> &replacements) {
+	vector<reference<LogicalGet>> scans;
+	vector<reference<LogicalGet>> candidates;
+	if (!CollectScans(join, state, scans)) {
+		return nullptr;
+	}
+	CollectPartitionableScans(join, candidates);
+	if (candidates.empty() || candidates.size() != scans.size()) {
+		return nullptr;
+	}
+	WorkerFragment fragment;
+	vector<bool> split;
+	try {
+		auto worker_plan = ProjectColumns(binder, join.Copy(context));
+		if (!PlanTasks(context, state, join, scans, *worker_plan, fragment, split)) {
+			return nullptr;
+		}
+		fragment.types = worker_plan->types;
+	} catch (const std::exception &) {
+		return nullptr;
+	}
+	fragment.description = DescribeFragment("join", scans, split);
+	auto bindings = join.GetColumnBindings();
+	auto result = CreateFragment(binder, std::move(fragment));
+	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
+		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, idx));
+	}
+	return std::move(result);
+}
+
+// Replaces the first aggregate, inner Join or lone scan below root, through operators with one child, with a worker
+// fragment.
 void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state, unique_ptr<LogicalOperator> &root,
                  vector<ReplacementBinding> &replacements) {
 	reference<unique_ptr<LogicalOperator>> node = root;
+	// Below an aggregate that stays on the driver, a Join fragment would send all its rows there, which the cost model
+	// does not weigh.
+	bool below_aggregate = false;
 	while (true) {
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
 			fragment = TryCreateAggregateFragment(context, binder, state, op.Cast<LogicalAggregate>(), replacements);
+			below_aggregate = true;
+		} else if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN && !below_aggregate) {
+			fragment = TryCreateJoinFragment(context, binder, state, op.Cast<LogicalComparisonJoin>(), replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			fragment = TryCreateScanFragment(context, binder, state, op.Cast<LogicalGet>(), replacements);
 		}

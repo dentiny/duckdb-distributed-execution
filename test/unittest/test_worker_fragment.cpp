@@ -649,6 +649,34 @@ TEST_CASE("Worker fragments are cut inside materialized CTEs", "[worker_fragment
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Inner Joins without an aggregate become fragments that return their rows", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_join_rows");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, i % 11 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// The driver sorts the rows the tasks return, in the selected column order.
+		for (const auto &sql : {"SELECT d.multiplier, f.id FROM fact f JOIN dim d ON f.k = d.k WHERE f.amount = 3 "
+		                        "ORDER BY f.id",
+		                        "WITH pairs AS MATERIALIZED (SELECT f.amount, d.multiplier FROM fact f JOIN dim d "
+		                        "ON f.k = d.k) SELECT sum(amount * multiplier), count(*) FROM pairs"}) {
+			auto executions = fixture.RequireLocalResult(sql);
+			REQUIRE(executions.size() == 1);
+			REQUIRE(executions[0].num_tasks_generated == 2);
+			REQUIRE(executions[0].sql == "join over object_db.main.fact (partitioned), object_db.main.dim");
+		}
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Workers reject plans of another build and the driver runs them locally", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_build_mismatch");
 	{
