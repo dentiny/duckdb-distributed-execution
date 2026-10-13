@@ -10,11 +10,14 @@ message ExecutePartitionRequest {
   bytes partition_data = 2;
   uint64 partition_id = 3;
   uint64 total_partitions = 4;
+  // Optimized logical plan fragment, serialized with DuckDB's BinarySerializer.
   bytes serialized_plan = 5;
   repeated string column_names = 6;
   repeated bytes column_types = 7;
   // Database the task reads from; the worker attaches it read-only on first use.
   StorageConfig storage_config = 8;
+  // Driver build; a worker of another build cannot read the plan and rejects the task.
+  string build_id = 9;
 }
 
 // Partition data is returned over Arrow Flight.

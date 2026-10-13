@@ -15,6 +15,12 @@ public:
 
 	// Serialize a logical type to binary format.
 	static string SerializeLogicalType(const LogicalType &type);
+
+	// Deserialize a plan written by `SerializeLogicalPlan`, resolving its tables and functions in `context`.
+	static unique_ptr<LogicalOperator> DeserializeLogicalPlan(ClientContext &context, const string &data);
+
+	// Only the same DuckDB and Duckherder build can read a serialized plan.
+	static string BuildId();
 };
 
 } // namespace duckdb

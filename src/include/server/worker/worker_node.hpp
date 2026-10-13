@@ -40,11 +40,11 @@ private:
 	arrow::Status HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
 	                                     distributed::DistributedResponse &resp,
 	                                     std::shared_ptr<arrow::RecordBatchReader> &reader);
-	arrow::Status ExecuteSerializedPlan(const distributed::ExecutePartitionRequest &req,
-	                                    unique_ptr<QueryResult> &result);
-
 	// Execute a pipeline task on task_conn, which must outlive the result.
 	arrow::Status ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
+	                                  unique_ptr<QueryResult> &result);
+	// Run the task's serialized plan fragment on task_conn, which must outlive the result.
+	arrow::Status ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
 	                                  unique_ptr<QueryResult> &result);
 
 	// Return this worker's read-only instance for the configuration, attaching it on first use.
@@ -55,7 +55,6 @@ private:
 	string host;
 	int port;
 	unique_ptr<DuckDB> db;
-	unique_ptr<Connection> conn;
 
 	concurrency::mutex object_storage_mutex;
 	// Keyed by storage identity without credentials. Instances stay attached for the worker's lifetime.

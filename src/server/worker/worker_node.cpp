@@ -5,8 +5,6 @@
 #include "duckdb/common/arrow/arrow_util.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/serializer/binary_deserializer.hpp"
-#include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/enums/pending_execution_result.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/execution/executor.hpp"
@@ -18,6 +16,7 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "duckdb/storage/storage_info.hpp"
+#include "server/driver/plan_serializer.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/startup_sql.hpp"
 #include "server/validation.hpp"
@@ -39,7 +38,6 @@ WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p)
 	if (!startup_status.ok()) {
 		throw IOException(startup_status.ToString());
 	}
-	conn = make_uniq<Connection>(*db);
 }
 
 arrow::Status WorkerNode::Start() {
@@ -126,39 +124,37 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 // Execute a pipeline task.
 arrow::Status WorkerNode::ExecutePipelineTask(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
                                               unique_ptr<QueryResult> &result) {
-	arrow::Status exec_status = arrow::Status::OK();
-
-	// TODO(hjiang): Plan-based execution temporarily disabled
-	//
-	// Issue: We're currently serializing LOGICAL plans (which have already been optimized
-	// on the coordinator). When workers deserialize and try to execute them, DuckDB
-	// runs the optimizer again, which fails on already-bound expressions.
-	//
-	// Solution (for future steps): Serialize and deserialize PHYSICAL plans instead,
-	// which can be executed directly without re-optimization.
-	//
-	// For now, we rely on SQL-based execution which works perfectly.
-
-	// Disabled plan-based execution:
-	// if (!req.serialized_plan().empty()) {
-	//     exec_status = ExecuteSerializedPlan(req, result);
-	//     ...
-	// }
-
-	// Execute task using SQL-based execution.
-	if (!result && !req.sql().empty()) {
-		// Stream the result so it is converted to Arrow as it is produced instead of being materialized first.
-		result = task_conn.SendQuery(req.sql());
+	if (!req.serialized_plan().empty()) {
+		return ExecutePlanFragment(req, task_conn, result);
 	}
-
-	// Validate result.
-	if (!result) {
-		return arrow::Status::Invalid("Worker produced no query result for task");
+	if (req.sql().empty()) {
+		return arrow::Status::Invalid("Task has neither a plan fragment nor SQL");
 	}
+	// Stream the result so it is converted to Arrow as it is produced instead of being materialized first.
+	result = task_conn.SendQuery(req.sql());
 	if (result->HasError()) {
 		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
 	}
+	return arrow::Status::OK();
+}
 
+arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
+                                              unique_ptr<QueryResult> &result) {
+	const auto build_id = PlanSerializer::BuildId();
+	if (req.build_id() != build_id) {
+		return arrow::Status::Invalid("Plan fragment from build ", req.build_id(), " cannot run on worker ", worker_id,
+		                              " of build ", build_id);
+	}
+	unique_ptr<LogicalOperator> plan;
+	try {
+		plan = PlanSerializer::DeserializeLogicalPlan(*task_conn.context, req.serialized_plan());
+	} catch (const std::exception &ex) {
+		return arrow::Status::Invalid("Plan fragment deserialization failed: ", ErrorData(ex).Message());
+	}
+	result = task_conn.SendQuery(make_uniq<LogicalPlanStatement>(std::move(plan)));
+	if (result->HasError()) {
+		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
+	}
 	return arrow::Status::OK();
 }
 
@@ -197,88 +193,6 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	exec_resp->set_partition_id(req.partition_id());
 	exec_resp->set_row_count(row_count);
 
-	return arrow::Status::OK();
-}
-
-arrow::Status WorkerNode::ExecuteSerializedPlan(const distributed::ExecutePartitionRequest &req,
-                                                unique_ptr<QueryResult> &result) {
-	if (req.column_names_size() != req.column_types_size()) {
-		return arrow::Status::Invalid("Mismatched column metadata in ExecutePartitionRequest");
-	}
-
-	// Extract column metadata
-	vector<string> names;
-	names.reserve(req.column_names_size());
-	for (const auto &name : req.column_names()) {
-		names.emplace_back(name);
-	}
-
-	vector<LogicalType> types;
-	types.reserve(req.column_types_size());
-	for (const auto &type_bytes : req.column_types()) {
-		MemoryStream type_stream(reinterpret_cast<data_ptr_t>(const_cast<char *>(type_bytes.data())),
-		                         type_bytes.size());
-		BinaryDeserializer type_deserializer(type_stream);
-		type_deserializer.Begin();
-		auto type = LogicalType::Deserialize(type_deserializer);
-		type_deserializer.End();
-		types.emplace_back(std::move(type));
-	}
-
-	// Begin a transaction before deserializing the plan
-	// Note: Deserialization requires an active transaction to resolve table bindings
-	conn->BeginTransaction();
-
-	// Deserialize the logical plan
-	// This plan contains the partition predicate embedded in it by the coordinator
-	MemoryStream plan_stream(reinterpret_cast<data_ptr_t>(const_cast<char *>(req.serialized_plan().data())),
-	                         req.serialized_plan().size());
-	bound_parameter_map_t parameters;
-	unique_ptr<LogicalOperator> logical_plan =
-	    BinaryDeserializer::Deserialize<LogicalOperator>(plan_stream, *conn->context, parameters);
-	if (!logical_plan) {
-		conn->Rollback();
-		return arrow::Status::Invalid("Deserialized plan was null");
-	}
-
-	// Execute the plan using DuckDB's query execution infrastructure
-	//
-	// Execution flow (mapping to parallel execution model):
-	// 1. LogicalPlanStatement is converted to a physical plan
-	// 2. Physical plan is executed via Executor/Pipeline infrastructure
-	// 3. Each physical operator has Source/Sink semantics:
-	//    - Source operators: Produce data chunks (e.g., TableScan with partition filter)
-	//    - Sink operators: Consume data chunks (e.g., ResultCollector)
-	// 4. For parallel operators:
-	//    - GetLocalSinkState() creates per-thread (now per-worker) state
-	//    - Sink() processes data chunks into LocalSinkState
-	//    - Combine() would merge LocalSinkState into GlobalSinkState (on coordinator)
-	//    - Finalize() produces final result (on coordinator)
-	//
-	// In distributed mode:
-	// - This worker node acts as ONE thread/execution unit
-	// - We execute our partition and return LocalState output
-	// - Coordinator acts as the GlobalState aggregator
-	auto statement = make_uniq<LogicalPlanStatement>(std::move(logical_plan));
-	auto materialized = conn->Query(std::move(statement));
-
-	// Commit the transaction
-	conn->Commit();
-
-	if (materialized->HasError()) {
-		return arrow::Status::Invalid(materialized->GetError());
-	}
-
-	// Validate and fix column metadata
-	if (materialized->types.size() != types.size()) {
-		return arrow::Status::Invalid("Worker result column count mismatch with expected types");
-	}
-
-	materialized->types = std::move(types);
-	if (materialized->names.size() == names.size()) {
-		materialized->names = std::move(names);
-	}
-	result = std::move(materialized);
 	return arrow::Status::OK();
 }
 
