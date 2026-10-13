@@ -89,9 +89,9 @@ optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get, const Worke
 }
 
 string GetTableName(TableCatalogEntry &table) {
-	return KeywordHelper::WriteOptionallyQuoted(table.catalog.GetName()) + "." +
-	       KeywordHelper::WriteOptionallyQuoted(table.schema.name) + "." +
-	       KeywordHelper::WriteOptionallyQuoted(table.name);
+	return StringUtil::Format("%s.%s.%s", KeywordHelper::WriteOptionallyQuoted(table.catalog.GetName()),
+	                          KeywordHelper::WriteOptionallyQuoted(table.schema.name),
+	                          KeywordHelper::WriteOptionallyQuoted(table.name));
 }
 
 unique_ptr<LogicalGet> CreateFragment(Binder &binder, string sql, vector<LogicalType> types, vector<string> names,
