@@ -293,6 +293,10 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		if (partial.IsDistinct() || partial.filter || partial.order_bys) {
 			return nullptr;
 		}
+		// The top-N variants max(x, n) and min(x, n) return lists that the same function cannot merge.
+		if (partial.children.size() != (name == "count_star" ? 0 : 1)) {
+			return nullptr;
+		}
 		if (name == "sum" || name == "sum_no_overflow" || name == "min" || name == "max") {
 			kinds.emplace_back(MergeKind::SAME);
 			merge_names.emplace_back(name == "sum_no_overflow" ? "sum" : name);

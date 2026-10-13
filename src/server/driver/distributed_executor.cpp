@@ -36,6 +36,8 @@ bool RunTasks(WorkerManager &worker_manager, ClientContext &context, const vecto
 	auto &db_instance = *context.db;
 	// Each task runs on its own worker. Tasks planned for workers that have since left run locally instead.
 	if (requests.size() > workers.size()) {
+		DUCKDB_LOG_DEBUG(*context.db, StringUtil::Format("%llu tasks but %llu workers, falling back to local execution",
+		                                                 requests.size(), workers.size()));
 		return false;
 	}
 	task_batches.assign(requests.size(), {});
@@ -281,8 +283,12 @@ idx_t DistributedExecutor::NumWorkers() {
 bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow::RecordBatchVector> &task_batches) {
 	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
-	if (workers.empty() || storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET) {
+	if (workers.empty()) {
 		DUCKDB_LOG_DEBUG(db_instance, "No available workers, falling back to local execution");
+		return false;
+	}
+	if (storage_config.storage_case() == distributed::StorageConfig::STORAGE_NOT_SET) {
+		DUCKDB_LOG_DEBUG(db_instance, "No storage configured for workers, falling back to local execution");
 		return false;
 	}
 	vector<distributed::ExecutePartitionRequest> requests(plans.size());

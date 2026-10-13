@@ -209,8 +209,10 @@ TEST_CASE("Driver merges partial aggregates exactly", "[worker_fragment]") {
 			REQUIRE(executions[0].num_tasks_generated == 3);
 			REQUIRE(StringUtil::StartsWith(executions[0].sql, "aggregate "));
 		}
-		// Aggregates without a merge, such as avg, are computed on the driver from a scan fragment.
-		for (const auto &sql : {"SELECT avg(f) FROM agg", "SELECT g, median(n) FROM agg GROUP BY g ORDER BY g"}) {
+		// Aggregates without a merge, such as avg or the top-N max(x, n), are computed on the driver from a scan
+		// fragment.
+		for (const auto &sql : {"SELECT avg(f) FROM agg", "SELECT g, median(n) FROM agg GROUP BY g ORDER BY g",
+		                        "SELECT max(n, 3), min(s, 2) FROM agg"}) {
 			auto executions = fixture.RequireLocalResult(sql);
 			REQUIRE(executions.size() == 1);
 			INFO(executions[0].sql);
