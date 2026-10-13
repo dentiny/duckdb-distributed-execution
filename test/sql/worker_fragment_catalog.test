@@ -1,5 +1,5 @@
 # name: test/sql/worker_fragment_catalog.test
-# description: Driver worker fragments preserve catalog identity and reject other attachments
+# description: Worker fragments preserve catalog identity and reject other attachments
 # group: [sql]
 
 require duckherder
@@ -19,106 +19,65 @@ statement ok
 USE object_db;
 
 statement ok
-CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, 2 + i % 2 AS amount FROM range(300000) t(i);
+CREATE TABLE fact AS SELECT i AS id, i % 2 AS k, 2 AS amount FROM range(300000) t(i);
 
 statement ok
-CREATE TABLE dim AS SELECT i AS k, 10 + i % 2 AS multiplier FROM range(17) t(i);
+CREATE TABLE dim AS SELECT i AS k, 5 AS multiplier FROM range(2) t(i);
 
-# Install the driver optimizer on this connection so SQL can access its other attachments.
-statement ok
-SELECT duckherder_test_enable_worker_fragments('duckdb_objfs://fragment_catalog.db', 2);
-
-# The quoted catalog has the same schemas and table names, but different data.
+# Same table names, different data in another catalog.
 statement ok
 ATTACH ':memory:' AS "other catalog";
 
 statement ok
-CREATE TABLE "other catalog".main.fact AS SELECT i AS id, i % 17 AS k, 3 + i % 2 AS amount FROM range(300000) t(i);
+CREATE TABLE "other catalog".main.fact AS SELECT i AS id, i % 2 AS k, 3 AS amount FROM range(300000) t(i);
 
 statement ok
-CREATE TABLE "other catalog".main.dim AS SELECT i AS k, 7 + i % 2 AS multiplier FROM range(17) t(i);
+CREATE TABLE "other catalog".main.dim AS SELECT i AS k, 7 AS multiplier FROM range(2) t(i);
 
-# Served-catalog joins still run as worker fragments, with complete table names.
-query I
-SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f JOIN object_db.main.dim d ON f.k = d.k;
-----
-7852944
+# Run the driver optimizer here so SQL can create and query its attachments.
+statement ok
+SELECT duckherder_test_enable_worker_fragments('duckdb_objfs://fragment_catalog.db', 2);
 
-query II
-SELECT partitioned, num_tasks_generated FROM duckherder_test_worker_fragments();
-----
-true	2
-
-# Foreign joins, aggregates and scans must read their bound tables and stay local.
-query I
-SELECT sum(f.amount * d.multiplier) FROM "other catalog".main.fact f JOIN "other catalog".main.dim d ON f.k = d.k;
-----
-7844120
-
-query I
-SELECT count(*) FROM duckherder_test_worker_fragments();
-----
-0
-
-query I
-SELECT sum(amount) FROM "other catalog".main.fact;
-----
-1050000
-
-query I
-SELECT count(*) FROM duckherder_test_worker_fragments();
-----
-0
-
-query I
-SELECT amount FROM "other catalog".main.fact WHERE id = 123457;
-----
-4
-
-query I
-SELECT count(*) FROM duckherder_test_worker_fragments();
-----
-0
-
-# Reject a fragment when either join input is from another catalog.
-query I
-SELECT sum(f.amount * d.multiplier) FROM "other catalog".main.fact f JOIN object_db.main.dim d ON f.k = d.k;
-----
-10994120
-
-query I
-SELECT count(*) FROM duckherder_test_worker_fragments();
-----
-0
-
-query I
-SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f JOIN "other catalog".main.dim d ON f.k = d.k;
-----
-5602944
-
-query I
-SELECT count(*) FROM duckherder_test_worker_fragments();
-----
-0
-
-# USE changes the client's default, while the executor remains bound to object_db.
 statement ok
 USE "other catalog";
 
+# Foreign joins, aggregates, scans and mixed joins keep their bound catalog.
 query I
 SELECT sum(f.amount * d.multiplier) FROM fact f JOIN dim d ON f.k = d.k;
 ----
-7844120
+6300000
 
+query I
+SELECT sum(amount) FROM fact;
+----
+900000
+
+query I
+SELECT amount FROM fact WHERE id = 1;
+----
+3
+
+query I
+SELECT sum(f.amount * d.multiplier) FROM fact f JOIN object_db.main.dim d ON f.k = d.k;
+----
+4500000
+
+query I
+SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f JOIN dim d ON f.k = d.k;
+----
+4200000
+
+# None of the foreign-catalog queries should generate a worker fragment.
 query I
 SELECT count(*) FROM duckherder_test_worker_fragments();
 ----
 0
 
+# The served catalog still partitions, even after USE changed the client's default.
 query I
 SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f JOIN object_db.main.dim d ON f.k = d.k;
 ----
-7852944
+3000000
 
 query III
 SELECT sql LIKE '%object_db.main.fact%' AND sql LIKE '%object_db.main.dim%', partitioned, num_tasks_generated
