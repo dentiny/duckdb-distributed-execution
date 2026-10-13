@@ -64,10 +64,16 @@ unique_ptr<GlobalTableFunctionState> RowGroupRangeScanInitGlobal(ClientContext &
 		    scan_state.GetNextRowGroup(*scan_state.row_groups, *scan_state.current_row_group);
 	}
 	idx_t max_row = 0;
-	for (auto row_group = scan_state.current_row_group; row_group && can_match(*row_group);
+	idx_t row_group_count = 0;
+	// OR and IN filters can match again after a gap. Keep the full span through the last matching group.
+	for (auto row_group = scan_state.current_row_group; row_group;
 	     row_group = scan_state.GetNextRowGroup(*scan_state.row_groups, *row_group)) {
-		max_row = row_group->GetRowEnd();
-		++result->max_threads;
+		++row_group_count;
+		if (can_match(*row_group)) {
+			max_row = row_group->GetRowEnd();
+			// The scan also visits non-matching groups within this span.
+			result->max_threads = row_group_count;
+		}
 	}
 	scan_state.max_row = MinValue(scan_state.max_row, max_row);
 

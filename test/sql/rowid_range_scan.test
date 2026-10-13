@@ -1,0 +1,80 @@
+# name: test/sql/rowid_range_scan.test
+# description: Worker rowid range scans preserve matches in non-contiguous row groups
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8872, 2);
+
+statement ok
+ATTACH 'localhost:8872/rowid_range.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+# Five row groups give the first worker three groups. Rows 5 and 245765 are
+# in its first and third groups, with a non-matching group between them.
+statement ok
+CREATE TABLE dh.rowid_range_fact AS SELECT i AS id, i % 17 AS k FROM range(600000) t(i);
+
+statement ok
+CREATE TABLE dh.rowid_range_dim AS SELECT i AS k FROM range(17) t(i);
+
+# The writable connection executes on the driver and establishes the expected result.
+query II
+SELECT count(*), sum(f.id) FROM dh.rowid_range_fact f JOIN dh.rowid_range_dim d ON f.k = d.k
+WHERE f.rowid = 5 OR f.rowid = 245765;
+----
+2	245770
+
+statement ok
+DETACH dh;
+
+# Only read-only clients of shared storage send fragments to workers.
+statement ok
+ATTACH 'localhost:8872/rowid_range.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+# A contiguous range remains a valid worker scan.
+query II
+SELECT count(*), sum(f.id) FROM dh.rowid_range_fact f JOIN dh.rowid_range_dim d ON f.k = d.k
+WHERE f.rowid >= 0 AND f.rowid < 10;
+----
+10	45
+
+# Require worker execution so a local fallback cannot make this regression pass.
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats()
+              WHERE sql LIKE '%rowid_range_fact%' AND sql LIKE '%rowid%'
+                AND execution_mode = 'ROW_GROUP_PARTITION' AND num_tasks_generated = 2);
+----
+true
+
+# A join aggregate keeps the OR predicate in the worker fragment. A scan-only
+# fragment can leave the predicate on the driver and miss this regression.
+# Finding a non-matching row group must not truncate later matching groups.
+query II
+SELECT count(*), sum(f.id) FROM dh.rowid_range_fact f JOIN dh.rowid_range_dim d ON f.k = d.k
+WHERE f.rowid = 5 OR f.rowid = 245765;
+----
+2	245770
+
+# A sparse IN list has the same non-contiguous row-group matches.
+query II
+SELECT count(*), sum(f.id) FROM dh.rowid_range_fact f JOIN dh.rowid_range_dim d ON f.k = d.k
+WHERE f.rowid IN (5, 245765);
+----
+2	245770
+
+# Both sparse predicates must reach workers, rather than being evaluated locally.
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE '%rowid_range_fact%' AND sql LIKE '%245765%'
+  AND execution_mode = 'ROW_GROUP_PARTITION' AND num_tasks_generated = 2;
+----
+2
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();
