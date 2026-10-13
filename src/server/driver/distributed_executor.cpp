@@ -1,8 +1,6 @@
 #include "server/driver/distributed_executor.hpp"
 
 #include "arrow_utils.hpp"
-#include "duckdb/common/serializer/binary_serializer.hpp"
-#include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
@@ -159,11 +157,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		partial_names = partial_prepared->GetNames();
 		partial_types = partial_prepared->GetTypes();
 	}
-	vector<string> serialized_types;
-	serialized_types.reserve(partial_types.size());
-	for (const auto &type : partial_types) {
-		serialized_types.emplace_back(PlanSerializer::SerializeLogicalType(type));
-	}
 
 	// Phase 4: Distribute tasks to workers。
 	vector<distributed::ExecutePartitionRequest> requests(tasks.size());
@@ -174,12 +167,6 @@ DistributedExecutionResult DistributedExecutor::ExecuteDistributed(const string 
 		req.set_partition_id(task.task_id);
 		req.set_total_partitions(task.total_tasks);
 		*req.mutable_storage_config() = storage_config;
-		for (const auto &name : partial_names) {
-			req.add_column_names(name);
-		}
-		for (const auto &type_bytes : serialized_types) {
-			req.add_column_types(type_bytes);
-		}
 	}
 
 	vector<arrow::RecordBatchVector> task_batches(tasks.size());

@@ -10,9 +10,6 @@ message ExecutePartitionRequest {
   bytes partition_data = 2;
   uint64 partition_id = 3;
   uint64 total_partitions = 4;
-  bytes serialized_plan = 5;
-  repeated string column_names = 6;
-  repeated bytes column_types = 7;
   // Database the task reads from; the worker attaches it read-only on first use.
   StorageConfig storage_config = 8;
 }

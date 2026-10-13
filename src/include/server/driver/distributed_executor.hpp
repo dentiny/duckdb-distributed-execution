@@ -3,7 +3,6 @@
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "server/driver/plan_serializer.hpp"
 #include "server/driver/query_plan_analyzer.hpp"
 #include "server/driver/result_merger.hpp"
 #include "server/driver/task_partitioner.hpp"
