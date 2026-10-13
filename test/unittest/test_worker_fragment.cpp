@@ -182,6 +182,248 @@ TEST_CASE("Task plans read contiguous whole row groups up to the end of the tabl
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_join_fragment");
+	{
+		FragmentFixture fixture(root);
+		auto &client = fixture.client;
+		auto &executor_connection = fixture.executor_connection;
+		auto &state = fixture.state;
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, i % 11 AS amount, "
+		                          "CASE WHEN i % 13 = 0 THEN NULL ELSE i % 4 END AS g, "
+		                          "CAST(i % 101 AS DECIMAL(15, 2)) AS price FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+		REQUIRE_FALSE(executor_connection->Query("CREATE SCHEMA alt")->HasError());
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE alt.fact AS SELECT i AS id, i % 17 AS k, 2 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE alt.dim AS SELECT i AS k, 10 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+
+		// Without workers nothing is cut.
+		const string sql = "SELECT sum(f.amount * d.multiplier) AS revenue FROM fact f "
+		                   "JOIN dim d ON f.k = d.k WHERE (d.k = 2 AND f.amount < 5) "
+		                   "OR (d.k = 3 AND f.amount >= 5)";
+		REQUIRE(fixture.RequireLocalResult(sql).empty());
+
+		// Each worker optimizes its plan again, deriving d.k IN (2, 3) from the OR for dim before the Join.
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+		auto executions = fixture.RequireLocalResult(sql);
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(executions[0].merge_strategy == QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE);
+		REQUIRE(executions[0].num_tasks_generated == 2);
+		REQUIRE(executions[0].sql ==
+		        "aggregate sum((amount * multiplier)) over object_db.main.fact (partitioned), object_db.main.dim");
+
+		// Only the aggregate becomes a fragment; the operators above it run on the driver, so names, types and order
+		// match local execution.
+		for (const auto &shape_sql :
+		     {// GROUP BY a column, CASE inside the aggregates, IN, ORDER BY.
+		      "SELECT f.g, sum(CASE WHEN d.k IN (1, 2) OR d.k IS NULL THEN 1 ELSE 0 END) AS high, "
+		      "sum(CASE WHEN NOT (d.k < 5) THEN 1 ELSE 0 END) AS low, count(*) AS n FROM fact f, dim d "
+		      "WHERE f.k = d.k AND f.amount BETWEEN 2 AND 8 GROUP BY f.g ORDER BY f.g",
+		      // Arithmetic over aggregates.
+		      "SELECT 100.00 * sum(CASE WHEN d.k % 2 = 0 THEN f.price * d.multiplier ELSE 0 END) / "
+		      "sum(f.price * d.multiplier) AS promo FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT avg(f.price) AS mean, avg(f.amount), d.multiplier % 3 AS bucket FROM fact f JOIN dim d "
+		      "ON f.k = d.k GROUP BY d.multiplier % 3 HAVING count(*) > 0 ORDER BY sum(f.amount) DESC LIMIT 2",
+		      // Empty input: an ungrouped count is 0 and a sum NULL.
+		      "SELECT count(*), sum(f.price), count(*) * 2 FROM fact f JOIN dim d ON f.k = d.k "
+		      "WHERE f.id::VARCHAR = 'x'"}) {
+			auto shape_executions = fixture.RequireLocalResult(shape_sql);
+			REQUIRE(shape_executions.size() == 1);
+			REQUIRE(shape_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+			REQUIRE(shape_executions[0].num_tasks_generated == 2);
+		}
+		// Shapes whose partial results cannot be merged, or that are not inner Joins, run locally.
+		for (const auto &fallback_sql :
+		     {"SELECT count(DISTINCT f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT median(f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT sum(f.amount) FILTER (WHERE d.k > 3) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL",
+		      "SELECT sum(f.amount) FROM fact f LEFT JOIN dim d ON f.k = d.k AND d.k < 3"}) {
+			REQUIRE(fixture.RequireLocalResult(fallback_sql).empty());
+		}
+		// Macros are expanded before optimization, so a macro shadowing sum is distributed as what it computes.
+		REQUIRE_FALSE(client->Query("CREATE TEMP MACRO sum(x) AS max(x)")->HasError());
+		auto macro_result = client->Query("SELECT sum(f.amount), count(*) FROM fact f JOIN dim d ON f.k = d.k");
+		REQUIRE_FALSE(macro_result->HasError());
+		REQUIRE(macro_result->GetValue(0, 0) == Value::BIGINT(10));
+		REQUIRE(macro_result->GetValue(1, 0) == Value::BIGINT(300000));
+		REQUIRE(state->TakeExecutions().size() == 1);
+		REQUIRE_FALSE(client->Query("DROP MACRO temp.sum")->HasError());
+
+		// One row group on each side yields one task, so there is no Join work to spread across workers.
+		REQUIRE_FALSE(executor_connection->Query("CREATE TABLE dim2 AS SELECT * FROM dim")->HasError());
+		REQUIRE(fixture.RequireLocalResult("SELECT sum(d.multiplier) FROM dim d JOIN dim2 e ON d.k = e.k").empty());
+
+		REQUIRE_FALSE(client->Query("CREATE TEMP TABLE temp_dim AS SELECT 2 AS k, 3 AS multiplier")->HasError());
+		auto temp_result =
+		    client->Query("SELECT sum(f.amount * d.multiplier) FROM fact f JOIN temp_dim d ON f.k = d.k");
+		REQUIRE_FALSE(temp_result->HasError());
+		REQUIRE(state->TakeExecutions().empty());
+
+		auto scan_executions = fixture.RequireLocalResult("SELECT sum(amount) FROM fact");
+		REQUIRE(scan_executions.size() == 1);
+		REQUIRE(scan_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+
+		// Single-table fragments, including expressions that could not be rendered as SQL, run on workers. NULL inputs
+		// must keep local semantics.
+		for (const auto &single_sql :
+		     {"SELECT sum(CASE WHEN amount > 5 THEN price ELSE 0 END), count(*) FROM fact",
+		      "SELECT sum(CASE WHEN k IN (1, 2, 3) THEN 1 ELSE 0 END), "
+		      "count(CASE WHEN amount BETWEEN 2 AND 4 THEN 1 END), "
+		      "sum(CASE WHEN g IS NULL THEN amount END), max(amount >= 7 AND NOT (k < 3)) FROM fact",
+		      "SELECT CASE WHEN g IS NULL THEN 'none' WHEN g < 2 THEN 'low' ELSE 'high' END AS bucket, sum(amount) "
+		      "FROM fact GROUP BY bucket ORDER BY bucket",
+		      "SELECT count(*), sum(amount) FROM fact WHERE id::VARCHAR = '123457'",
+		      "SELECT count(*), sum(amount) FROM fact WHERE id::VARCHAR = 'x'",
+		      "SELECT id, amount FROM fact WHERE id::VARCHAR = '123457'",
+		      // NULL semantics: NOT IN with a NULL in the list, CASE without ELSE, BETWEEN with a NULL bound, and
+		      // comparisons with NULL columns or constants.
+		      "SELECT count(CASE WHEN g NOT IN (1, NULL) THEN 1 END), count(CASE WHEN g NOT IN (1, 2) THEN 1 END), "
+		      "count(CASE WHEN g IN (1, NULL) THEN 1 END), sum(CASE WHEN g = 1 THEN amount END) FROM fact",
+		      "SELECT count(CASE WHEN g BETWEEN NULL AND 3 THEN 1 END), "
+		      "count(CASE WHEN g BETWEEN 1 AND NULL THEN 1 END), "
+		      "count(CASE WHEN g = NULL THEN 1 END), count(CASE WHEN g IS DISTINCT FROM 1 THEN 1 END), "
+		      "count(CASE WHEN NOT (g > 1) THEN 1 END), count(CASE WHEN g IS NOT NULL THEN 1 END) FROM fact",
+		      "SELECT g, count(*), sum(CASE WHEN g <> 2 OR g IS NULL THEN amount END) FROM fact "
+		      "WHERE g IS NULL OR g <> 2 GROUP BY g ORDER BY g",
+		      "SELECT sum(COALESCE(g, 0)) FROM fact", "SELECT max([amount, k]) FROM fact"}) {
+			auto single_executions = fixture.RequireLocalResult(single_sql);
+			REQUIRE(single_executions.size() == 1);
+			REQUIRE(single_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		}
+		// The executor's connection cannot see the client's temporary tables, so they are read locally.
+		REQUIRE_FALSE(client->Query("CREATE TEMP TABLE temp_fact AS SELECT * FROM fact")->HasError());
+		// The CREATE's own scan of fact may run on workers.
+		state->TakeExecutions();
+		auto temp_scan_result = client->Query("SELECT sum(amount), count(*) FROM temp_fact");
+		REQUIRE_FALSE(temp_scan_result->HasError());
+		REQUIRE(temp_scan_result->GetValue(1, 0) == Value::BIGINT(300000));
+		REQUIRE(state->TakeExecutions().empty());
+
+		REQUIRE_FALSE(client->Query("BEGIN TRANSACTION")->HasError());
+		REQUIRE_FALSE(client->Query(sql)->HasError());
+		REQUIRE(state->TakeExecutions().empty());
+		REQUIRE_FALSE(client->Query("ROLLBACK")->HasError());
+
+		// Plans resolve tables by the catalog and schema the client bound them in.
+		REQUIRE_FALSE(client->Query("USE alt")->HasError());
+		const string schema_sql = "SELECT sum(f.amount * d.multiplier) AS revenue FROM fact f JOIN dim d ON f.k = d.k";
+		auto schema_expected = executor_connection->Query(
+		    "SELECT sum(f.amount * d.multiplier) AS revenue FROM alt.fact f JOIN alt.dim d ON f.k = d.k");
+		auto default_result = executor_connection->Query(schema_sql);
+		REQUIRE_FALSE(schema_expected->HasError());
+		REQUIRE_FALSE(default_result->HasError());
+		REQUIRE(schema_expected->GetValue(0, 0) != default_result->GetValue(0, 0));
+		auto schema_actual = client->Query(schema_sql);
+		REQUIRE_FALSE(schema_actual->HasError());
+		REQUIRE(schema_actual->Equals(*schema_expected));
+		auto schema_executions = state->TakeExecutions();
+		REQUIRE(schema_executions.size() == 1);
+		REQUIRE(schema_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(schema_executions[0].num_tasks_generated == 2);
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Join fragments only replicate inputs that are cheap enough", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_join_cost");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		// wide has more rows than fact, but few of them pass an equality filter on g.
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 1000 AS k, i % 11 AS amount, "
+		                          "i % 7 AS c FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE wide AS SELECT i AS id, i % 1000 AS k, i % 1000 AS g "
+		                          "FROM range(600000) t(i)")
+		                  ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// The filtered wide is the cheaper input, so fact is partitioned although it has fewer rows.
+		auto executions = fixture.RequireLocalResult(
+		    "SELECT sum(f.amount * f.c), count(*) FROM fact f JOIN wide w ON f.k = w.k WHERE w.g = 3");
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(executions[0].num_tasks_generated == 2);
+		INFO(executions[0].sql);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.fact (partitioned)"));
+
+		// Unfiltered, every worker would read and build all of the other input, which costs more than it saves.
+		executions = fixture.RequireLocalResult("SELECT sum(f.amount), count(*) FROM fact f JOIN wide w ON f.k = w.k");
+		REQUIRE(executions.empty());
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Worker fragments only read tables of the served catalog", "[worker_fragment][catalog]") {
+	auto root = CreateRoot("duckherder_catalog_fragment");
+	{
+		FragmentFixture fixture(root);
+		auto &client = fixture.client;
+		auto &state = fixture.state;
+		REQUIRE_FALSE(fixture.executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, 2 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    fixture.executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, 5 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// Workers only attach the served database, so a plan over another catalog's table would fail to resolve there,
+		// or resolve a same-named table of the worker's own catalogs.
+		REQUIRE_FALSE(client->Query("ATTACH ':memory:' AS \"other catalog\"")->HasError());
+		REQUIRE_FALSE(client
+		                  ->Query("CREATE TABLE \"other catalog\".main.fact AS SELECT i AS id, i % 17 AS k, "
+		                          "3 AS amount FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(client
+		                  ->Query("CREATE TABLE \"other catalog\".main.dim AS "
+		                          "SELECT i AS k, 7 AS multiplier FROM range(17) t(i)")
+		                  ->HasError());
+		for (const auto &foreign_sql : {"SELECT sum(f.amount * d.multiplier) FROM \"other catalog\".main.fact f "
+		                                "JOIN \"other catalog\".main.dim d ON f.k = d.k",
+		                                "SELECT sum(amount) FROM \"other catalog\".main.fact",
+		                                "SELECT amount FROM \"other catalog\".main.fact WHERE id = 1",
+		                                "SELECT sum(f.amount * d.multiplier) FROM \"other catalog\".main.fact f "
+		                                "JOIN object_db.main.dim d ON f.k = d.k",
+		                                "SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f "
+		                                "JOIN \"other catalog\".main.dim d ON f.k = d.k"}) {
+			REQUIRE(fixture.RequireLocalResult(foreign_sql).empty());
+		}
+
+		// Changing the client's default catalog does not change which database the executor serves.
+		REQUIRE_FALSE(client->Query("USE \"other catalog\"")->HasError());
+		auto foreign_default = client->Query("SELECT sum(f.amount * d.multiplier) FROM fact f JOIN dim d ON f.k = d.k");
+		REQUIRE_FALSE(foreign_default->HasError());
+		REQUIRE(foreign_default->GetValue(0, 0).GetValue<int64_t>() == 6300000);
+		REQUIRE(state->TakeExecutions().empty());
+
+		// Fully qualified served tables still produce partitioned tasks after USE.
+		auto served_executions =
+		    fixture.RequireLocalResult("SELECT sum(f.amount * d.multiplier) FROM object_db.main.fact f "
+		                               "JOIN object_db.main.dim d ON f.k = d.k");
+		REQUIRE(served_executions.size() == 1);
+		REQUIRE(served_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+		REQUIRE(served_executions[0].num_tasks_generated == 2);
+		REQUIRE(served_executions[0].sql ==
+		        "aggregate sum((amount * multiplier)) over object_db.main.fact (partitioned), object_db.main.dim");
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Driver merges partial aggregates exactly", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_merge");
 	{
@@ -218,6 +460,42 @@ TEST_CASE("Driver merges partial aggregates exactly", "[worker_fragment]") {
 			REQUIRE(executions.size() == 1);
 			INFO(executions[0].sql);
 			REQUIRE(StringUtil::StartsWith(executions[0].sql, "scan over object_db.main.agg"));
+		}
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Only scans every output row comes from one row of are partitioned", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_partition_safety");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		// Each third of skew has a different amount, so the average of a part differs from the whole table's.
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE skew AS SELECT i AS id, i % 17 AS k, i // 100000 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim2 AS SELECT i AS k, i % 3 AS bucket FROM range(17) t(i)")
+		        ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
+
+		// The correlated subquery becomes a LEFT Join of skew with an aggregate over skew,
+		// so no scan is partitioned.
+		const string correlated_sql = "SELECT sum(s.amount), count(*) FROM skew s, dim d WHERE s.k = d.k AND "
+		                              "s.amount > (SELECT avg(s2.amount) FROM skew s2 WHERE s2.k = s.k)";
+		// The same with an inner Join: only the outer skew may be partitioned, and every worker must average all of
+		// the inner one.
+		const string aggregate_join_sql = "SELECT sum(s.amount), count(*) FROM skew s JOIN (SELECT k, avg(amount) AS a "
+		                                  "FROM skew GROUP BY k) t ON s.k = t.k WHERE s.amount > t.a";
+		const string three_table_sql =
+		    "SELECT e.bucket, sum(s.amount * d.multiplier), count(*) FROM skew s "
+		    "JOIN dim d ON s.k = d.k JOIN dim2 e ON d.k = e.k GROUP BY e.bucket ORDER BY ALL";
+		for (const auto &sql : {correlated_sql, aggregate_join_sql, three_table_sql}) {
+			REQUIRE(fixture.RequireLocalResult(sql).empty());
 		}
 	}
 	std::filesystem::remove_all(root);
@@ -261,6 +539,50 @@ TEST_CASE("Workers reject plans of another build and the driver runs them locall
 		REQUIRE(executions.size() == 1);
 		REQUIRE(executions[0].execution_mode == QueryExecutionMode::LOCAL);
 		REQUIRE(StringUtil::StartsWith(executions[0].sql, "aggregate "));
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Prepared fragments read rows appended before they execute", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_appended");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 17 AS k, i % 11 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, i + 1 AS multiplier FROM range(17) t(i)")
+		        ->HasError());
+		// Workers attach their snapshot of the database at their first task, after the INSERT below.
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+		const vector<string> queries {"SELECT k, count(*), sum(amount) FROM fact GROUP BY k ORDER BY k",
+		                              "SELECT d.multiplier % 3 AS bucket, sum(f.amount * d.multiplier), count(*) "
+		                              "FROM fact f JOIN dim d ON f.k = d.k GROUP BY bucket ORDER BY bucket"};
+		vector<unique_ptr<PreparedStatement>> prepared;
+		for (const auto &sql : queries) {
+			prepared.emplace_back(fixture.client->Prepare(sql));
+			REQUIRE_FALSE(prepared.back()->HasError());
+		}
+		// The task ranges were planned for three row groups; the INSERT adds three more.
+		REQUIRE_FALSE(
+		    executor_connection->Query("INSERT INTO fact SELECT i, i % 17, i % 7 FROM range(300000, 600000) t(i)")
+		        ->HasError());
+		REQUIRE_FALSE(executor_connection->Query("CHECKPOINT")->HasError());
+		for (idx_t idx = 0; idx < queries.size(); ++idx) {
+			INFO(queries[idx]);
+			auto expected = executor_connection->Query(queries[idx]);
+			REQUIRE_FALSE(expected->HasError());
+			vector<Value> parameters;
+			auto actual = prepared[idx]->Execute(parameters, /*allow_stream_result=*/false);
+			REQUIRE_FALSE(actual->HasError());
+			REQUIRE(actual->Equals(*expected));
+			auto executions = fixture.state->TakeExecutions();
+			REQUIRE(executions.size() == 1);
+			REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+			REQUIRE(executions[0].num_tasks_generated == 2);
+		}
 	}
 	std::filesystem::remove_all(root);
 }

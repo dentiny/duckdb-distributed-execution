@@ -13,9 +13,6 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/type_visitor.hpp"
-#include "duckdb/common/types/row/tuple_data_layout.hpp"
-#include "duckdb/execution/ht_entry.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
@@ -149,37 +146,6 @@ unique_ptr<ParsedExpression> ImpliedEqualityFilter(const ParsedExpression &where
 		implied.push_back(chosen->Copy());
 	}
 	return make_uniq<ConjunctionExpression>(ExpressionType::CONJUNCTION_OR, std::move(implied));
-}
-
-// Estimate the projected tuples reaching the Join, after input filters. Variable-size payloads use the same
-// small penalties as DuckDB's build-side optimizer; these are estimates, not memory bounds.
-struct JoinInputCost {
-	double scan_bytes;
-	double build_bytes;
-};
-
-std::optional<JoinInputCost> EstimateJoinInputCost(LogicalOperator &input, LogicalGet &scan) {
-	if (!input.has_estimated_cardinality && !scan.has_estimated_cardinality) {
-		return std::nullopt;
-	}
-	const auto cardinality = input.has_estimated_cardinality ? input.estimated_cardinality : scan.estimated_cardinality;
-	input.ResolveOperatorTypes();
-	TupleDataLayout layout;
-	layout.Initialize(input.types, TupleDataValidityType::CAN_HAVE_NULL_VALUES);
-	auto row_width = layout.GetRowWidth();
-	for (const auto &type : input.types) {
-		TypeVisitor::VisitReplace(type, [&](const LogicalType &visited) {
-			if (visited.InternalType() == PhysicalType::VARCHAR) {
-				row_width += 8;
-			} else if (visited.InternalType() == PhysicalType::LIST || visited.InternalType() == PhysicalType::ARRAY) {
-				row_width += 32;
-			}
-			return visited;
-		});
-	}
-	// A build tuple also stores its hash and, on average, three hash-table entries.
-	return JoinInputCost {double(cardinality) * double(row_width),
-	                      double(cardinality) * double(row_width + sizeof(hash_t) + 3 * sizeof(ht_entry_t))};
 }
 
 struct JoinPartitionInfo {

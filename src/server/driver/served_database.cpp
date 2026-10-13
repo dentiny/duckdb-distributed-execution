@@ -24,10 +24,8 @@ arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distribu
 			return database_result.status();
 		}
 		database = std::move(database_result).ValueOrDie();
-		auto &db_config = DBConfig::GetConfig(*database->GetInstance().instance);
-		// Compressed materialization rewrites aggregates with internal functions, which worker fragments cannot call.
-		db_config.options.disabled_optimizers.insert(OptimizerType::COMPRESSED_MATERIALIZATION);
-		OptimizerExtension::Register(db_config, GetWorkerFragmentExtension());
+		OptimizerExtension::Register(DBConfig::GetConfig(*database->GetInstance().instance),
+		                             GetWorkerFragmentExtension());
 	}
 	auto connection_result = database->Connect();
 	if (!connection_result.ok()) {

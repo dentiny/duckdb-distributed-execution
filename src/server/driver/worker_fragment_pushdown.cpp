@@ -32,6 +32,7 @@
 #include "duckdb/storage/table/row_group_segment_tree.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/plan_serializer.hpp"
+#include "server/driver/query_utils.hpp"
 #include "utils/sql_render_utils.hpp"
 
 #include <chrono>
@@ -51,8 +52,7 @@ struct WorkerFragmentBindData : public TableFunctionData {
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<WorkerFragmentBindData>().fragment;
-		return other.sql == fragment.sql && other.plan == fragment.plan && other.task_plans == fragment.task_plans &&
-		       other.types == fragment.types;
+		return other.plan == fragment.plan && other.task_plans == fragment.task_plans && other.types == fragment.types;
 	}
 
 	WorkerFragment fragment;
@@ -218,6 +218,33 @@ void AddRowIdRange(LogicalGet &get, idx_t start, optional_idx end) {
 	get.table_filters.PushFilter(ColumnIndex(COLUMN_IDENTIFIER_ROW_ID), std::move(filter));
 }
 
+// Returns the input of an equality Join in op that reads scan through filters and projections, or nullptr.
+optional_ptr<LogicalOperator> FindJoinInput(LogicalOperator &op, LogicalGet &scan) {
+	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
+		bool has_equality = false;
+		for (const auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
+			has_equality = has_equality || condition.comparison == ExpressionType::COMPARE_EQUAL;
+		}
+		for (auto &child : op.children) {
+			auto *input = child.get();
+			while (input->type == LogicalOperatorType::LOGICAL_FILTER ||
+			       input->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+				input = input->children[0].get();
+			}
+			if (has_equality && input == &scan) {
+				return child.get();
+			}
+		}
+	}
+	for (auto &child : op.children) {
+		auto result = FindJoinInput(*child, scan);
+		if (result) {
+			return result;
+		}
+	}
+	return nullptr;
+}
+
 // Whether BindAverage reproduces avg over type exactly. Floating-point sums depend on the order of the rows.
 bool IsExactAverageInput(const LogicalType &type) {
 	switch (type.id()) {
@@ -304,9 +331,9 @@ string DescribeFragment(const string &head, const vector<reference<LogicalGet>> 
 	return StringUtil::Format("%s over %s", head, StringUtil::Join(tables, ", "));
 }
 
-// Replaces aggregate with a fragment whose tasks each run it on one row group range of its table. The driver merges
-// the tasks' partial aggregates with a second aggregate, and a projection above it finishes count and avg and takes
-// over the original aggregate's bindings.
+// Replaces aggregate with a fragment whose tasks each run it on one row group range of its largest partitionable
+// table, reading any other tables in full. The driver merges the tasks' partial aggregates with a second aggregate,
+// and a projection above it finishes count and avg and takes over the original aggregate's bindings.
 unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, Binder &binder,
                                                        WorkerFragmentState &state, LogicalAggregate &aggregate,
                                                        vector<ReplacementBinding> &replacements) {
@@ -323,15 +350,25 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	if (candidates.empty() || candidates.size() != scans.size()) {
 		return nullptr;
 	}
-	optional_ptr<LogicalGet> partitioned;
-	idx_t partitioned_rows = 0;
-	for (const auto &scan : candidates) {
-		auto rows = scan.get().GetTable()->GetStorage().GetTotalRows();
-		if (!partitioned || rows > partitioned_rows) {
-			partitioned = &scan.get();
-			partitioned_rows = rows;
+	// A Join partitions the input with the most estimated bytes, so each worker repeats the cheaper one. Use the Join's
+	// input roots so filters and projections above the scans contribute to the estimate; serialization drops the
+	// estimates, so this is decided here.
+	idx_t partitioned_idx = 0;
+	vector<JoinInputCost> costs;
+	if (scans.size() > 1) {
+		for (const auto &scan : scans) {
+			auto input = FindJoinInput(*aggregate.children[0], scan.get());
+			auto cost = input ? EstimateJoinInputCost(*input, scan.get()) : std::nullopt;
+			if (!cost) {
+				return nullptr;
+			}
+			costs.emplace_back(*cost);
+			if (costs.back().scan_bytes > costs[partitioned_idx].scan_bytes) {
+				partitioned_idx = costs.size() - 1;
+			}
 		}
 	}
+	auto &partitioned = scans[partitioned_idx].get();
 
 	// Workers return the groups and partial aggregates. avg becomes a sum and a count, appended after the others.
 	enum class MergeKind { SAME, COUNT, AVG };
@@ -403,10 +440,28 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		worker_plan->ResolveOperatorTypes();
 		fragment.plan = PlanSerializer::SerializeLogicalPlan(*worker_plan);
 		fragment.task_plans = SerializeTaskPlans(context, *worker_plan,
-		                                         *FindScan(*worker_plan, partitioned->table_index), state.NumWorkers());
+		                                         *FindScan(*worker_plan, partitioned.table_index), state.NumWorkers());
 	} catch (const std::exception &) {
 		// Some operators and table filters cannot be serialized.
 		return nullptr;
+	}
+	// Repeating the other tables' scans in every task only pays off if a Join is split across workers.
+	if (scans.size() > 1) {
+		const auto num_tasks = fragment.task_plans.size();
+		if (num_tasks < 2) {
+			return nullptr;
+		}
+		// Bound the replicated hash build estimate and charge for every additional scan/build. Only distribute when
+		// the parallel scan savings exceed this duplicated work.
+		constexpr double MAX_REPLICATED_BUILD_BYTES = 64 * 1024 * 1024;
+		const auto &partition_cost = costs[partitioned_idx];
+		const auto &replicated_cost = costs[1 - partitioned_idx];
+		const auto extra_replication =
+		    static_cast<double>(num_tasks - 1) * (replicated_cost.scan_bytes + replicated_cost.build_bytes);
+		const auto parallel_savings = partition_cost.scan_bytes * (1.0 - 1.0 / static_cast<double>(num_tasks));
+		if (replicated_cost.build_bytes > MAX_REPLICATED_BUILD_BYTES || extra_replication >= parallel_savings) {
+			return nullptr;
+		}
 	}
 
 	const auto group_count = aggregate.groups.size();
@@ -426,7 +481,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		head = StringUtil::Format("%s group by %s", head, StringUtil::Join(groups, ", "));
 	}
 	fragment.types = partial_types;
-	fragment.description = DescribeFragment(head, scans, *partitioned);
+	fragment.description = DescribeFragment(head, scans, partitioned);
 	fragment.merge_strategy = groups.empty() ? QueryPlanAnalyzer::MergeStrategy::AGGREGATE_MERGE
 	                                         : QueryPlanAnalyzer::MergeStrategy::GROUP_BY_MERGE;
 	auto get = CreateFragment(binder, std::move(fragment));
@@ -477,26 +532,6 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	projection->children.emplace_back(std::move(merge));
 	ReplaceAggregateBindings(aggregate, projection->table_index, replacements);
 	return std::move(projection);
-}
-
-// Replaces the aggregate over a Join of two scans with a fragment running it as SQL, which the executor partitions.
-unique_ptr<LogicalOperator> TryCreateJoinFragment(Binder &binder, WorkerFragmentState &state,
-                                                  LogicalAggregate &aggregate,
-                                                  vector<ReplacementBinding> &replacements) {
-	auto query = RenderJoinAggregateQuery(aggregate, [&state](LogicalGet &join_get) {
-		auto table = GetPartitionedTable(join_get, state);
-		return table ? GetTableName(*table) : string();
-	});
-	// Join tasks need a driver merge, so only create the fragment if the executor can partition it.
-	if (!query || !state.CanPartitionJoin(aggregate, query->sql)) {
-		return nullptr;
-	}
-	WorkerFragment fragment;
-	fragment.sql = std::move(query->sql);
-	fragment.types = std::move(query->types);
-	auto get = CreateFragment(binder, std::move(fragment));
-	ReplaceAggregateBindings(aggregate, get->table_index, replacements);
-	return std::move(get);
 }
 
 unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state,
@@ -555,9 +590,8 @@ void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalO
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-			auto &aggregate = op.Cast<LogicalAggregate>();
-			fragment = scans == 2 ? TryCreateJoinFragment(binder, *state, aggregate, replacements)
-			                      : TryCreateAggregateFragment(input.context, binder, *state, aggregate, replacements);
+			fragment =
+			    TryCreateAggregateFragment(input.context, binder, *state, op.Cast<LogicalAggregate>(), replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			fragment = TryCreateScanFragment(input.context, binder, *state, op.Cast<LogicalGet>(), replacements);
 		}
@@ -613,9 +647,6 @@ WorkerFragmentState::WorkerFragmentState(DistributedExecutor &executor_p, Connec
 }
 
 vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &context, const WorkerFragment &fragment) {
-	if (!fragment.sql.empty()) {
-		return ExecuteJoinSQL(context, fragment.sql, fragment.types);
-	}
 	QueryExecutionInfo info;
 	info.sql = fragment.description;
 	const auto start = std::chrono::steady_clock::now();
@@ -652,51 +683,6 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
 	executions.emplace_back(std::move(info));
 	return chunks;
-}
-
-vector<unique_ptr<DataChunk>> WorkerFragmentState::ExecuteJoinSQL(ClientContext &context, const string &sql,
-                                                                  const vector<LogicalType> &types) {
-	QueryExecutionInfo info;
-	info.sql = sql;
-	const auto start = std::chrono::steady_clock::now();
-	auto distributed = executor.ExecuteDistributed(sql, DistributedFragmentKind::PARTITIONED_JOIN);
-	const bool ran_distributed = distributed.result != nullptr || distributed.arrow_schema != nullptr;
-	vector<unique_ptr<DataChunk>> chunks;
-	if (distributed.arrow_schema) {
-		for (auto &batch : distributed.arrow_batches) {
-			auto chunk = make_uniq<DataChunk>();
-			ArrowRecordBatchToDataChunk(context, *batch, *chunk, &types);
-			batch.reset();
-			chunks.emplace_back(std::move(chunk));
-		}
-	} else {
-		auto result = ran_distributed ? std::move(distributed.result) : connection.Query(sql);
-		if (result->HasError()) {
-			result->ThrowError();
-		}
-		if (result->types != types) {
-			throw InternalException("Worker fragment '%s' returned unexpected types", sql);
-		}
-		for (auto chunk = result->Fetch(); chunk && chunk->size() > 0; chunk = result->Fetch()) {
-			chunks.emplace_back(std::move(chunk));
-		}
-	}
-	if (ran_distributed) {
-		info.execution_mode = distributed.partition_strategy == PartitionStrategy::NONE
-		                          ? QueryExecutionMode::DELEGATED
-		                          : QueryExecutionMode::ROW_GROUP_PARTITION;
-		info.merge_strategy = distributed.merge_strategy;
-		info.num_workers_used = distributed.num_workers_used;
-		info.num_tasks_generated = distributed.num_tasks;
-	}
-	info.query_duration =
-	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-	executions.emplace_back(std::move(info));
-	return chunks;
-}
-
-bool WorkerFragmentState::CanPartitionJoin(LogicalOperator &plan, const string &sql) {
-	return executor.CanPartitionJoin(plan, sql);
 }
 
 bool WorkerFragmentState::IsSameCatalog(const TableCatalogEntry &table) const {
