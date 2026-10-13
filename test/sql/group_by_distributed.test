@@ -111,7 +111,7 @@ SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats()
 ----
 true
 
-# A pushed aggregate grouped by an expression is computed as partial aggregates on each row group.
+# A pushed aggregate grouped by an expression runs on workers as a plan fragment, one task per row group range.
 query III
 SELECT id % 3 AS k, count(*), sum(value) FROM group_by_table GROUP BY k ORDER BY k;
 ----
@@ -121,11 +121,11 @@ SELECT id % 3 AS k, count(*), sum(value) FROM group_by_table GROUP BY k ORDER BY
 
 query I
 SELECT num_tasks_generated FROM duckherder_get_query_execution_stats()
-WHERE sql LIKE 'SELECT "%"(id, %GROUP BY 1';
+WHERE sql LIKE 'aggregate count_star(), %group by (id % 3) over object_db.main.group_by_table';
 ----
 2
 
-# The optimizer turns both partial `count(<non-null column>)` of `avg` into `count_star()` and deduplicates them.
+# `avg` is computed on the driver from a scan fragment, which also reads one row group range per task.
 query IIRR
 SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k ORDER BY k;
 ----
@@ -134,7 +134,7 @@ SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k
 2	66666	99999.5	999995.0
 
 query I
-SELECT num_tasks_generated FROM duckherder_get_query_execution_stats()
-WHERE sql LIKE 'SELECT "%"(id, %avg(%avg(%';
+SELECT DISTINCT num_tasks_generated FROM duckherder_get_query_execution_stats()
+WHERE sql = 'scan over object_db.main.group_by_table';
 ----
 2

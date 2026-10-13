@@ -78,6 +78,10 @@ public:
 	DistributedExecutionResult ExecuteDistributed(const string &sql, DistributedFragmentKind kind);
 	// Whether `sql`, a Join aggregate rendered from `plan`, can run as row-group tasks with a partial aggregate merge.
 	bool CanPartitionJoin(LogicalOperator &plan, const string &sql);
+	idx_t NumWorkers();
+	// Runs each of plans, written by PlanSerializer, as one worker task and stores its result in task_batches.
+	// Returns false if any task cannot run on a worker; merging the others would drop that task's rows.
+	bool ExecutePlans(const vector<string> &plans, vector<arrow::RecordBatchVector> &task_batches);
 
 private:
 	WorkerManager &worker_manager;

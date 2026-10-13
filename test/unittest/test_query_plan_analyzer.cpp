@@ -358,8 +358,8 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE(scan_executions.size() == 1);
 		REQUIRE(scan_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 
-		// Single-table fragments share the renderer: CASE, IN, BETWEEN, IS NULL, comparisons and expression table
-		// filters now render, so these aggregates and scans run on workers. NULL inputs must keep local semantics.
+		// Single-table fragments, including expressions that could not be rendered as SQL, run on workers. NULL inputs
+		// must keep local semantics.
 		for (const auto &single_sql :
 		     {"SELECT sum(CASE WHEN amount > 5 THEN price ELSE 0 END), count(*) FROM fact",
 		      "SELECT sum(CASE WHEN k IN (1, 2, 3) THEN 1 ELSE 0 END), "
@@ -379,7 +379,8 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		      "count(CASE WHEN g = NULL THEN 1 END), count(CASE WHEN g IS DISTINCT FROM 1 THEN 1 END), "
 		      "count(CASE WHEN NOT (g > 1) THEN 1 END), count(CASE WHEN g IS NOT NULL THEN 1 END) FROM fact",
 		      "SELECT g, count(*), sum(CASE WHEN g <> 2 OR g IS NULL THEN amount END) FROM fact "
-		      "WHERE g IS NULL OR g <> 2 GROUP BY g ORDER BY g"}) {
+		      "WHERE g IS NULL OR g <> 2 GROUP BY g ORDER BY g",
+		      "SELECT sum(COALESCE(g, 0)) FROM fact", "SELECT max([amount, k]) FROM fact"}) {
 			INFO(single_sql);
 			auto single_expected = executor_connection->Query(single_sql);
 			REQUIRE_FALSE(single_expected->HasError());
@@ -389,21 +390,6 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 			auto single_executions = state->TakeExecutions();
 			REQUIRE(single_executions.size() == 1);
 			REQUIRE(single_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
-		}
-		// Aggregates that cannot be rendered stay local; only their scan runs on workers.
-		for (const auto &unrendered_sql :
-		     {"SELECT sum(COALESCE(g, 0)) FROM fact", "SELECT max([amount, k]) FROM fact"}) {
-			INFO(unrendered_sql);
-			auto unrendered_expected = executor_connection->Query(unrendered_sql);
-			REQUIRE_FALSE(unrendered_expected->HasError());
-			auto unrendered_actual = client->Query(unrendered_sql);
-			REQUIRE_FALSE(unrendered_actual->HasError());
-			REQUIRE(unrendered_actual->Equals(*unrendered_expected));
-			auto unrendered_executions = state->TakeExecutions();
-			REQUIRE(unrendered_executions.size() == 1);
-			REQUIRE_FALSE(StringUtil::Contains(unrendered_executions[0].sql, "GROUP BY"));
-			REQUIRE_FALSE(StringUtil::Contains(unrendered_executions[0].sql, "sum("));
-			REQUIRE_FALSE(StringUtil::Contains(unrendered_executions[0].sql, "max("));
 		}
 		// The executor's connection cannot see the client's temporary tables, so they are read locally.
 		REQUIRE_FALSE(client->Query("CREATE TEMP TABLE temp_fact AS SELECT * FROM fact")->HasError());
