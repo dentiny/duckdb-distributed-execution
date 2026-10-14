@@ -244,7 +244,7 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		}
 		// Shapes whose partial results cannot be merged run locally.
 		for (const auto &fallback_sql :
-		     {"SELECT count(DISTINCT f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		     {"SELECT count(DISTINCT f.amount), count(*) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT median(f.amount) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT sum(f.amount) FILTER (WHERE d.k > 3) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL"}) {
@@ -256,6 +256,16 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		      "ON f.k = d.rn",
 		      "SELECT sum(f.amount), count(*) FROM fact f JOIN dim d ON f.k < d.k"}) {
 			REQUIRE(fixture.RequireLocalResult(local_sql).empty());
+		}
+		// DISTINCT aggregates over one argument only depend on its distinct values per group: tasks return those, and
+		// the driver aggregates them again.
+		for (const auto &distinct_sql :
+		     {"SELECT count(DISTINCT f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT d.multiplier % 3 AS bucket, count(DISTINCT f.amount), sum(DISTINCT f.amount) FROM fact f "
+		      "JOIN dim d ON f.k = d.k GROUP BY bucket ORDER BY bucket"}) {
+			auto distinct_executions = fixture.RequireLocalResult(distinct_sql);
+			REQUIRE(distinct_executions.size() == 1);
+			REQUIRE(StringUtil::Contains(distinct_executions[0].sql, "fact (partitioned)"));
 		}
 		// A LEFT Join splits its preserved input and replicates the other; the other way round it stays local.
 		auto left_executions =

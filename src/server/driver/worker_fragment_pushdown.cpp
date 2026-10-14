@@ -474,6 +474,92 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
 	return true;
 }
 
+// Describes aggregate over scans, marking the split ones.
+string DescribeAggregate(const LogicalAggregate &aggregate, const vector<reference<LogicalGet>> &scans,
+                         const vector<bool> &split) {
+	vector<string> exprs;
+	vector<string> groups;
+	exprs.reserve(aggregate.expressions.size());
+	groups.reserve(aggregate.groups.size());
+	for (const auto &expr : aggregate.expressions) {
+		exprs.emplace_back(expr->ToString());
+	}
+	for (const auto &group : aggregate.groups) {
+		groups.emplace_back(group->ToString());
+	}
+	auto head = StringUtil::Format("aggregate %s", StringUtil::Join(exprs, ", "));
+	if (!groups.empty()) {
+		head = StringUtil::Format("%s group by %s", head, StringUtil::Join(groups, ", "));
+	}
+	return DescribeFragment(head, scans, split);
+}
+
+// Whether every aggregate is DISTINCT over the same argument, like count(DISTINCT x) and sum(DISTINCT x). Duplicate
+// values of x do not change their results, so tasks can return each value once.
+bool IsDistinctOnly(const LogicalAggregate &aggregate) {
+	for (const auto &expr : aggregate.expressions) {
+		if (expr->GetExpressionClass() != ExpressionClass::BOUND_AGGREGATE) {
+			return false;
+		}
+		auto &bound = expr->Cast<BoundAggregateExpression>();
+		// Tasks return only the argument's values, so an aggregate with a FILTER or ORDER BY, which reads other
+		// columns, or with another argument cannot use them.
+		if (!bound.IsDistinct() || bound.filter || bound.order_bys || bound.children.size() != 1 ||
+		    !bound.children[0]->Equals(*aggregate.expressions[0]->Cast<BoundAggregateExpression>().children[0])) {
+			return false;
+		}
+	}
+	return !aggregate.expressions.empty();
+}
+
+// Replaces aggregate, which IsDistinctOnly accepts, with a fragment whose tasks return the distinct groups and argument
+// values of their part of the input. The driver runs the original aggregates over the union of those sets.
+unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Binder &binder,
+                                                      WorkerFragmentState &state, LogicalAggregate &aggregate,
+                                                      const vector<reference<LogicalGet>> &scans) {
+	const auto group_count = aggregate.groups.size();
+	auto &argument = *aggregate.expressions[0]->Cast<BoundAggregateExpression>().children[0];
+	WorkerFragment fragment;
+	vector<bool> split;
+	try {
+		auto worker_plan = aggregate.Copy(context);
+		auto &worker = worker_plan->Cast<LogicalAggregate>();
+		worker.groups.emplace_back(argument.Copy());
+		worker.expressions.clear();
+		for (auto &grouping_set : worker.grouping_sets) {
+			grouping_set.insert(group_count);
+		}
+		worker_plan = ProjectColumns(binder, std::move(worker_plan));
+		if (!PlanTasks(context, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
+			return nullptr;
+		}
+		fragment.types = worker_plan->types;
+	} catch (const std::exception &) {
+		// Some operators and table filters cannot be serialized.
+		return nullptr;
+	}
+	fragment.description = DescribeAggregate(aggregate, scans, split);
+	fragment.merge_strategy = group_count == 0 ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
+	const auto types = fragment.types;
+	auto get = CreateFragment(binder, std::move(fragment));
+	// The merge keeps the original indexes, so the operators above read it as they read the original aggregate.
+	vector<unique_ptr<Expression>> merges;
+	merges.reserve(aggregate.expressions.size());
+	for (const auto &expr : aggregate.expressions) {
+		auto merge = expr->Copy();
+		merge->Cast<BoundAggregateExpression>().children[0] =
+		    ColumnRef(types[group_count], get->table_index, group_count);
+		merges.emplace_back(std::move(merge));
+	}
+	auto merge = make_uniq<LogicalAggregate>(aggregate.group_index, aggregate.aggregate_index, std::move(merges));
+	for (idx_t idx = 0; idx < group_count; ++idx) {
+		merge->groups.emplace_back(ColumnRef(types[idx], get->table_index, idx));
+	}
+	merge->grouping_sets = aggregate.grouping_sets;
+	merge->children.emplace_back(std::move(get));
+	return std::move(merge);
+}
+
 // Replaces aggregate with a fragment whose tasks each aggregate their part of the input, split as PlanTasks decides.
 // The driver merges the partial aggregates with a second aggregate, and a projection above it finishes count and avg
 // and takes over the original aggregate's bindings.
@@ -486,6 +572,9 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	vector<reference<LogicalGet>> scans;
 	if (!CollectScans(aggregate, state, scans) || scans.empty()) {
 		return nullptr;
+	}
+	if (IsDistinctOnly(aggregate)) {
+		return TryCreateDistinctFragment(context, binder, state, aggregate, scans);
 	}
 	// Workers return the groups and partial aggregates. avg becomes a sum and a count, appended after the others.
 	enum class MergeKind { SAME, COUNT, AVG };
@@ -553,23 +642,9 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	}
 	const auto group_count = aggregate.groups.size();
 	const auto partial_types = worker_plan->types;
-	vector<string> exprs;
-	vector<string> groups;
-	exprs.reserve(aggregate.expressions.size());
-	groups.reserve(group_count);
-	for (const auto &expr : aggregate.expressions) {
-		exprs.emplace_back(expr->ToString());
-	}
-	for (const auto &group : aggregate.groups) {
-		groups.emplace_back(group->ToString());
-	}
-	auto head = StringUtil::Format("aggregate %s", StringUtil::Join(exprs, ", "));
-	if (!groups.empty()) {
-		head = StringUtil::Format("%s group by %s", head, StringUtil::Join(groups, ", "));
-	}
 	fragment.types = partial_types;
-	fragment.description = DescribeFragment(head, scans, split);
-	fragment.merge_strategy = groups.empty() ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
+	fragment.description = DescribeAggregate(aggregate, scans, split);
+	fragment.merge_strategy = group_count == 0 ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
 	auto get = CreateFragment(binder, std::move(fragment));
 
 	vector<unique_ptr<Expression>> merges;
