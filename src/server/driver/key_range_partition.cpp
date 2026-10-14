@@ -2,8 +2,12 @@
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/planner/filter/null_filter.hpp"
+#include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
+#include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -18,18 +22,24 @@ namespace duckdb {
 
 namespace {
 
-// Two scan columns that an inner Join compares for equality.
+// Two scan columns that a Join compares for equality.
 struct KeyPair {
 	KeyRangeScan left;
 	KeyRangeScan right;
 };
 
+// Whether comparison only matches equal keys, which key ranges put in one task. NULL keys all go to the first task, so
+// IS NOT DISTINCT FROM qualifies too.
+bool IsKeyComparison(ExpressionType comparison) {
+	return comparison == ExpressionType::COMPARE_EQUAL || comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM;
+}
+
 bool SameColumn(const KeyRangeScan &a, const KeyRangeScan &b) {
 	return a.table_index == b.table_index && a.column == b.column;
 }
 
-// Returns the scan in op whose table column binding reads, following plain column references through projections, and
-// sets column to it. Returns nullptr for computed and virtual columns.
+// Returns the scan in op whose table column binding reads, following plain column references through projections and
+// aggregate groups, and sets column to it. Returns nullptr for computed and virtual columns.
 optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding &binding, column_t &column) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
@@ -52,8 +62,27 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 		}
 		return ResolveColumn(*op.children[0], expr.Cast<BoundColumnRefExpression>().binding, column);
 	}
-	for (auto &child : op.children) {
-		auto result = ResolveColumn(*child, binding, column);
+	if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY &&
+	    op.Cast<LogicalAggregate>().group_index == binding.table_index) {
+		auto &aggregate = op.Cast<LogicalAggregate>();
+		// With grouping sets, a group column is NULL in the rows of the sets without it.
+		if (aggregate.grouping_sets.size() > 1 ||
+		    aggregate.groups[binding.column_index]->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+			return nullptr;
+		}
+		return ResolveColumn(*op.children[0],
+		                     aggregate.groups[binding.column_index]->Cast<BoundColumnRefExpression>().binding, column);
+	}
+	for (idx_t idx = 0; idx < op.children.size(); ++idx) {
+		// A key an outer Join pads with NULL is NULL in every task, not only the first.
+		if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		    op.type == LogicalOperatorType::LOGICAL_ANY_JOIN) {
+			const auto join_type = op.Cast<LogicalJoin>().join_type;
+			if (idx == 0 ? IsRightOuterJoin(join_type) : IsLeftOuterJoin(join_type) || join_type == JoinType::SINGLE) {
+				continue;
+			}
+		}
+		auto result = ResolveColumn(*op.children[idx], binding, column);
 		if (result) {
 			return result;
 		}
@@ -61,20 +90,13 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 	return nullptr;
 }
 
-// Collects the column pairs that inner Joins in op compare for equality, through filters, projections and inner Joins.
-// A NULL key never matches, so key range filters may drop it.
+// Collects the column pairs that Joins in op compare for equality. AnalyzeSplit decides whether splitting by them is
+// correct.
 void CollectKeyPairs(LogicalOperator &op, vector<KeyPair> &pairs) {
-	switch (op.type) {
-	case LogicalOperatorType::LOGICAL_FILTER:
-	case LogicalOperatorType::LOGICAL_PROJECTION:
-		break;
-	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
+	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
 		auto &join = op.Cast<LogicalComparisonJoin>();
-		if (join.join_type != JoinType::INNER) {
-			return;
-		}
 		for (const auto &condition : join.conditions) {
-			if (condition.comparison != ExpressionType::COMPARE_EQUAL ||
+			if (!IsKeyComparison(condition.comparison) ||
 			    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
 			    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 				continue;
@@ -90,10 +112,6 @@ void CollectKeyPairs(LogicalOperator &op, vector<KeyPair> &pairs) {
 				pairs.emplace_back(pair);
 			}
 		}
-		break;
-	}
-	default:
-		return;
 	}
 	for (auto &child : op.children) {
 		CollectKeyPairs(*child, pairs);
@@ -145,7 +163,7 @@ bool ReadRowGroupMinimums(LogicalGet &get, column_t column, vector<Value> &minim
 		if (!stats) {
 			return false;
 		}
-		// Rows without a key never join, and every key range skips them.
+		// Row groups of NULL keys give no minimum; the first range reads them.
 		if (!stats->CanHaveNoNull()) {
 			continue;
 		}
@@ -176,7 +194,8 @@ vector<Value> CutKeyRanges(const vector<Value> &minimums, idx_t max_tasks) {
 	return cuts;
 }
 
-// Restricts the scans of partition in op to the task's key range. The first range is open below and the last above.
+// Restricts the scans of partition in op to the task's key range. The first range is open below and holds NULL keys,
+// so rows without a key are read once; the last range is open above.
 void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t task) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
@@ -190,9 +209,15 @@ void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t
 				    make_uniq<ConstantFilter>(ExpressionType::COMPARE_GREATERTHANOREQUALTO, partition.cuts[task - 1]));
 			}
 			if (task < partition.cuts.size()) {
-				get.table_filters.PushFilter(
-				    ColumnIndex(scan.column),
-				    make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, partition.cuts[task]));
+				unique_ptr<TableFilter> below =
+				    make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, partition.cuts[task]);
+				if (task == 0) {
+					auto or_null = make_uniq<ConjunctionOrFilter>();
+					or_null->child_filters.emplace_back(std::move(below));
+					or_null->child_filters.emplace_back(make_uniq<IsNullFilter>());
+					below = std::move(or_null);
+				}
+				get.table_filters.PushFilter(ColumnIndex(scan.column), std::move(below));
 			}
 		}
 	}
@@ -280,6 +305,166 @@ vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, LogicalOperato
 		plans.emplace_back(PlanSerializer::SerializeLogicalPlan(*copy));
 	}
 	return plans;
+}
+
+bool IsSplit(SplitKind kind) {
+	return kind == SplitKind::SPLIT || kind == SplitKind::SPLIT_BY_KEY;
+}
+
+namespace {
+
+bool IsKeyColumn(const KeyRangePartition &partition, const KeyRangeScan &column) {
+	for (const auto &scan : partition.scans) {
+		if (SameColumn(scan, column)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Whether a condition of join equates a key column of its left input with one of its right input.
+bool JoinsOnKey(LogicalComparisonJoin &join, const KeyRangePartition &partition) {
+	for (const auto &condition : join.conditions) {
+		if (!IsKeyComparison(condition.comparison) ||
+		    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
+		    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+			continue;
+		}
+		KeyRangeScan left;
+		KeyRangeScan right;
+		auto left_scan =
+		    ResolveColumn(*join.children[0], condition.left->Cast<BoundColumnRefExpression>().binding, left.column);
+		auto right_scan =
+		    ResolveColumn(*join.children[1], condition.right->Cast<BoundColumnRefExpression>().binding, right.column);
+		if (left_scan && right_scan) {
+			left.table_index = left_scan->table_index;
+			right.table_index = right_scan->table_index;
+			if (IsKeyColumn(partition, left) && IsKeyColumn(partition, right)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// Whether one of groups, evaluated over input, is a key column, so each task holds whole groups.
+bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &groups,
+                 const KeyRangePartition &partition) {
+	for (const auto &group : groups) {
+		if (group->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+			continue;
+		}
+		KeyRangeScan column;
+		auto scan = ResolveColumn(input, group->Cast<BoundColumnRefExpression>().binding, column.column);
+		if (scan) {
+			column.table_index = scan->table_index;
+			if (IsKeyColumn(partition, column)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+} // namespace
+
+SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan) {
+	vector<SplitKind> children;
+	children.reserve(op.children.size());
+	for (auto &child : op.children) {
+		children.emplace_back(AnalyzeSplit(*child, partition, rowid_scan));
+		if (children.back() == SplitKind::INVALID) {
+			return SplitKind::INVALID;
+		}
+	}
+	bool any_split = false;
+	for (const auto &kind : children) {
+		any_split = any_split || IsSplit(kind);
+	}
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_GET: {
+		auto &get = op.Cast<LogicalGet>();
+		if (rowid_scan.IsValid() && get.table_index == rowid_scan.GetIndex()) {
+			return SplitKind::SPLIT;
+		}
+		for (const auto &scan : partition.scans) {
+			if (scan.table_index == get.table_index) {
+				return SplitKind::SPLIT_BY_KEY;
+			}
+		}
+		return SplitKind::REPLICATED;
+	}
+	case LogicalOperatorType::LOGICAL_FILTER:
+	case LogicalOperatorType::LOGICAL_PROJECTION:
+	case LogicalOperatorType::LOGICAL_ORDER_BY:
+		return children[0];
+	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
+		auto &aggregate = op.Cast<LogicalAggregate>();
+		if (!any_split) {
+			return SplitKind::REPLICATED;
+		}
+		return children[0] == SplitKind::SPLIT_BY_KEY && aggregate.grouping_sets.size() <= 1 &&
+		               GroupsByKey(*op.children[0], aggregate.groups, partition)
+		           ? SplitKind::SPLIT_BY_KEY
+		           : SplitKind::INVALID;
+	}
+	case LogicalOperatorType::LOGICAL_DISTINCT:
+		if (!any_split) {
+			return SplitKind::REPLICATED;
+		}
+		return children[0] == SplitKind::SPLIT_BY_KEY &&
+		               GroupsByKey(*op.children[0], op.Cast<LogicalDistinct>().distinct_targets, partition)
+		           ? SplitKind::SPLIT_BY_KEY
+		           : SplitKind::INVALID;
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+	case LogicalOperatorType::LOGICAL_ANY_JOIN:
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT: {
+		const auto left = children[0];
+		const auto right = children[1];
+		if (!any_split) {
+			return SplitKind::REPLICATED;
+		}
+		const auto join_type =
+		    op.type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT ? JoinType::INNER : op.Cast<LogicalJoin>().join_type;
+		// Both inputs split by the same key ranges: rows with equal keys meet in one task, whatever the Join type.
+		const bool co_split = left == SplitKind::SPLIT_BY_KEY && right == SplitKind::SPLIT_BY_KEY &&
+		                      op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN &&
+		                      JoinsOnKey(op.Cast<LogicalComparisonJoin>(), partition);
+		switch (join_type) {
+		case JoinType::INNER:
+			if (co_split) {
+				return SplitKind::SPLIT_BY_KEY;
+			}
+			return IsSplit(left) != IsSplit(right) ? (IsSplit(left) ? left : right) : SplitKind::INVALID;
+		case JoinType::LEFT:
+		case JoinType::SEMI:
+		case JoinType::ANTI:
+		case JoinType::SINGLE:
+			// Each left row needs every row of the right input that it could match.
+			if (co_split) {
+				return SplitKind::SPLIT_BY_KEY;
+			}
+			return IsSplit(right) ? SplitKind::INVALID : left;
+		case JoinType::MARK:
+			// A NULL anywhere in the right input decides the mark of every left row without a match.
+			return IsSplit(right) ? SplitKind::INVALID : left;
+		case JoinType::RIGHT:
+		case JoinType::RIGHT_SEMI:
+		case JoinType::RIGHT_ANTI:
+			if (co_split) {
+				return SplitKind::SPLIT_BY_KEY;
+			}
+			return IsSplit(left) ? SplitKind::INVALID : right;
+		case JoinType::OUTER:
+			return co_split ? SplitKind::SPLIT_BY_KEY : SplitKind::INVALID;
+		default:
+			return SplitKind::INVALID;
+		}
+	}
+	default:
+		// Other operators are only known to give the same output in every task when their input does.
+		return any_split ? SplitKind::INVALID : SplitKind::REPLICATED;
+	}
 }
 
 } // namespace duckdb

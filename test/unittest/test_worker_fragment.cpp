@@ -242,15 +242,23 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 			REQUIRE(shape_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 			REQUIRE(shape_executions[0].num_tasks_generated == 2);
 		}
-		// Shapes whose partial results cannot be merged, or that are not inner Joins, run locally.
+		// Shapes whose partial results cannot be merged run locally.
 		for (const auto &fallback_sql :
 		     {"SELECT count(DISTINCT f.amount) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT median(f.amount) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT sum(f.amount) FILTER (WHERE d.k > 3) FROM fact f JOIN dim d ON f.k = d.k",
-		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL",
-		      "SELECT sum(f.amount) FROM fact f LEFT JOIN dim d ON f.k = d.k AND d.k < 3"}) {
+		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL"}) {
 			REQUIRE(fixture.RequireLocalResult(fallback_sql).empty());
 		}
+		// A LEFT Join splits its preserved input and replicates the other; the other way round it stays local.
+		auto left_executions =
+		    fixture.RequireLocalResult("SELECT sum(f.amount) FROM fact f LEFT JOIN dim d ON f.k = d.k AND d.k < 3");
+		REQUIRE(left_executions.size() == 1);
+		REQUIRE(StringUtil::Contains(left_executions[0].sql, "fact (partitioned)"));
+		REQUIRE(fixture
+		            .RequireLocalResult("SELECT count(*), sum(f.amount) FROM dim d LEFT JOIN fact f ON f.k = d.k AND "
+		                                "f.amount < 3")
+		            .empty());
 		// Macros are expanded before optimization, so a macro shadowing sum is distributed as what it computes.
 		REQUIRE_FALSE(client->Query("CREATE TEMP MACRO sum(x) AS max(x)")->HasError());
 		auto macro_result = client->Query("SELECT sum(f.amount), count(*) FROM fact f JOIN dim d ON f.k = d.k");
@@ -527,20 +535,29 @@ TEST_CASE("Only scans every output row comes from one row of are partitioned", "
 		        ->HasError());
 		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
 
-		// The correlated subquery becomes a LEFT Join of skew with an aggregate over skew,
-		// so no scan is partitioned.
+		// The correlated subquery becomes a LEFT Join of skew with an aggregate over skew. skew is not ordered on k, so
+		// only the outer skew is split and every task averages all of the inner one.
 		const string correlated_sql = "SELECT sum(s.amount), count(*) FROM skew s, dim d WHERE s.k = d.k AND "
 		                              "s.amount > (SELECT avg(s2.amount) FROM skew s2 WHERE s2.k = s.k)";
-		// The same with an inner Join: only the outer skew may be partitioned, and every worker must average all of
-		// the inner one.
+		// The same with an inner Join.
 		const string aggregate_join_sql = "SELECT sum(s.amount), count(*) FROM skew s JOIN (SELECT k, avg(amount) AS a "
 		                                  "FROM skew GROUP BY k) t ON s.k = t.k WHERE s.amount > t.a";
 		const string three_table_sql =
 		    "SELECT e.bucket, sum(s.amount * d.multiplier), count(*) FROM skew s "
 		    "JOIN dim d ON s.k = d.k JOIN dim2 e ON d.k = e.k GROUP BY e.bucket ORDER BY ALL";
 		for (const auto &sql : {correlated_sql, aggregate_join_sql}) {
-			REQUIRE(fixture.RequireLocalResult(sql).empty());
+			auto executions = fixture.RequireLocalResult(sql);
+			REQUIRE(executions.size() == 1);
+			REQUIRE(StringUtil::Contains(executions[0].sql, "skew (partitioned)"));
+			REQUIRE(executions[0].sql.find("(partitioned)") == executions[0].sql.rfind("(partitioned)"));
 		}
+		// skew, the largest scan, is below an aggregate grouped by something other than a split key, so it is not
+		// split.
+		REQUIRE(
+		    fixture
+		        .RequireLocalResult("SELECT count(*), sum(d.multiplier) FROM dim d JOIN (SELECT k, avg(amount) AS a "
+		                            "FROM skew GROUP BY k) t ON d.k = t.k WHERE t.a > 1.0")
+		        .empty());
 		auto executions = fixture.RequireLocalResult(three_table_sql);
 		REQUIRE(executions.size() == 1);
 		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
@@ -562,7 +579,7 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		    executor_connection
 		        ->Query("CREATE TABLE item AS SELECT i // 7 AS i_key, i % 11 AS amount FROM range(1400000) t(i)")
 		        ->HasError());
-		// Items without a key never join.
+		// Items without a key match no order.
 		REQUIRE_FALSE(
 		    executor_connection->Query("INSERT INTO item SELECT NULL, i % 11 FROM range(1000) t(i)")->HasError());
 		// The same orders in hash order, so no key range prunes its row groups.
@@ -611,6 +628,41 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		REQUIRE(executions.size() == 1);
 		REQUIRE(executions[0].num_tasks_generated == 2);
 		REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
+
+		// A semi Join with an aggregate grouped by the key: every task has whole groups, so all three scans are split.
+		executions = fixture.RequireLocalResult(
+		    "SELECT o.flag, sum(i.amount), count(*) FROM item i JOIN ord o ON i.i_key = o.o_key WHERE o.o_key IN "
+		    "(SELECT i_key FROM item GROUP BY i_key HAVING sum(amount) > 40) GROUP BY o.flag ORDER BY ALL");
+		REQUIRE(executions.size() == 1);
+		INFO(executions[0].sql);
+		idx_t split_scans = 0;
+		for (auto pos = executions[0].sql.find("(partitioned)"); pos != string::npos;
+		     pos = executions[0].sql.find("(partitioned)", pos + 1)) {
+			++split_scans;
+		}
+		REQUIRE(split_scans == 3);
+		// Items without a key have no match, so the first task, which reads them, keeps them once.
+		for (const auto &sql : {"SELECT count(*), sum(amount) FROM item i WHERE NOT EXISTS (SELECT 1 FROM ord o WHERE "
+		                        "o.o_key = i.i_key)",
+		                        "SELECT count(*), count(i.i_key), count(o.o_key) FROM item i FULL OUTER JOIN ord o "
+		                        "ON i.i_key = o.o_key"}) {
+			executions = fixture.RequireLocalResult(sql);
+			REQUIRE(executions.size() == 1);
+			INFO(executions[0].sql);
+			REQUIRE(StringUtil::Contains(executions[0].sql, "item (partitioned)"));
+			REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
+		}
+		// Items without a key make NOT IN unknown for every order without a match, so item is never split there.
+		for (const auto &execution : fixture.RequireLocalResult(
+		         "SELECT count(*) FROM ord WHERE o_key NOT IN (SELECT i_key FROM item WHERE amount = 3)")) {
+			REQUIRE_FALSE(StringUtil::Contains(execution.sql, "item (partitioned)"));
+		}
+		// Orders without a match are padded with a NULL key in every task, so their group is merged on the driver.
+		executions =
+		    fixture.RequireLocalResult("SELECT count(*), sum(c) FROM (SELECT o.o_key, count(*) AS c FROM item i "
+		                               "LEFT JOIN ord o ON i.i_key = o.o_key AND o.flag = 0 GROUP BY o.o_key)");
+		REQUIRE(executions.size() == 1);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "group by o_key"));
 	}
 	std::filesystem::remove_all(root);
 }

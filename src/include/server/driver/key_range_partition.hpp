@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "server/driver/query_utils.hpp"
 
@@ -22,11 +23,29 @@ struct KeyRangePartition {
 	vector<Value> cuts;
 };
 
-// Finds the scans that inner equi-Joins in input tie to a key of partitioned and whose row groups are ordered on it,
+// Finds the scans that equi-Joins in input tie to a key of partitioned and whose row groups are ordered on it,
 // so they can be split with partitioned by key ranges. Picks the key whose scans read the most. Returns false if no
 // scan qualifies or the key gives fewer than two ranges.
 bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, const vector<reference<LogicalGet>> &scans,
                            const vector<JoinInputCost> &costs, idx_t max_tasks, KeyRangePartition &result);
+
+// How the output of a plan is spread over tasks when some of its scans are split.
+enum class SplitKind : uint8_t {
+	// Every task computes the whole output.
+	REPLICATED,
+	// Each output row comes from exactly one task.
+	SPLIT,
+	// SPLIT, and rows with equal key values come from the same task.
+	SPLIT_BY_KEY,
+	// Splitting would change the output.
+	INVALID
+};
+
+bool IsSplit(SplitKind kind);
+
+// Returns how the output of op is spread over tasks when the scans of partition are split by its key ranges and the
+// scan with table index rowid_scan, if valid, by rowid ranges.
+SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan);
 
 // Serializes plan once per task, restricting each scan of partition to the task's key range.
 vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, LogicalOperator &plan,
