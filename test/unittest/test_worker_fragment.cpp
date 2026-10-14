@@ -701,6 +701,31 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Key ranges split tables ordered on DATE and DECIMAL keys", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_key_types");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		for (const auto &sql : {"CREATE TABLE events AS SELECT DATE '2000-01-01' + (i // 7)::INTEGER AS day, "
+		                        "(i // 7)::DECIMAL(18, 2) AS price, i % 11 AS amount FROM range(1400000) t(i)",
+		                        "CREATE TABLE calendar AS SELECT DATE '2000-01-01' + i::INTEGER AS day, "
+		                        "i::DECIMAL(18, 2) AS price, i % 5 AS flag FROM range(200000) t(i)"}) {
+			REQUIRE_FALSE(executor_connection->Query(sql)->HasError());
+		}
+		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
+		for (const auto &key : {"day", "price"}) {
+			auto executions = fixture.RequireLocalResult(StringUtil::Format(
+			    "SELECT d.flag, sum(e.amount), count(*) FROM events e JOIN calendar d ON e.%s = d.%s "
+			    "GROUP BY d.flag ORDER BY ALL",
+			    key, key));
+			REQUIRE(executions.size() == 1);
+			REQUIRE(StringUtil::Contains(executions[0].sql, "events (partitioned)"));
+			REQUIRE(StringUtil::Contains(executions[0].sql, "calendar (partitioned)"));
+		}
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Worker fragments are cut inside materialized CTEs", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_cte");
 	{
