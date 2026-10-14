@@ -503,9 +503,11 @@ bool IsDistinctOnly(const LogicalAggregate &aggregate) {
 		}
 		auto &bound = expr->Cast<BoundAggregateExpression>();
 		// Tasks return only the argument's values, so an aggregate with a FILTER or ORDER BY, which reads other
-		// columns, or with another argument cannot use them.
+		// columns, or with another argument cannot use them. Except for count, the result over inexact values, e.g. a
+		// sum of doubles, depends on the order in which the driver receives them.
 		if (!bound.IsDistinct() || bound.filter || bound.order_bys || bound.children.size() != 1 ||
-		    !bound.children[0]->Equals(*aggregate.expressions[0]->Cast<BoundAggregateExpression>().children[0])) {
+		    !bound.children[0]->Equals(*aggregate.expressions[0]->Cast<BoundAggregateExpression>().children[0]) ||
+		    (bound.function.name != "count" && !IsExactAverageInput(bound.children[0]->return_type))) {
 			return false;
 		}
 	}
@@ -556,6 +558,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
 		merge->groups.emplace_back(ColumnRef(types[idx], get->table_index, idx));
 	}
 	merge->grouping_sets = aggregate.grouping_sets;
+	merge->distinct_validity = aggregate.distinct_validity;
 	merge->children.emplace_back(std::move(get));
 	return std::move(merge);
 }
