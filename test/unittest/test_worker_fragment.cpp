@@ -701,19 +701,23 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 	std::filesystem::remove_all(root);
 }
 
-TEST_CASE("Key ranges split tables ordered on DATE and DECIMAL keys", "[worker_fragment]") {
+TEST_CASE("Key ranges split tables ordered on date, time and decimal keys", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_key_types");
 	{
 		FragmentFixture fixture(root);
 		auto &executor_connection = fixture.executor_connection;
 		for (const auto &sql : {"CREATE TABLE events AS SELECT DATE '2000-01-01' + (i // 7)::INTEGER AS day, "
+		                        "TIME '00:00:00' + to_microseconds((i // 7)::BIGINT) AS clock, "
+		                        "to_timestamp((i // 7)::BIGINT) AS instant, "
 		                        "(i // 7)::DECIMAL(18, 2) AS price, i % 11 AS amount FROM range(1400000) t(i)",
 		                        "CREATE TABLE calendar AS SELECT DATE '2000-01-01' + i::INTEGER AS day, "
+		                        "TIME '00:00:00' + to_microseconds(i::BIGINT) AS clock, "
+		                        "to_timestamp(i::BIGINT) AS instant, "
 		                        "i::DECIMAL(18, 2) AS price, i % 5 AS flag FROM range(200000) t(i)"}) {
 			REQUIRE_FALSE(executor_connection->Query(sql)->HasError());
 		}
 		REQUIRE(fixture.manager->StartLocalWorkers(3).ok());
-		for (const auto &key : {"day", "price"}) {
+		for (const auto &key : {"day", "clock", "instant", "price"}) {
 			auto executions = fixture.RequireLocalResult(StringUtil::Format(
 			    "SELECT d.flag, sum(e.amount), count(*) FROM events e JOIN calendar d ON e.%s = d.%s "
 			    "GROUP BY d.flag ORDER BY ALL",

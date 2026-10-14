@@ -215,7 +215,9 @@ vector<KeyRangeScan> EqualColumns(const KeyRangeScan &key, const vector<KeyPair>
 	return result;
 }
 
-// Whether row group statistics of type order its values as comparisons do, so key range filters prune by them.
+// Whether type's row group minimums and maximums are exact and ordered like its comparisons, so key ranges prune row
+// groups. TIME_TZ statistics are not ordered by instant, floating-point ones have NaN and -0.0, and string ones are
+// truncated, so we exclude them.
 bool IsRangeKeyType(const LogicalType &type) {
 	switch (type.id()) {
 	case LogicalTypeId::DECIMAL:
