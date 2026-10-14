@@ -659,6 +659,17 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 			REQUIRE(StringUtil::Contains(executions[0].sql, "item (partitioned)"));
 			REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
 		}
+		// Correlated subqueries become DELIM_JOINs. Split by the correlated key, each task holds whole subquery groups.
+		for (const auto &sql :
+		     {"SELECT count(*), sum(amount) FROM item i WHERE i.amount > (SELECT avg(i2.amount) FROM item i2 WHERE "
+		      "i2.i_key = i.i_key)",
+		      "SELECT count(*), sum(o.flag) FROM ord o WHERE NOT EXISTS (SELECT 1 FROM item i WHERE i.i_key = o.o_key "
+		      "AND i.amount > o.flag + 7)"}) {
+			executions = fixture.RequireLocalResult(sql);
+			REQUIRE(executions.size() == 1);
+			INFO(executions[0].sql);
+			REQUIRE(executions[0].sql.find("(partitioned)") != executions[0].sql.rfind("(partitioned)"));
+		}
 		// Items without a key make NOT IN unknown for every order without a match, so item is never split there. The
 		// cost model keeps the replicated item local, so it is bypassed.
 		REQUIRE_FALSE(fixture.client->Query("SET duckherder_join_partitioning = 'always'")->HasError());

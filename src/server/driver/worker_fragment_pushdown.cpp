@@ -135,7 +135,8 @@ unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
 
 // Collects the scans in op. Returns false if workers cannot read one, or if workers reading the same rows could
 // compute different results.
-bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<reference<LogicalGet>> &scans) {
+bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<reference<LogicalGet>> &scans,
+                  bool in_delim_join = false) {
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
@@ -145,18 +146,26 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 		scans.emplace_back(get);
 		break;
 	}
+	case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+		in_delim_join = true;
+		break;
+	case LogicalOperatorType::LOGICAL_DELIM_GET:
+		// It reads its DELIM_JOIN's input, which workers only have if the Join is in the fragment too.
+		if (!in_delim_join) {
+			return false;
+		}
+		break;
 	case LogicalOperatorType::LOGICAL_LIMIT:
 	case LogicalOperatorType::LOGICAL_TOP_N:
 	case LogicalOperatorType::LOGICAL_SAMPLE:
-	// These read results computed elsewhere in the client's plan, which workers do not have.
+	// It reads a result computed elsewhere in the client's plan, which workers do not have.
 	case LogicalOperatorType::LOGICAL_CTE_REF:
-	case LogicalOperatorType::LOGICAL_DELIM_GET:
 		return false;
 	default:
 		break;
 	}
 	for (auto &child : op.children) {
-		if (!CollectScans(*child, state, scans)) {
+		if (!CollectScans(*child, state, scans, in_delim_join)) {
 			return false;
 		}
 	}
@@ -222,7 +231,8 @@ optional_ptr<LogicalOperator> FindJoinInput(LogicalOperator &op, LogicalGet &sca
 				continue;
 			}
 			equi_join = false;
-			if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
+			if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+			    op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 				for (const auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
 					equi_join = equi_join || IsKeyComparison(condition.comparison);
 				}
@@ -344,6 +354,25 @@ unique_ptr<LogicalOperator> ProjectColumns(Binder &binder, unique_ptr<LogicalOpe
 	return std::move(root);
 }
 
+// Workers optimize the plan again, and DuckDB's Join order optimizer expects each DELIM_JOIN to read its
+// duplicate-eliminated input first, as before the build side optimizer flips it.
+void UnflipDelimJoins(LogicalOperator &op) {
+	if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN && op.Cast<LogicalComparisonJoin>().delim_flipped) {
+		auto &join = op.Cast<LogicalComparisonJoin>();
+		std::swap(join.children[0], join.children[1]);
+		join.join_type = InverseJoinType(join.join_type);
+		for (auto &condition : join.conditions) {
+			std::swap(condition.left, condition.right);
+			condition.comparison = FlipComparisonExpression(condition.comparison);
+		}
+		std::swap(join.left_projection_map, join.right_projection_map);
+		join.delim_flipped = false;
+	}
+	for (auto &child : op.children) {
+		UnflipDelimJoins(*child);
+	}
+}
+
 // Writes fragment's plan and task plans from worker_plan, the workers' copy of a plan over input, and marks in split
 // which of scans the tasks split. Tries the scans from the most read bytes down: by key ranges with the inputs
 // equi-joined to it on a key they are ordered on, else alone by rowid ranges; the others are replicated. Keeps the
@@ -402,6 +431,7 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
 		return false;
 	}
 	auto &partitioned = scans[partitioned_idx.GetIndex()].get();
+	UnflipDelimJoins(worker_plan);
 	fragment.plan = PlanSerializer::SerializeLogicalPlan(worker_plan);
 	if (!key_ranges.scans.empty()) {
 		fragment.task_plans = SerializeKeyRangeTaskPlans(context, worker_plan, key_ranges);
@@ -658,7 +688,9 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
 			fragment = TryCreateAggregateFragment(context, binder, state, op.Cast<LogicalAggregate>(), replacements);
-		} else if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN && !reduced) {
+		} else if ((op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		            op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) &&
+		           !reduced) {
 			fragment = TryCreateJoinFragment(context, binder, state, op.Cast<LogicalComparisonJoin>(), replacements);
 		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			fragment = TryCreateScanFragment(context, binder, state, op.Cast<LogicalGet>(), replacements);

@@ -7,6 +7,7 @@
 #include "duckdb/planner/filter/null_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
+#include "duckdb/planner/operator/logical_delim_get.hpp"
 #include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
@@ -41,9 +42,62 @@ bool ContainsColumn(const vector<KeyRangeScan> &columns, const KeyRangeScan &col
 	return false;
 }
 
-// Returns the scan in op whose table column binding reads, following plain column references through projections and
-// aggregate groups, and sets column to it. Returns nullptr for computed and virtual columns.
-optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding &binding, column_t &column) {
+// A DELIM_GET and the DELIM_JOIN whose duplicate-eliminated columns it reads, with how its rows are spread over tasks.
+// join is null if several DELIM_JOINs have the DELIM_GET below them, so its source is unclear.
+struct DelimSource {
+	idx_t table_index;
+	optional_ptr<LogicalComparisonJoin> join;
+	SplitKind kind;
+};
+
+// The input of join whose duplicate-eliminated columns its DELIM_GETs read.
+LogicalOperator &DelimInput(LogicalComparisonJoin &join) {
+	return *join.children[join.delim_flipped ? 1 : 0];
+}
+
+void CollectDelimGets(LogicalOperator &op, LogicalComparisonJoin &join, vector<DelimSource> &sources) {
+	if (op.type == LogicalOperatorType::LOGICAL_DELIM_GET) {
+		const auto table_index = op.Cast<LogicalDelimGet>().table_index;
+		bool found = false;
+		for (auto &source : sources) {
+			if (source.table_index == table_index) {
+				source.join = nullptr;
+				found = true;
+			}
+		}
+		if (!found) {
+			sources.push_back({table_index, join, SplitKind::REPLICATED});
+		}
+	}
+	for (auto &child : op.children) {
+		CollectDelimGets(*child, join, sources);
+	}
+}
+
+// Collects the DELIM_GETs below each DELIM_JOIN in op.
+void CollectDelimSources(LogicalOperator &op, vector<DelimSource> &sources) {
+	if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+		auto &join = op.Cast<LogicalComparisonJoin>();
+		CollectDelimGets(*join.children[join.delim_flipped ? 0 : 1], join, sources);
+	}
+	for (auto &child : op.children) {
+		CollectDelimSources(*child, sources);
+	}
+}
+
+optional_ptr<DelimSource> FindDelimSource(vector<DelimSource> &sources, idx_t table_index) {
+	for (auto &source : sources) {
+		if (source.table_index == table_index) {
+			return source;
+		}
+	}
+	return nullptr;
+}
+
+// Returns the scan in op whose table column binding reads, following plain column references through projections,
+// aggregate groups and DELIM_GETs, and sets column to it. Returns nullptr for computed and virtual columns.
+optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding &binding, column_t &column,
+                                       vector<DelimSource> &delims) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
 		const auto &column_ids = get.GetColumnIds();
@@ -63,7 +117,7 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 		if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 			return nullptr;
 		}
-		return ResolveColumn(*op.children[0], expr.Cast<BoundColumnRefExpression>().binding, column);
+		return ResolveColumn(*op.children[0], expr.Cast<BoundColumnRefExpression>().binding, column, delims);
 	}
 	if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY &&
 	    op.Cast<LogicalAggregate>().group_index == binding.table_index) {
@@ -74,7 +128,20 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 			return nullptr;
 		}
 		return ResolveColumn(*op.children[0],
-		                     aggregate.groups[binding.column_index]->Cast<BoundColumnRefExpression>().binding, column);
+		                     aggregate.groups[binding.column_index]->Cast<BoundColumnRefExpression>().binding, column,
+		                     delims);
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_DELIM_GET &&
+	    op.Cast<LogicalDelimGet>().table_index == binding.table_index) {
+		auto source = FindDelimSource(delims, binding.table_index);
+		if (!source || !source->join) {
+			return nullptr;
+		}
+		auto &expr = *source->join->duplicate_eliminated_columns[binding.column_index];
+		if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+			return nullptr;
+		}
+		return ResolveColumn(DelimInput(*source->join), expr.Cast<BoundColumnRefExpression>().binding, column, delims);
 	}
 	for (idx_t idx = 0; idx < op.children.size(); ++idx) {
 		// A key an outer Join pads with NULL is NULL in every task, not only the first.
@@ -86,7 +153,7 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 				continue;
 			}
 		}
-		auto result = ResolveColumn(*op.children[idx], binding, column);
+		auto result = ResolveColumn(*op.children[idx], binding, column, delims);
 		if (result) {
 			return result;
 		}
@@ -95,16 +162,17 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 }
 
 // Resolves the scan columns that condition of join compares as keys. Returns false if it compares anything else.
-bool ResolveKeyPair(LogicalComparisonJoin &join, const JoinCondition &condition, KeyPair &pair) {
+bool ResolveKeyPair(LogicalComparisonJoin &join, const JoinCondition &condition, KeyPair &pair,
+                    vector<DelimSource> &delims) {
 	if (!IsKeyComparison(condition.comparison) ||
 	    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
 	    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 		return false;
 	}
-	auto left =
-	    ResolveColumn(*join.children[0], condition.left->Cast<BoundColumnRefExpression>().binding, pair.left.column);
-	auto right =
-	    ResolveColumn(*join.children[1], condition.right->Cast<BoundColumnRefExpression>().binding, pair.right.column);
+	auto left = ResolveColumn(*join.children[0], condition.left->Cast<BoundColumnRefExpression>().binding,
+	                          pair.left.column, delims);
+	auto right = ResolveColumn(*join.children[1], condition.right->Cast<BoundColumnRefExpression>().binding,
+	                           pair.right.column, delims);
 	if (!left || !right) {
 		return false;
 	}
@@ -115,18 +183,18 @@ bool ResolveKeyPair(LogicalComparisonJoin &join, const JoinCondition &condition,
 
 // Collects the column pairs that Joins in op compare for equality. AnalyzeSplit decides whether splitting by them is
 // correct.
-void CollectKeyPairs(LogicalOperator &op, vector<KeyPair> &pairs) {
-	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
+void CollectKeyPairs(LogicalOperator &op, vector<KeyPair> &pairs, vector<DelimSource> &delims) {
+	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN || op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 		auto &join = op.Cast<LogicalComparisonJoin>();
 		for (const auto &condition : join.conditions) {
 			KeyPair pair;
-			if (ResolveKeyPair(join, condition, pair)) {
+			if (ResolveKeyPair(join, condition, pair, delims)) {
 				pairs.emplace_back(pair);
 			}
 		}
 	}
 	for (auto &child : op.children) {
-		CollectKeyPairs(*child, pairs);
+		CollectKeyPairs(*child, pairs, delims);
 	}
 }
 
@@ -234,8 +302,10 @@ void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t
 
 bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, const vector<reference<LogicalGet>> &scans,
                            const vector<JoinInputCost> &costs, idx_t max_tasks, KeyRangePartition &result) {
+	vector<DelimSource> delims;
+	CollectDelimSources(input, delims);
 	vector<KeyPair> pairs;
-	CollectKeyPairs(input, pairs);
+	CollectKeyPairs(input, pairs, delims);
 	// Whether each scan column checked so far has its row groups ordered on it.
 	struct CheckedColumn {
 		KeyRangeScan column;
@@ -322,10 +392,10 @@ bool IsSplit(SplitKind kind) {
 namespace {
 
 // Whether a condition of join equates a key column of its left input with one of its right input.
-bool JoinsOnKey(LogicalComparisonJoin &join, const KeyRangePartition &partition) {
+bool JoinsOnKey(LogicalComparisonJoin &join, const KeyRangePartition &partition, vector<DelimSource> &delims) {
 	for (const auto &condition : join.conditions) {
 		KeyPair pair;
-		if (ResolveKeyPair(join, condition, pair) && ContainsColumn(partition.scans, pair.left) &&
+		if (ResolveKeyPair(join, condition, pair, delims) && ContainsColumn(partition.scans, pair.left) &&
 		    ContainsColumn(partition.scans, pair.right)) {
 			return true;
 		}
@@ -335,13 +405,13 @@ bool JoinsOnKey(LogicalComparisonJoin &join, const KeyRangePartition &partition)
 
 // Whether one of groups, evaluated over input, is a key column, so each task holds whole groups.
 bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &groups,
-                 const KeyRangePartition &partition) {
+                 const KeyRangePartition &partition, vector<DelimSource> &delims) {
 	for (const auto &group : groups) {
 		if (group->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 			continue;
 		}
 		KeyRangeScan column;
-		auto scan = ResolveColumn(input, group->Cast<BoundColumnRefExpression>().binding, column.column);
+		auto scan = ResolveColumn(input, group->Cast<BoundColumnRefExpression>().binding, column.column, delims);
 		if (scan) {
 			column.table_index = scan->table_index;
 			if (ContainsColumn(partition.scans, column)) {
@@ -352,15 +422,35 @@ bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &g
 	return false;
 }
 
-} // namespace
-
-SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan) {
-	vector<SplitKind> children;
-	children.reserve(op.children.size());
-	for (auto &child : op.children) {
-		children.emplace_back(AnalyzeSplit(*child, partition, rowid_scan));
-		if (children.back() == SplitKind::INVALID) {
+SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan,
+                  vector<DelimSource> &delims) {
+	vector<SplitKind> children(op.children.size(), SplitKind::REPLICATED);
+	// A DELIM_JOIN's DELIM_GETs hold the distinct keys of its other input in each task, so that input comes first.
+	idx_t first = 0;
+	if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+		first = op.Cast<LogicalComparisonJoin>().delim_flipped ? 1 : 0;
+	}
+	for (idx_t step = 0; step < op.children.size(); ++step) {
+		const auto idx = (first + step) % op.children.size();
+		children[idx] = Analyze(*op.children[idx], partition, rowid_scan, delims);
+		if (children[idx] == SplitKind::INVALID) {
 			return SplitKind::INVALID;
+		}
+		if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN && step == 0) {
+			// When that input is split by one of the duplicate-eliminated columns, each task's DELIM_GETs hold only its
+			// own keys. Otherwise tasks may share keys, which is only correct if the rest of the subquery is
+			// replicated: the final Join then finds every match of a row in its own task.
+			auto &join = op.Cast<LogicalComparisonJoin>();
+			const auto kind =
+			    children[idx] == SplitKind::SPLIT_BY_KEY &&
+			            GroupsByKey(*op.children[idx], join.duplicate_eliminated_columns, partition, delims)
+			        ? SplitKind::SPLIT_BY_KEY
+			        : SplitKind::REPLICATED;
+			for (auto &source : delims) {
+				if (source.join.get() == &join) {
+					source.kind = kind;
+				}
+			}
 		}
 	}
 	bool any_split = false;
@@ -368,6 +458,10 @@ SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, 
 		any_split = any_split || IsSplit(kind);
 	}
 	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_DELIM_GET: {
+		auto source = FindDelimSource(delims, op.Cast<LogicalDelimGet>().table_index);
+		return source && source->join ? source->kind : SplitKind::INVALID;
+	}
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
 		if (rowid_scan.IsValid() && get.table_index == rowid_scan.GetIndex()) {
@@ -390,7 +484,7 @@ SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, 
 			return SplitKind::REPLICATED;
 		}
 		return children[0] == SplitKind::SPLIT_BY_KEY && aggregate.grouping_sets.size() <= 1 &&
-		               GroupsByKey(*op.children[0], aggregate.groups, partition)
+		               GroupsByKey(*op.children[0], aggregate.groups, partition, delims)
 		           ? SplitKind::SPLIT_BY_KEY
 		           : SplitKind::INVALID;
 	}
@@ -399,13 +493,14 @@ SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, 
 			return SplitKind::REPLICATED;
 		}
 		return children[0] == SplitKind::SPLIT_BY_KEY &&
-		               GroupsByKey(*op.children[0], op.Cast<LogicalDistinct>().distinct_targets, partition)
+		               GroupsByKey(*op.children[0], op.Cast<LogicalDistinct>().distinct_targets, partition, delims)
 		           ? SplitKind::SPLIT_BY_KEY
 		           : SplitKind::INVALID;
 	case LogicalOperatorType::LOGICAL_WINDOW:
 		// Rows of a window partition can arrive in another order in each task, so even a replicated input may differ.
 		return SplitKind::INVALID;
 	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+	case LogicalOperatorType::LOGICAL_DELIM_JOIN:
 	case LogicalOperatorType::LOGICAL_ANY_JOIN:
 	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT: {
 		const auto left = children[0];
@@ -417,8 +512,9 @@ SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, 
 		    op.type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT ? JoinType::INNER : op.Cast<LogicalJoin>().join_type;
 		// Both inputs split by the same key ranges: rows with equal keys meet in one task, whatever the Join type.
 		const bool co_split = left == SplitKind::SPLIT_BY_KEY && right == SplitKind::SPLIT_BY_KEY &&
-		                      op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN &&
-		                      JoinsOnKey(op.Cast<LogicalComparisonJoin>(), partition);
+		                      (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		                       op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) &&
+		                      JoinsOnKey(op.Cast<LogicalComparisonJoin>(), partition, delims);
 		switch (join_type) {
 		case JoinType::INNER:
 			if (co_split) {
@@ -454,6 +550,14 @@ SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, 
 		// Other operators are only known to give the same output in every task when their input does.
 		return any_split ? SplitKind::INVALID : SplitKind::REPLICATED;
 	}
+}
+
+} // namespace
+
+SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan) {
+	vector<DelimSource> delims;
+	CollectDelimSources(op, delims);
+	return Analyze(op, partition, rowid_scan, delims);
 }
 
 } // namespace duckdb
