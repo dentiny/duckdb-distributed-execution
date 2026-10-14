@@ -203,26 +203,38 @@ void AddRowIdRange(LogicalGet &get, idx_t start, optional_idx end) {
 	get.table_filters.PushFilter(ColumnIndex(COLUMN_IDENTIFIER_ROW_ID), std::move(filter));
 }
 
-// Returns the input of an equality Join in op that reads scan through filters and projections, or nullptr.
-optional_ptr<LogicalOperator> FindJoinInput(LogicalOperator &op, LogicalGet &scan) {
-	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-		bool has_equality = false;
-		for (const auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
-			has_equality = has_equality || condition.comparison == ExpressionType::COMPARE_EQUAL;
-		}
+// Returns the input of a Join in op that reads scan through filters and projections, or nullptr, and sets equi_join to
+// whether that Join compares keys.
+optional_ptr<LogicalOperator> FindJoinInput(LogicalOperator &op, LogicalGet &scan, bool &equi_join) {
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+	case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+	case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+	case LogicalOperatorType::LOGICAL_ANY_JOIN:
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
 		for (auto &child : op.children) {
 			auto *input = child.get();
 			while (input->type == LogicalOperatorType::LOGICAL_FILTER ||
 			       input->type == LogicalOperatorType::LOGICAL_PROJECTION) {
 				input = input->children[0].get();
 			}
-			if (has_equality && input == &scan) {
-				return child.get();
+			if (input != &scan) {
+				continue;
 			}
+			equi_join = false;
+			if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
+				for (const auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
+					equi_join = equi_join || IsKeyComparison(condition.comparison);
+				}
+			}
+			return child.get();
 		}
+		break;
+	default:
+		break;
 	}
 	for (auto &child : op.children) {
-		auto result = FindJoinInput(*child, scan);
+		auto result = FindJoinInput(*child, scan, equi_join);
 		if (result) {
 			return result;
 		}
@@ -345,12 +357,17 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
 	if (scans.size() > 1 && join_partitioning == "never") {
 		return false;
 	}
-	// Estimates are lost in serialization, so this is decided here, at the Join's inputs. A scan that no equi-join
-	// reads directly, e.g. below an aggregate, is charged its own output.
+	// Estimates are lost in serialization, so this is decided here, at the Join's inputs. The cost model assumes hash
+	// Joins, so a scan another Join reads stays local; a scan no Join reads directly, e.g. below an aggregate, is
+	// charged its own output.
 	vector<JoinInputCost> costs;
 	if (scans.size() > 1) {
 		for (const auto &scan : scans) {
-			auto join_input = FindJoinInput(input, scan.get());
+			bool equi_join = false;
+			auto join_input = FindJoinInput(input, scan.get(), equi_join);
+			if (join_input && !equi_join) {
+				return false;
+			}
 			auto cost = EstimateJoinInputCost(join_input ? *join_input : scan.get(), scan.get());
 			if (!cost) {
 				return false;

@@ -250,6 +250,13 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL"}) {
 			REQUIRE(fixture.RequireLocalResult(fallback_sql).empty());
 		}
+		// A window may see its rows in another order in each task, and the cost model only covers equi-Joins.
+		for (const auto &local_sql :
+		     {"SELECT sum(f.amount) FROM fact f JOIN (SELECT row_number() OVER (ORDER BY k DESC) AS rn FROM dim) d "
+		      "ON f.k = d.rn",
+		      "SELECT sum(f.amount), count(*) FROM fact f JOIN dim d ON f.k < d.k"}) {
+			REQUIRE(fixture.RequireLocalResult(local_sql).empty());
+		}
 		// A LEFT Join splits its preserved input and replicates the other; the other way round it stays local.
 		auto left_executions =
 		    fixture.RequireLocalResult("SELECT sum(f.amount) FROM fact f LEFT JOIN dim d ON f.k = d.k AND d.k < 3");
@@ -652,11 +659,16 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 			REQUIRE(StringUtil::Contains(executions[0].sql, "item (partitioned)"));
 			REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
 		}
-		// Items without a key make NOT IN unknown for every order without a match, so item is never split there.
-		for (const auto &execution : fixture.RequireLocalResult(
-		         "SELECT count(*) FROM ord WHERE o_key NOT IN (SELECT i_key FROM item WHERE amount = 3)")) {
-			REQUIRE_FALSE(StringUtil::Contains(execution.sql, "item (partitioned)"));
-		}
+		// Items without a key make NOT IN unknown for every order without a match, so item is never split there. The
+		// cost model keeps the replicated item local, so it is bypassed.
+		REQUIRE_FALSE(fixture.client->Query("SET duckherder_join_partitioning = 'always'")->HasError());
+		executions = fixture.RequireLocalResult(
+		    "SELECT count(*) FROM ord WHERE o_key NOT IN (SELECT i_key FROM item WHERE amount = 3)");
+		REQUIRE_FALSE(fixture.client->Query("RESET duckherder_join_partitioning")->HasError());
+		REQUIRE(executions.size() == 1);
+		INFO(executions[0].sql);
+		REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
+		REQUIRE_FALSE(StringUtil::Contains(executions[0].sql, "item (partitioned)"));
 		// Orders without a match are padded with a NULL key in every task, so their group is merged on the driver.
 		executions =
 		    fixture.RequireLocalResult("SELECT count(*), sum(c) FROM (SELECT o.o_key, count(*) AS c FROM item i "

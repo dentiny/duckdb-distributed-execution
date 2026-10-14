@@ -28,14 +28,17 @@ struct KeyPair {
 	KeyRangeScan right;
 };
 
-// Whether comparison only matches equal keys, which key ranges put in one task. NULL keys all go to the first task, so
-// IS NOT DISTINCT FROM qualifies too.
-bool IsKeyComparison(ExpressionType comparison) {
-	return comparison == ExpressionType::COMPARE_EQUAL || comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM;
-}
-
 bool SameColumn(const KeyRangeScan &a, const KeyRangeScan &b) {
 	return a.table_index == b.table_index && a.column == b.column;
+}
+
+bool ContainsColumn(const vector<KeyRangeScan> &columns, const KeyRangeScan &column) {
+	for (const auto &member : columns) {
+		if (SameColumn(member, column)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 // Returns the scan in op whose table column binding reads, following plain column references through projections and
@@ -76,6 +79,7 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 	for (idx_t idx = 0; idx < op.children.size(); ++idx) {
 		// A key an outer Join pads with NULL is NULL in every task, not only the first.
 		if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		    op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN || op.type == LogicalOperatorType::LOGICAL_ASOF_JOIN ||
 		    op.type == LogicalOperatorType::LOGICAL_ANY_JOIN) {
 			const auto join_type = op.Cast<LogicalJoin>().join_type;
 			if (idx == 0 ? IsRightOuterJoin(join_type) : IsLeftOuterJoin(join_type) || join_type == JoinType::SINGLE) {
@@ -90,25 +94,33 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 	return nullptr;
 }
 
+// Resolves the scan columns that condition of join compares as keys. Returns false if it compares anything else.
+bool ResolveKeyPair(LogicalComparisonJoin &join, const JoinCondition &condition, KeyPair &pair) {
+	if (!IsKeyComparison(condition.comparison) ||
+	    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
+	    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+		return false;
+	}
+	auto left =
+	    ResolveColumn(*join.children[0], condition.left->Cast<BoundColumnRefExpression>().binding, pair.left.column);
+	auto right =
+	    ResolveColumn(*join.children[1], condition.right->Cast<BoundColumnRefExpression>().binding, pair.right.column);
+	if (!left || !right) {
+		return false;
+	}
+	pair.left.table_index = left->table_index;
+	pair.right.table_index = right->table_index;
+	return true;
+}
+
 // Collects the column pairs that Joins in op compare for equality. AnalyzeSplit decides whether splitting by them is
 // correct.
 void CollectKeyPairs(LogicalOperator &op, vector<KeyPair> &pairs) {
 	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
 		auto &join = op.Cast<LogicalComparisonJoin>();
 		for (const auto &condition : join.conditions) {
-			if (!IsKeyComparison(condition.comparison) ||
-			    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
-			    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
-				continue;
-			}
 			KeyPair pair;
-			auto left = ResolveColumn(*op.children[0], condition.left->Cast<BoundColumnRefExpression>().binding,
-			                          pair.left.column);
-			auto right = ResolveColumn(*op.children[1], condition.right->Cast<BoundColumnRefExpression>().binding,
-			                           pair.right.column);
-			if (left && right) {
-				pair.left.table_index = left->table_index;
-				pair.right.table_index = right->table_index;
+			if (ResolveKeyPair(join, condition, pair)) {
 				pairs.emplace_back(pair);
 			}
 		}
@@ -121,20 +133,12 @@ void CollectKeyPairs(LogicalOperator &op, vector<KeyPair> &pairs) {
 // Returns the columns that equal key through the equalities in pairs, including key itself.
 vector<KeyRangeScan> EqualColumns(const KeyRangeScan &key, const vector<KeyPair> &pairs) {
 	vector<KeyRangeScan> result {key};
-	auto contains = [&](const KeyRangeScan &column) {
-		for (const auto &member : result) {
-			if (SameColumn(member, column)) {
-				return true;
-			}
-		}
-		return false;
-	};
 	bool changed = true;
 	while (changed) {
 		changed = false;
 		for (const auto &pair : pairs) {
-			if (contains(pair.left) != contains(pair.right)) {
-				result.emplace_back(contains(pair.left) ? pair.right : pair.left);
+			if (ContainsColumn(result, pair.left) != ContainsColumn(result, pair.right)) {
+				result.emplace_back(ContainsColumn(result, pair.left) ? pair.right : pair.left);
 				changed = true;
 			}
 		}
@@ -307,41 +311,23 @@ vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, LogicalOperato
 	return plans;
 }
 
+bool IsKeyComparison(ExpressionType comparison) {
+	return comparison == ExpressionType::COMPARE_EQUAL || comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM;
+}
+
 bool IsSplit(SplitKind kind) {
 	return kind == SplitKind::SPLIT || kind == SplitKind::SPLIT_BY_KEY;
 }
 
 namespace {
 
-bool IsKeyColumn(const KeyRangePartition &partition, const KeyRangeScan &column) {
-	for (const auto &scan : partition.scans) {
-		if (SameColumn(scan, column)) {
-			return true;
-		}
-	}
-	return false;
-}
-
 // Whether a condition of join equates a key column of its left input with one of its right input.
 bool JoinsOnKey(LogicalComparisonJoin &join, const KeyRangePartition &partition) {
 	for (const auto &condition : join.conditions) {
-		if (!IsKeyComparison(condition.comparison) ||
-		    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
-		    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
-			continue;
-		}
-		KeyRangeScan left;
-		KeyRangeScan right;
-		auto left_scan =
-		    ResolveColumn(*join.children[0], condition.left->Cast<BoundColumnRefExpression>().binding, left.column);
-		auto right_scan =
-		    ResolveColumn(*join.children[1], condition.right->Cast<BoundColumnRefExpression>().binding, right.column);
-		if (left_scan && right_scan) {
-			left.table_index = left_scan->table_index;
-			right.table_index = right_scan->table_index;
-			if (IsKeyColumn(partition, left) && IsKeyColumn(partition, right)) {
-				return true;
-			}
+		KeyPair pair;
+		if (ResolveKeyPair(join, condition, pair) && ContainsColumn(partition.scans, pair.left) &&
+		    ContainsColumn(partition.scans, pair.right)) {
+			return true;
 		}
 	}
 	return false;
@@ -358,7 +344,7 @@ bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &g
 		auto scan = ResolveColumn(input, group->Cast<BoundColumnRefExpression>().binding, column.column);
 		if (scan) {
 			column.table_index = scan->table_index;
-			if (IsKeyColumn(partition, column)) {
+			if (ContainsColumn(partition.scans, column)) {
 				return true;
 			}
 		}
@@ -416,6 +402,9 @@ SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, 
 		               GroupsByKey(*op.children[0], op.Cast<LogicalDistinct>().distinct_targets, partition)
 		           ? SplitKind::SPLIT_BY_KEY
 		           : SplitKind::INVALID;
+	case LogicalOperatorType::LOGICAL_WINDOW:
+		// Rows of a window partition can arrive in another order in each task, so even a replicated input may differ.
+		return SplitKind::INVALID;
 	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
 	case LogicalOperatorType::LOGICAL_ANY_JOIN:
 	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT: {

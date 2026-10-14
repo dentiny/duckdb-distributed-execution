@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "server/driver/query_utils.hpp"
@@ -28,6 +29,10 @@ struct KeyRangePartition {
 // scan qualifies or the key gives fewer than two ranges.
 bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, const vector<reference<LogicalGet>> &scans,
                            const vector<JoinInputCost> &costs, idx_t max_tasks, KeyRangePartition &result);
+
+// Whether a Join comparing two key columns with comparison only matches equal keys, which key ranges put in one task.
+// NULL keys all go to the first task, so IS NOT DISTINCT FROM qualifies too.
+bool IsKeyComparison(ExpressionType comparison);
 
 // How the output of a plan is spread over tasks when some of its scans are split.
 enum class SplitKind : uint8_t {
