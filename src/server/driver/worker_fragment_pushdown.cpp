@@ -150,7 +150,8 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 		in_delim_join = true;
 		break;
 	case LogicalOperatorType::LOGICAL_DELIM_GET:
-		// It reads its DELIM_JOIN's input, which workers only have if the Join is in the fragment too.
+		// It reads the input of its DELIM_JOIN, which workers only have if that Join is in the fragment too. Here only
+		// some DELIM_JOIN above it is checked; AnalyzeSplit rejects one whose DELIM_JOIN is not in the fragment.
 		if (!in_delim_join) {
 			return false;
 		}

@@ -558,6 +558,17 @@ TEST_CASE("Only scans every output row comes from one row of are partitioned", "
 			REQUIRE(StringUtil::Contains(executions[0].sql, "skew (partitioned)"));
 			REQUIRE(executions[0].sql.find("(partitioned)") == executions[0].sql.rfind("(partitioned)"));
 		}
+		// A correlated subquery that stays a DELIM_JOIN. skew is not ordered on k, so only the outer skew is split and
+		// every task reads all of the inner one, which matches every correlated value. The cost model keeps the
+		// replicated skew local, so it is bypassed.
+		REQUIRE_FALSE(fixture.client->Query("SET duckherder_join_partitioning = 'always'")->HasError());
+		auto delim_executions = fixture.RequireLocalResult(
+		    "SELECT count(*), sum(s.amount) FROM skew s WHERE NOT EXISTS (SELECT 1 FROM skew s2 WHERE s2.k = s.k AND "
+		    "s2.amount > s.amount)");
+		REQUIRE_FALSE(fixture.client->Query("RESET duckherder_join_partitioning")->HasError());
+		REQUIRE(delim_executions.size() == 1);
+		INFO(delim_executions[0].sql);
+		REQUIRE(delim_executions[0].sql.find("(partitioned)") == delim_executions[0].sql.rfind("(partitioned)"));
 		// skew, the largest scan, is below an aggregate grouped by something other than a split key, so it is not
 		// split.
 		REQUIRE(

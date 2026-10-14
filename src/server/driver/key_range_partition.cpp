@@ -50,9 +50,9 @@ struct DelimSource {
 	SplitKind kind;
 };
 
-// The input of join whose duplicate-eliminated columns its DELIM_GETs read.
-LogicalOperator &DelimInput(LogicalComparisonJoin &join) {
-	return *join.children[join.delim_flipped ? 1 : 0];
+// The index of the input of join whose duplicate-eliminated columns its DELIM_GETs, below the other input, read.
+idx_t DelimInputIndex(const LogicalComparisonJoin &join) {
+	return join.delim_flipped ? 1 : 0;
 }
 
 void CollectDelimGets(LogicalOperator &op, LogicalComparisonJoin &join, vector<DelimSource> &sources) {
@@ -78,7 +78,7 @@ void CollectDelimGets(LogicalOperator &op, LogicalComparisonJoin &join, vector<D
 void CollectDelimSources(LogicalOperator &op, vector<DelimSource> &sources) {
 	if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 		auto &join = op.Cast<LogicalComparisonJoin>();
-		CollectDelimGets(*join.children[join.delim_flipped ? 0 : 1], join, sources);
+		CollectDelimGets(*join.children[1 - DelimInputIndex(join)], join, sources);
 	}
 	for (auto &child : op.children) {
 		CollectDelimSources(*child, sources);
@@ -134,14 +134,15 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 	if (op.type == LogicalOperatorType::LOGICAL_DELIM_GET &&
 	    op.Cast<LogicalDelimGet>().table_index == binding.table_index) {
 		auto source = FindDelimSource(delims, binding.table_index);
-		if (!source || !source->join) {
+		if (!source || !source->join || binding.column_index >= source->join->duplicate_eliminated_columns.size()) {
 			return nullptr;
 		}
 		auto &expr = *source->join->duplicate_eliminated_columns[binding.column_index];
 		if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 			return nullptr;
 		}
-		return ResolveColumn(DelimInput(*source->join), expr.Cast<BoundColumnRefExpression>().binding, column, delims);
+		return ResolveColumn(*source->join->children[DelimInputIndex(*source->join)],
+		                     expr.Cast<BoundColumnRefExpression>().binding, column, delims);
 	}
 	for (idx_t idx = 0; idx < op.children.size(); ++idx) {
 		// A key an outer Join pads with NULL is NULL in every task, not only the first.
@@ -428,7 +429,7 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 	// A DELIM_JOIN's DELIM_GETs hold the distinct keys of its other input in each task, so that input comes first.
 	idx_t first = 0;
 	if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
-		first = op.Cast<LogicalComparisonJoin>().delim_flipped ? 1 : 0;
+		first = DelimInputIndex(op.Cast<LogicalComparisonJoin>());
 	}
 	for (idx_t step = 0; step < op.children.size(); ++step) {
 		const auto idx = (first + step) % op.children.size();
