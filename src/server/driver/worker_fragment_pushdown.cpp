@@ -271,8 +271,7 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 	auto &chunk = *local.chunk;
 	auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, chunk.size() - local.offset);
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
-		VectorOperations::Copy(chunk.data[col_idx], output.data[col_idx], local.offset + count, local.offset,
-		                       /*target_offset=*/0);
+		output.data[col_idx].Slice(chunk.data[col_idx], local.offset, local.offset + count);
 	}
 	output.SetCardinality(count);
 	local.offset += count;
