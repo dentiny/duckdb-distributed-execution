@@ -2,10 +2,18 @@
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
+#include "duckdb/parser/constraints/not_null_constraint.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/null_filter.hpp"
+#include "duckdb/planner/filter/optional_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_delim_get.hpp"
@@ -281,6 +289,35 @@ vector<Value> CutKeyRanges(const vector<Value> &minimums, idx_t max_tasks) {
 	return cuts;
 }
 
+bool HasNotNullConstraint(TableCatalogEntry &table, column_t column) {
+	for (const auto &constraint : table.GetConstraints()) {
+		if (constraint->type == ConstraintType::NOT_NULL &&
+		    constraint->Cast<NotNullConstraint>().index == LogicalIndex(column)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Keeps the keys below cut and the NULL keys. A ConjunctionOrFilter selects rows in time quadratic in the rows passing,
+// so it only prunes row groups and an expression filter selects the rows.
+void PushBelowOrNull(LogicalGet &get, column_t column, const Value &cut) {
+	auto or_null = make_uniq<ConjunctionOrFilter>();
+	or_null->child_filters.emplace_back(make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, cut));
+	or_null->child_filters.emplace_back(make_uniq<IsNullFilter>());
+	get.table_filters.PushFilter(ColumnIndex(column), make_uniq<OptionalFilter>(std::move(or_null)));
+
+	const auto &type = get.GetTable()->GetColumn(LogicalIndex(column)).Type();
+	auto key = make_uniq<BoundReferenceExpression>(type, 0ULL);
+	auto below = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN, key->Copy(),
+	                                                  make_uniq<BoundConstantExpression>(cut));
+	auto is_null = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NULL, LogicalType::BOOLEAN);
+	is_null->children.emplace_back(std::move(key));
+	get.table_filters.PushFilter(ColumnIndex(column),
+	                             make_uniq<ExpressionFilter>(make_uniq<BoundConjunctionExpression>(
+	                                 ExpressionType::CONJUNCTION_OR, std::move(below), std::move(is_null))));
+}
+
 // Restricts the scans of partition in op to the task's key range. The first range is open below and holds NULL keys,
 // so rows without a key are read once; the last range is open above.
 void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t task) {
@@ -295,16 +332,15 @@ void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t
 				    ColumnIndex(scan.column),
 				    make_uniq<ConstantFilter>(ExpressionType::COMPARE_GREATERTHANOREQUALTO, partition.cuts[task - 1]));
 			}
-			if (task < partition.cuts.size()) {
-				unique_ptr<TableFilter> below =
-				    make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, partition.cuts[task]);
-				if (task == 0) {
-					auto or_null = make_uniq<ConjunctionOrFilter>();
-					or_null->child_filters.emplace_back(std::move(below));
-					or_null->child_filters.emplace_back(make_uniq<IsNullFilter>());
-					below = std::move(or_null);
-				}
-				get.table_filters.PushFilter(ColumnIndex(scan.column), std::move(below));
+			if (task == partition.cuts.size()) {
+				continue;
+			}
+			const auto &cut = partition.cuts[task];
+			if (task == 0 && !HasNotNullConstraint(*get.GetTable(), scan.column)) {
+				PushBelowOrNull(get, scan.column, cut);
+			} else {
+				get.table_filters.PushFilter(ColumnIndex(scan.column),
+				                             make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, cut));
 			}
 		}
 	}
