@@ -22,7 +22,6 @@ public:
 	arrow::Result<unique_ptr<Connection>> Connect() const;
 
 	DuckDB &GetInstance() const;
-	const shared_ptr<DuckDB> &GetSharedInstance() const;
 
 	// Resolve an empty client configuration to the server's default in-memory database.
 	static distributed::StorageConfig ResolveConfig(const distributed::StorageConfig &config);

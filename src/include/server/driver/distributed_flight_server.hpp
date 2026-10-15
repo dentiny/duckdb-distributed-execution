@@ -36,7 +36,7 @@ public:
 	// Stop the server.
 	void Shutdown();
 
-	// Reset all server states.
+	// Reset all server states. No request may be in flight, since in-flight requests use the components it replaces.
 	void Reset();
 
 	// Get server location.

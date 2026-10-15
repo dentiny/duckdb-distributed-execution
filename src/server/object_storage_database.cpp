@@ -173,8 +173,4 @@ DuckDB &ObjectStorageDatabase::GetInstance() const {
 	return *instance;
 }
 
-const shared_ptr<DuckDB> &ObjectStorageDatabase::GetSharedInstance() const {
-	return instance;
-}
-
 } // namespace duckdb

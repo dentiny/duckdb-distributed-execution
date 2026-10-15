@@ -21,22 +21,23 @@ arrow::Status ClientRegistry::Register(const distributed::RegisterClientRequest 
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
 	PruneExpired();
 	auto storage_config = ObjectStorageDatabase::ResolveConfig(req.storage_config());
-	auto storage_key = ObjectStorageDatabase::GetKey(storage_config);
-	auto &database = databases[storage_key];
+	auto &entry = databases[ObjectStorageDatabase::GetKey(storage_config)];
+	auto database = entry.lock();
 	if (!database) {
-		database = make_uniq<ServedDatabase>(storage_config);
+		database = make_shared_ptr<ServedDatabase>(storage_config);
+		entry = database;
+		if (database->IsDefault()) {
+			default_database = database;
+		}
 	}
 
-	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
 	auto registration = database->AddClient(req.role(), worker_manager);
 	if (!registration.ok()) {
-		if (!database->HasClients() && !database->IsDefault()) {
-			databases.erase(storage_key);
-		}
 		resp.set_success(false);
 		resp.set_error_message(registration.status().message());
 		return arrow::Status::OK();
 	}
+	auto client_id = UUID::ToString(UUID::GenerateRandomUUID());
 	clients.emplace(client_id, std::move(registration).ValueOrDie());
 	resp.set_success(true);
 	resp.mutable_register_client()->set_client_id(client_id);
@@ -44,15 +45,8 @@ arrow::Status ClientRegistry::Register(const distributed::RegisterClientRequest 
 }
 
 arrow::Status ClientRegistry::Unregister(const string &client_id, distributed::DistributedResponse &resp) {
-	shared_ptr<ClientRegistration> registration;
-	if (Lookup(client_id, registration)) {
-		Close(*registration);
-		const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
-		auto entry = clients.find(client_id);
-		if (entry != clients.end() && entry->second == registration) {
-			Remove(entry);
-		}
-	}
+	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
+	clients.erase(client_id);
 	resp.set_success(true);
 	resp.mutable_unregister_client();
 	return arrow::Status::OK();
@@ -60,11 +54,9 @@ arrow::Status ClientRegistry::Unregister(const string &client_id, distributed::D
 
 void ClientRegistry::Clear() {
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
-	for (auto &entry : clients) {
-		Close(*entry.second);
-	}
 	clients.clear();
 	databases.clear();
+	default_database.reset();
 }
 
 bool ClientRegistry::Lookup(const string &client_id, shared_ptr<ClientRegistration> &registration) {
@@ -98,38 +90,20 @@ void ClientRegistry::Touch(const shared_ptr<ClientRegistration> &registration) {
 	registration->last_seen = GetSteadyNowMilliSecSinceEpoch();
 }
 
-void ClientRegistry::Close(ClientRegistration &registration) {
-	const concurrency::lock_guard<concurrency::mutex> lock(registration.connection_mutex);
-	registration.closed = true;
-}
-
-bool ClientRegistry::TryClose(ClientRegistration &registration) {
-	if (!registration.connection_mutex.try_lock()) {
-		return false;
-	}
-	const concurrency::lock_guard<concurrency::mutex> lock(registration.connection_mutex, std::adopt_lock);
-	registration.closed = true;
-	return true;
-}
-
 void ClientRegistry::PruneExpired() {
 	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - test_state.GetClientLeaseTimeout().count();
 	for (auto entry = clients.begin(); entry != clients.end();) {
 		auto current = entry++;
-		if (current->second->last_seen.load() < expiration && TryClose(*current->second)) {
-			Remove(current);
+		if (current->second->last_seen.load() < expiration) {
+			clients.erase(current);
 		}
 	}
-}
-
-void ClientRegistry::Remove(ClientMap::iterator entry) {
-	auto database = databases.find(entry->second->database_key);
-	D_ASSERT(database != databases.end());
-	database->second->RemoveClient(entry->second->role);
-	if (!database->second->HasClients() && !database->second->IsDefault()) {
-		databases.erase(database);
+	for (auto entry = databases.begin(); entry != databases.end();) {
+		auto current = entry++;
+		if (current->second.expired()) {
+			databases.erase(current);
+		}
 	}
-	clients.erase(entry);
 }
 
 } // namespace duckdb

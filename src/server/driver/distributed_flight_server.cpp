@@ -126,11 +126,6 @@ arrow::Status DistributedFlightServer::HandleClientAction(const distributed::Dis
 		return arrow::Status::OK();
 	}
 	const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
-	if (registration->closed) {
-		response.set_success(false);
-		response.set_error_message(ClientRegistry::NOT_REGISTERED_ERROR);
-		return arrow::Status::OK();
-	}
 	if (request.request_case() == distributed::DistributedRequest::kTransaction) {
 		return transaction_handler.Handle(request, *registration, response);
 	}
@@ -219,9 +214,6 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	ClientRegistry::Touch(registration);
 
 	const concurrency::lock_guard<concurrency::mutex> connection_lock(registration->connection_mutex);
-	if (registration->closed) {
-		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
-	}
 	ARROW_RETURN_NOT_OK(request_handler->HandleQuery(request, *registration));
 
 	ARROW_ASSIGN_OR_RAISE(
@@ -283,9 +275,6 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	ClientRegistry::Touch(registration);
 
 	const concurrency::lock_guard<concurrency::mutex> connection_lock(registration->connection_mutex);
-	if (registration->closed) {
-		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
-	}
 
 	// Read all record batches.
 	ARROW_ASSIGN_OR_RAISE(auto schema, reader->GetSchema());

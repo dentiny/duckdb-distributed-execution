@@ -15,6 +15,7 @@ ServedDatabase::ServedDatabase(distributed::StorageConfig config_p) : config(std
 arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distributed::ClientRole role,
                                                                         WorkerManager &worker_manager) {
 	const bool writable = role == distributed::CLIENT_ROLE_READ_WRITE;
+	const concurrency::lock_guard<concurrency::mutex> lock(mutex);
 	if (writable && has_writer) {
 		return arrow::Status::Invalid("Database ", config.database_uri(), " already has a writable Duckherder client");
 	}
@@ -36,26 +37,17 @@ arrow::Result<shared_ptr<ClientRegistration>> ServedDatabase::AddClient(distribu
 		ARROW_ASSIGN_OR_RAISE(executor_connection, database->Connect());
 	}
 	auto registration =
-	    make_shared_ptr<ClientRegistration>(*database, std::move(connection_result).ValueOrDie(),
+	    make_shared_ptr<ClientRegistration>(shared_from_this(), std::move(connection_result).ValueOrDie(),
 	                                        std::move(executor_connection), worker_manager, role, config);
-	if (writable) {
-		has_writer = true;
-	} else {
-		++reader_count;
-	}
+	has_writer = has_writer || writable;
 	return registration;
 }
 
 void ServedDatabase::RemoveClient(distributed::ClientRole role) {
 	if (role == distributed::CLIENT_ROLE_READ_WRITE) {
+		const concurrency::lock_guard<concurrency::mutex> lock(mutex);
 		has_writer = false;
-	} else {
-		--reader_count;
 	}
-}
-
-bool ServedDatabase::HasClients() const {
-	return has_writer || reader_count > 0;
 }
 
 bool ServedDatabase::IsDefault() const {
