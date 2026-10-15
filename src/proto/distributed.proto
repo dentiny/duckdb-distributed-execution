@@ -38,8 +38,6 @@ message DistributedRequest {
 
     // Control-worker communication.
     ExecutePartitionRequest execute_partition = 15;
-    WorkerRegisterRequest worker_register = 16;
-    WorkerHeartbeatRequest worker_heartbeat = 17;
 
     // Monitoring.
     GetQueryExecutionStatsRequest get_query_execution_stats = 18;
@@ -71,12 +69,6 @@ message DistributedResponse {
 
     // General client-server administration.
     LoadExtensionResponse load_extension = 15;
-
-    // Control-worker communication.
-    ExecutePartitionResponse execute_partition = 16;
-    WorkerRegisterResponse worker_register = 17;
-    WorkerHeartbeatResponse worker_heartbeat = 18;
-
     // Monitoring.
     GetQueryExecutionStatsResponse get_query_execution_stats = 19;
 

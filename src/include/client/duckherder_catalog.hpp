@@ -1,7 +1,6 @@
 #pragma once
 
 #include "client/duckherder_client_sessions.hpp"
-#include "client/duckherder_remote_table_config.hpp"
 #include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -77,10 +76,6 @@ private:
 	friend class DuckherderSchemaCatalogEntry;
 	friend class DuckherderTableCatalogEntry;
 
-	void RegisterRemoteTable(const string &table_name, const string &server_url, const string &remote_table_name);
-	void UnregisterRemoteTable(const string &table_name);
-	bool IsRemoteTable(const string &schema_name, const string &table_name) const;
-	RemoteTableConfig GetRemoteTableConfig(const string &schema_name, const string &table_name) const;
 	string GetServerUrl() const;
 
 	optional_ptr<CatalogEntry> CreateSchemaLocal(CatalogTransaction transaction, CreateSchemaInfo &info);
@@ -93,10 +88,6 @@ private:
 	int server_port;
 
 	DuckherderClientSessions client_sessions;
-
-	// Explicit routing overrides registered through the compatibility pragmas.
-	mutable concurrency::mutex remote_tables_mu;
-	RemoteTableMap remote_tables DUCKDB_GUARDED_BY(remote_tables_mu);
 
 	// Maps from a qualified remote table name to its row count when the catalog was loaded.
 	// Only guides join ordering, so it is not refreshed on later writes.

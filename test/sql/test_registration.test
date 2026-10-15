@@ -1,5 +1,5 @@
 # name: test/sql/test_registration.test
-# description: Test worker and driver node registration functions for distributed execution
+# description: Test worker registration functions for distributed execution
 # group: [sql]
 
 require duckherder
@@ -62,21 +62,3 @@ SELECT * FROM worker_reg_test ORDER BY id;
 1	test1
 2	test2
 3	test3
-
-# Test driver node registration.
-statement ok
-SELECT main.duckherder_register_or_replace_driver('driver-1', 'grpc://localhost:8815');
-
-# Replace the driver node with a different one.
-statement ok
-SELECT main.duckherder_register_or_replace_driver('driver-2', 'grpc://localhost:8815');
-
-# The function should work multiple times (idempotent).
-statement ok
-SELECT main.duckherder_register_or_replace_driver('driver-3', 'grpc://localhost:8815');
-
-# Workers should still be available after driver registration.
-query I
-SELECT main.duckherder_get_worker_count();
-----
-2

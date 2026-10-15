@@ -111,12 +111,7 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 }
 
 DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntry &table) {
-	auto &catalog = table.ParentCatalog();
-	if (catalog.GetCatalogType() != "duckherder") {
-		throw InternalException("Expected DuckherderCatalog for distributed operation");
-	}
-	auto &dh_catalog = catalog.Cast<DuckherderCatalog>();
-	return dh_catalog.GetClient(context);
+	return GetDistributedClient(context, table.ParentCatalog());
 }
 
 DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog) {

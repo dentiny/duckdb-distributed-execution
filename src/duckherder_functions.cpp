@@ -1,9 +1,7 @@
 #include "duckherder_functions.hpp"
 
 #include "client/execution/distributed_table_scan_function.hpp"
-#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
-#include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckherder_extension_instance_state.hpp"
@@ -46,21 +44,6 @@ void RegisterTableFunction(ExtensionLoader &loader, TableFunction function, vect
 	loader.RegisterFunction(std::move(info));
 }
 
-void RegisterPragmaFunction(ExtensionLoader &loader, PragmaFunction function, vector<string> parameter_names,
-                            string description, vector<string> examples, vector<string> categories) {
-	auto function_name = function.name;
-	PragmaFunctionSet functions(function_name);
-	functions.AddFunction(std::move(function));
-	CreatePragmaFunctionInfo info(std::move(function_name), std::move(functions));
-	AddDescription(info, std::move(parameter_names), std::move(description), std::move(examples),
-	               std::move(categories));
-
-	auto &db = loader.GetDatabaseInstance();
-	auto &system_catalog = Catalog::GetSystemCatalog(db);
-	auto transaction = CatalogTransaction::GetSystemTransaction(db);
-	system_catalog.CreatePragmaFunction(transaction, info);
-}
-
 DatabaseInstance &GetDatabaseInstance(ExpressionState &state) {
 	auto *executor = state.root.executor;
 	auto &client_context = executor->GetContext();
@@ -88,11 +71,6 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	                      /*description=*/"Scans a table stored on a Duckherder server.",
 	                      /*examples=*/ {},
 	                      /*categories=*/ {"duckherder", "distributed_execution"});
-	RegisterPragmaFunction(loader, DuckherderPragmas::GetUnregisterRemoteTableFunction(),
-	                       /*parameter_names=*/ {"local_table_name"},
-	                       /*description=*/"Removes a remote table mapping from the attached Duckherder catalog.",
-	                       /*examples=*/ {"PRAGMA duckherder_unregister_remote_table('orders');"},
-	                       /*categories=*/ {"duckherder", "distributed_execution", "catalog"});
 	RegisterScalarFunction(
 	    loader, DuckherderPragmas::GetLoadExtensionFunction(),
 	    /*parameter_names=*/ {"extension_name"},
@@ -129,13 +107,6 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	    /*parameter_names=*/ {},
 	    /*description=*/"Stops the local Duckherder driver server and its managed standalone workers.",
 	    /*examples=*/ {"SELECT duckherder_stop_local_server();"},
-	    /*categories=*/ {"duckherder", "distributed_execution", "server"});
-	RegisterScalarFunction(
-	    loader, GetRegisterOrReplaceDriverFunction(),
-	    /*parameter_names=*/ {"driver_id", "location"},
-	    /*description=*/"Registers a driver node, replacing the currently registered driver if one exists.",
-	    /*examples=*/
-	    {"SELECT duckherder_register_or_replace_driver('driver-1', 'grpc://localhost:8815');"},
 	    /*categories=*/ {"duckherder", "distributed_execution", "server"});
 	RegisterScalarFunction(
 	    loader, GetWorkerCountFunction(),

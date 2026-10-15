@@ -6,39 +6,10 @@ import "storage_config.proto";
 
 // Execute a partition on a worker node.
 message ExecutePartitionRequest {
-  uint64 partition_id = 3;
-  uint64 total_partitions = 4;
   // Optimized logical plan fragment, serialized with DuckDB's BinarySerializer.
   bytes serialized_plan = 5;
   // Database the task reads from; the worker attaches it read-only on first use.
   StorageConfig storage_config = 8;
   // Driver build; a worker of another build cannot read the plan and rejects the task.
   string build_id = 9;
-}
-
-// Partition data is returned over Arrow Flight.
-message ExecutePartitionResponse {
-  uint64 partition_id = 1;
-  uint64 row_count = 2;
-}
-
-message WorkerRegisterRequest {
-  string worker_id = 1;
-  string host = 2;
-  uint32 port = 3;
-  uint32 num_threads = 4;
-}
-
-message WorkerRegisterResponse {
-  bool accepted = 1;
-  string message = 2;
-}
-
-message WorkerHeartbeatRequest {
-  string worker_id = 1;
-  double load = 2;
-}
-
-message WorkerHeartbeatResponse {
-  bool healthy = 1;
 }

@@ -48,9 +48,6 @@ public:
 	unique_ptr<QueryResult> CommitTransaction();
 	unique_ptr<QueryResult> RollbackTransaction();
 
-	// Check if table exists.
-	bool TableExists(const string &table_name);
-
 	// Load an extension on the server using this attachment's registered role.
 	unique_ptr<QueryResult> LoadExtension(const string &extension_name, const string &repository = "",
 	                                      const string &version = "");

@@ -29,16 +29,11 @@ public:
 		return port;
 	}
 
-	// Flight RPC methods
-	arrow::Status DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
-	                       std::unique_ptr<arrow::flight::ResultStream> *result) override;
-
 	arrow::Status DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
 	                    std::unique_ptr<arrow::flight::FlightDataStream> *stream) override;
 
 private:
 	arrow::Status HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
-	                                     distributed::DistributedResponse &resp,
 	                                     std::shared_ptr<arrow::RecordBatchReader> &reader);
 	// Run the task's serialized plan fragment on task_conn, which must outlive the result.
 	arrow::Status ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,

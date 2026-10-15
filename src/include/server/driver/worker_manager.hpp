@@ -38,10 +38,6 @@ public:
 	// Register a single external worker node.
 	arrow::Status RegisterWorker(const string &worker_id, const string &location);
 
-	// Register or replace the driver node.
-	// Unlike workers, only one driver node can be registered at a time.
-	arrow::Status RegisterOrReplaceDriver(const string &driver_id, const string &location);
-
 	// Get all available workers.
 	vector<WorkerInfo *> GetAvailableWorkers();
 
@@ -57,9 +53,6 @@ private:
 	vector<unique_ptr<WorkerInfo>> workers DUCKDB_GUARDED_BY(mu);
 	DuckDB &db;
 	std::shared_ptr<arrow::internal::ThreadPool> dispatch_pool DUCKDB_GUARDED_BY(mu);
-
-	// Driver node.
-	unique_ptr<WorkerInfo> driver_node DUCKDB_GUARDED_BY(mu);
 
 	// Local workers used for local testing.
 	vector<unique_ptr<WorkerNode>> local_workers DUCKDB_GUARDED_BY(mu);

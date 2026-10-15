@@ -89,13 +89,6 @@ arrow::Status DistributedFlightServer::RegisterWorker(const string &worker_id, c
 	return worker_manager->RegisterWorker(worker_id, location);
 }
 
-arrow::Status DistributedFlightServer::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
-	if (!worker_manager) {
-		return arrow::Status::Invalid("WorkerManager not initialized");
-	}
-	return worker_manager->RegisterOrReplaceDriver(driver_id, location);
-}
-
 idx_t DistributedFlightServer::GetWorkerCount() const {
 	if (!worker_manager) {
 		return 0;
@@ -222,8 +215,6 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	if (test_state.ShouldFailScanResponse()) {
 		return arrow::Status::IOError("Injected lost scan response");
 	}
-
-	ClientRegistry::Touch(registration);
 	*stream = std::move(data_stream);
 	return arrow::Status::OK();
 }

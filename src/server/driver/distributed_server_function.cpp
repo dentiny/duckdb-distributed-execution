@@ -33,6 +33,29 @@ static TestServerState &GetTestServerState() {
 	return *state;
 }
 
+void ShutdownLocalServer(TestServerState &server_state) {
+	if (server_state.test_server == nullptr) {
+		return;
+	}
+	server_state.test_server->Shutdown();
+	if (server_state.server_thread != nullptr && server_state.server_thread->joinable()) {
+		server_state.server_thread->join();
+	}
+	server_state.server_thread.reset();
+
+	for (auto &[worker_port, worker] : server_state.standalone_workers) {
+		worker->Shutdown();
+	}
+	for (auto &[worker_port, thd] : server_state.worker_threads) {
+		if (thd != nullptr && thd->joinable()) {
+			thd->join();
+		}
+	}
+	server_state.standalone_workers.clear();
+	server_state.worker_threads.clear();
+	server_state.test_server.reset();
+}
+
 void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &server_state = GetTestServerState();
 
@@ -49,33 +72,8 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 		worker_count = worker_data[0];
 	}
 
-	// If server already exists, properly shut it down first.
-	if (server_state.test_server != nullptr) {
-		// Shutdown the server and wait for the thread to finish.
-		server_state.test_server->Shutdown();
-		if (server_state.server_thread != nullptr && server_state.server_thread->joinable()) {
-			server_state.server_thread->join();
-		}
-		server_state.server_thread.reset();
-
-		// Shutdown standalone workers and wait for their threads.
-		for (auto &[worker_port, worker] : server_state.standalone_workers) {
-			worker->Shutdown();
-		}
-		for (auto &[worker_port, thd] : server_state.worker_threads) {
-			if (thd != nullptr && thd->joinable()) {
-				thd->join();
-			}
-		}
-		server_state.standalone_workers.clear();
-		server_state.worker_threads.clear();
-		server_state.test_server.reset();
-	}
-
-	// Create new server instance
-	if (server_state.test_server == nullptr) {
-		server_state.test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
-	}
+	ShutdownLocalServer(server_state);
+	server_state.test_server = make_uniq<DistributedFlightServer>("0.0.0.0", port);
 
 	arrow::Status status;
 	if (worker_count > 0) {
@@ -104,32 +102,7 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 }
 
 void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &server_state = GetTestServerState();
-
-	if (server_state.test_server != nullptr) {
-		// Shutdown the server
-		server_state.test_server->Shutdown();
-
-		// Wait for the server thread to finish
-		if (server_state.server_thread != nullptr && server_state.server_thread->joinable()) {
-			server_state.server_thread->join();
-		}
-		server_state.server_thread.reset();
-
-		// Shutdown standalone workers and wait for their threads
-		for (auto &[worker_port, worker] : server_state.standalone_workers) {
-			worker->Shutdown();
-		}
-		for (auto &[worker_port, thread] : server_state.worker_threads) {
-			if (thread != nullptr && thread->joinable()) {
-				thread->join();
-			}
-		}
-		server_state.standalone_workers.clear();
-		server_state.worker_threads.clear();
-
-		server_state.test_server.reset();
-	}
+	ShutdownLocalServer(GetTestServerState());
 	result.Reference(Value(SUCCESS));
 }
 
@@ -165,28 +138,6 @@ void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto status = server_state.test_server->RegisterWorker(worker_id, location);
 	if (!status.ok()) {
 		throw IOException(StringUtil::Format("Failed to register worker: %s", status.ToString()));
-	}
-	result.Reference(Value(SUCCESS));
-}
-
-void RegisterOrReplaceDriver(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &server_state = GetTestServerState();
-
-	if (server_state.test_server == nullptr) {
-		throw Exception(ExceptionType::INVALID_INPUT,
-		                "Server not started. Call duckherder_start_local_server() first.");
-	}
-
-	auto &driver_id_vector = args.data[0];
-	auto &location_vector = args.data[1];
-	auto driver_id_data = FlatVector::GetData<string_t>(driver_id_vector);
-	auto location_data = FlatVector::GetData<string_t>(location_vector);
-	string driver_id = driver_id_data[0].GetString();
-	string location = location_data[0].GetString();
-
-	auto status = server_state.test_server->RegisterOrReplaceDriver(driver_id, location);
-	if (!status.ok()) {
-		throw IOException(StringUtil::Format("Failed to register driver: %s", status.ToString()));
 	}
 	result.Reference(Value(SUCCESS));
 }
@@ -289,15 +240,6 @@ ScalarFunction GetStartStandaloneWorkerFunction() {
 	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
 	start_func.SetVolatile();
 	return start_func;
-}
-
-ScalarFunction GetRegisterOrReplaceDriverFunction() {
-	auto register_func =
-	    ScalarFunction("duckherder_register_or_replace_driver",
-	                   /*arguments=*/ {LogicalType {LogicalTypeId::VARCHAR}, LogicalType {LogicalTypeId::VARCHAR}},
-	                   /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, RegisterOrReplaceDriver);
-	register_func.SetVolatile();
-	return register_func;
 }
 
 } // namespace duckdb

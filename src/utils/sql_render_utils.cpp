@@ -16,7 +16,6 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
-#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/list.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -35,8 +34,6 @@ bool IsPushableAggregate(const string &name) {
 struct RemoteScope {
 	column_binding_map_t<string> columns;
 	column_binding_map_t<optional_ptr<const Expression>> projections;
-	// The column an expression table filter refers to by reference.
-	string filter_column;
 };
 
 string RenderExpression(const RemoteScope &scope, const Expression &expr);
@@ -71,8 +68,6 @@ string RenderExpression(const RemoteScope &scope, const Expression &expr) {
 		auto projection = scope.projections.find(binding);
 		return projection == scope.projections.end() ? "" : RenderExpression(scope, *projection->second);
 	}
-	case ExpressionClass::BOUND_REF:
-		return scope.filter_column;
 	case ExpressionClass::BOUND_CONSTANT: {
 		auto &value = expr.Cast<BoundConstantExpression>().value;
 		return StringUtil::Format("CAST(%s AS %s)", value.ToSQLString(), type.ToString());
@@ -359,16 +354,6 @@ bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, ve
 	for (auto &entry : get.table_filters.filters) {
 		LogicalType type;
 		auto column = GetColumnSQL(table, entry.first, type);
-		if (entry.second->filter_type == TableFilterType::EXPRESSION_FILTER) {
-			RemoteScope scope;
-			scope.filter_column = column;
-			auto predicate = RenderExpression(scope, *entry.second->Cast<ExpressionFilter>().expr);
-			if (predicate.empty()) {
-				return false;
-			}
-			predicates.emplace_back(std::move(predicate));
-			continue;
-		}
 		if (!SupportsRemoteFilterPushdown(type) || !IsRemoteFilter(*entry.second)) {
 			return false;
 		}

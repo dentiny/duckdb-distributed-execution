@@ -10,15 +10,14 @@ namespace duckdb {
 class TableCatalogEntry;
 
 struct DistributedTableScanBindData : public TableFunctionData {
-	explicit DistributedTableScanBindData(TableCatalogEntry &table_p, string server_url_p, string remote_table_name_p)
-	    : table(table_p), server_url(std::move(server_url_p)), remote_table_name(std::move(remote_table_name_p)) {
+	DistributedTableScanBindData(TableCatalogEntry &table_p, string remote_table_name_p)
+	    : table(table_p), remote_table_name(std::move(remote_table_name_p)) {
 	}
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;
 
 	TableCatalogEntry &table;
-	string server_url;
 	string remote_table_name;
 	// Set when an operator above the scan, e.g. an aggregate, was pushed into the remote query.
 	// The scan then returns `pushed_types` from `pushed_query` instead of table columns.

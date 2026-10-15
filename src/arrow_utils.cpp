@@ -192,7 +192,7 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 }
 
 arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &context,
-                                       std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count) {
+                                       std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	if (!result.client_properties.client_context) {
 		result.client_properties.client_context = &context;
 	}
@@ -204,8 +204,6 @@ arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &conte
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
 
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	idx_t count = 0;
-
 	auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
 	QueryResultChunkScanState scan_state(result);
 	while (true) {
@@ -225,15 +223,10 @@ arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &conte
 			return arrow::Status::Invalid("Failed to import Arrow batch");
 		}
 
-		auto batch = batch_result.ValueOrDie();
-		count += batch->num_rows();
-		batches.emplace_back(batch);
+		batches.emplace_back(batch_result.MoveValueUnsafe());
 	}
 
-	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(batches, schema));
-	if (row_count) {
-		*row_count = count;
-	}
+	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(std::move(batches), schema));
 	return arrow::Status::OK();
 }
 

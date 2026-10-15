@@ -58,6 +58,6 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 // Convert a DuckDB query result into a reader over row-group-sized Arrow record batches, using `context` when the
 // result does not reference a client context. Larger batches reduce per-message overhead on every network hop.
 arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &context,
-                                       std::shared_ptr<arrow::RecordBatchReader> &reader, idx_t *row_count = nullptr);
+                                       std::shared_ptr<arrow::RecordBatchReader> &reader);
 
 } // namespace duckdb

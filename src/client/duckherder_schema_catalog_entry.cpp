@@ -244,8 +244,8 @@ unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::WrapTableEntry(CatalogEnt
 	create_table_info->tags = table_catalog_entry->tags;
 
 	auto bound_create_table_info = make_uniq<BoundCreateTableInfo>(*this, std::move(create_table_info));
-	auto duckherder_table_catalog_entry = unique_ptr<DuckherderTableCatalogEntry>(new DuckherderTableCatalogEntry(
-	    duckherder_catalog, db_instance, table_catalog_entry, std::move(bound_create_table_info)));
+	auto duckherder_table_catalog_entry = unique_ptr<DuckherderTableCatalogEntry>(
+	    new DuckherderTableCatalogEntry(duckherder_catalog, table_catalog_entry, std::move(bound_create_table_info)));
 	// The wrapper represents the same catalog object and must preserve its identity and owning set for dependency
 	// validation and cascading drops.
 	duckherder_table_catalog_entry->oid = table_catalog_entry->oid;
@@ -305,9 +305,6 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const
 	}
 
 	remote_indexes.RemoveTable(info.name);
-	if (duckherder_catalog.IsRemoteTable(name, info.name)) {
-		duckherder_catalog.UnregisterRemoteTable(info.name);
-	}
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteView(ClientContext &context, const DropInfo &info) {
@@ -401,18 +398,7 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 }
 
 void DuckherderSchemaCatalogEntry::AlterLocal(CatalogTransaction transaction, AlterInfo &info) {
-	string renamed_table;
-	if (info.type == AlterType::ALTER_TABLE) {
-		auto &table_info = info.Cast<AlterTableInfo>();
-		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
-			renamed_table = table_info.Cast<RenameTableInfo>().new_table_name;
-		}
-	}
-
 	DuckSchemaEntry::Alter(std::move(transaction), info);
-	if (!renamed_table.empty() && duckherder_catalog.IsRemoteTable(name, info.name)) {
-		duckherder_catalog.UnregisterRemoteTable(info.name);
-	}
 }
 
 } // namespace duckdb

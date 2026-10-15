@@ -487,17 +487,6 @@ closes every client belonging to the attachment and releases the writable slot. 
 lease, so a crashed writer is reclaimed after its lease expires. Client and control node must use the same protocol
 version because role registration is not compatible with older binaries.
 
-### Remote Table Registration
-
-ATTACH discovery and `CREATE TABLE` register remote tables automatically. Duckherder does not expose a manual
-registration API. A mapping can still be removed explicitly:
-
-```sql
--- Unregister a remote table mapping.
--- Syntax: duckherder_unregister_remote_table(local_table_name)
-PRAGMA duckherder_unregister_remote_table('my_table');
-```
-
 ### Load Extensions on Server
 
 ```sql
@@ -508,9 +497,7 @@ SELECT duckherder_load_extension('json');
 
 ### Driver/Worker Node Registration
 
-#### Starting and Registering Driver Nodes
-
-For distributed execution with external coordination, you can register a driver node location. Unlike worker nodes which can be added incrementally, only one driver node can be registered at a time - registering a new driver will automatically replace any previously registered driver.
+#### Starting Driver Nodes
 
 **Option 1: Start local driver server (for testing, debugging and development)**
 ```sql
@@ -518,17 +505,7 @@ For distributed execution with external coordination, you can register a driver 
 SELECT duckherder_start_local_server(8815);
 ```
 
-**Option 2: Register external driver (for multi-machine setups)**
-```sql
--- Register an external driver node running on a different machine
--- Syntax: duckherder_register_or_replace_driver(driver_id, location)
-SELECT duckherder_register_or_replace_driver('driver-main', 'grpc://192.168.1.100:8815');
-
--- Replacing an existing driver node (automatic replacement)
-SELECT duckherder_register_or_replace_driver('driver-backup', 'grpc://192.168.1.200:8815');
-```
-
-**Option 3: Using the standalone distributed server executable**
+**Option 2: Using the standalone distributed server executable**
 ```bash
 # Start the driver server on default host (0.0.0.0) and port (8815)
 ./build/release/distributed_server
@@ -601,9 +578,6 @@ SELECT duckherder_get_worker_count();  -- Returns: 3
 
 **From a client machine, register nodes and connect:**
 ```sql
--- Register the driver node
-SELECT duckherder_register_or_replace_driver('driver-main', 'grpc://192.168.1.100:8815');
-
 -- Register each worker with its network location
 SELECT duckherder_register_worker('worker-1', 'grpc://192.168.1.101:8816');
 SELECT duckherder_register_worker('worker-2', 'grpc://192.168.1.102:8816');

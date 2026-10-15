@@ -34,39 +34,6 @@ arrow::Status WorkerManager::RegisterWorker(const string &worker_id, const strin
 	return arrow::Status::OK();
 }
 
-arrow::Status WorkerManager::RegisterOrReplaceDriver(const string &driver_id, const string &location) {
-	concurrency::lock_guard<concurrency::mutex> lck(mu);
-	auto &db_instance = *db.instance;
-
-	// If a driver node already exists, log replacement.
-	if (driver_node) {
-		DUCKDB_LOG_DEBUG(db_instance, "Replacing existing driver '%s' at '%s' with '%s' at '%s'",
-		                 driver_node->worker_id, driver_node->location, driver_id, location);
-	}
-
-	auto new_driver = make_uniq<WorkerInfo>(driver_id, location);
-
-	// Connect to the driver.
-	auto status = new_driver->client->Connect();
-	if (!status.ok()) {
-		return arrow::Status::IOError("Failed to connect to driver ", driver_id, " at ", location, ": ",
-		                              status.ToString());
-	}
-
-	// Replace the existing driver node.
-	driver_node = std::move(new_driver);
-	DUCKDB_LOG_DEBUG(db_instance, "Successfully registered/replaced driver '%s' at '%s'", driver_id, location);
-
-	// TODO(hjiang): When a driver is replaced, the new driver doesn't automatically know about registered workers.
-	if (!workers.empty()) {
-		DUCKDB_LOG_DEBUG(db_instance,
-		                 "Note: %llu worker(s) are registered locally but not automatically synced to the new driver. "
-		                 "Workers may need to be re-registered with the new driver if coordination is required.",
-		                 workers.size());
-	}
-	return arrow::Status::OK();
-}
-
 vector<WorkerInfo *> WorkerManager::GetAvailableWorkers() {
 	vector<WorkerInfo *> available;
 	concurrency::lock_guard<concurrency::mutex> lock(mu);

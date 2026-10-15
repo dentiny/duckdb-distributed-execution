@@ -29,25 +29,22 @@ void SerializeDistributedTableScan(Serializer &serializer, const optional_ptr<Fu
 	serializer.WriteProperty(100, "catalog", data.table.schema.catalog.GetName());
 	serializer.WriteProperty(101, "schema", data.table.schema.name);
 	serializer.WriteProperty(102, "table", data.table.name);
-	serializer.WriteProperty(103, "server_url", data.server_url);
-	serializer.WriteProperty(104, "remote_table_name", data.remote_table_name);
-	serializer.WritePropertyWithDefault(105, "pushed_query", data.pushed_query);
-	serializer.WritePropertyWithDefault(106, "pushed_types", data.pushed_types);
+	serializer.WriteProperty(103, "remote_table_name", data.remote_table_name);
+	serializer.WritePropertyWithDefault(104, "pushed_query", data.pushed_query);
+	serializer.WritePropertyWithDefault(105, "pushed_types", data.pushed_types);
 }
 
 unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deserializer, TableFunction &function) {
 	auto catalog = deserializer.ReadProperty<string>(100, "catalog");
 	auto schema = deserializer.ReadProperty<string>(101, "schema");
 	auto table = deserializer.ReadProperty<string>(102, "table");
-	auto server_url = deserializer.ReadProperty<string>(103, "server_url");
-	auto remote_table_name = deserializer.ReadProperty<string>(104, "remote_table_name");
+	auto remote_table_name = deserializer.ReadProperty<string>(103, "remote_table_name");
 	auto &table_entry =
 	    Catalog::GetEntry(deserializer.Get<ClientContext &>(), CatalogType::TABLE_ENTRY, catalog, schema, table)
 	        .Cast<TableCatalogEntry>();
-	auto result =
-	    make_uniq<DistributedTableScanBindData>(table_entry, std::move(server_url), std::move(remote_table_name));
-	result->pushed_query = deserializer.ReadPropertyWithDefault<string>(105, "pushed_query");
-	result->pushed_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(106, "pushed_types");
+	auto result = make_uniq<DistributedTableScanBindData>(table_entry, std::move(remote_table_name));
+	result->pushed_query = deserializer.ReadPropertyWithDefault<string>(104, "pushed_query");
+	result->pushed_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(105, "pushed_types");
 	return std::move(result);
 }
 
@@ -146,7 +143,7 @@ OperatorPartitionData DistributedTableScanGetPartitionData(ClientContext &contex
 } // namespace
 
 unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
-	auto result = make_uniq<DistributedTableScanBindData>(table, server_url, remote_table_name);
+	auto result = make_uniq<DistributedTableScanBindData>(table, remote_table_name);
 	result->pushed_query = pushed_query;
 	result->pushed_types = pushed_types;
 	return std::move(result);
@@ -154,7 +151,7 @@ unique_ptr<FunctionData> DistributedTableScanBindData::Copy() const {
 
 bool DistributedTableScanBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<DistributedTableScanBindData>();
-	return &other.table == &table && other.server_url == server_url && other.remote_table_name == remote_table_name &&
+	return &other.table == &table && other.remote_table_name == remote_table_name &&
 	       other.pushed_query == pushed_query && other.pushed_types == pushed_types;
 }
 

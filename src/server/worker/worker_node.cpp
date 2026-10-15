@@ -46,40 +46,6 @@ string WorkerNode::GetLocation() const {
 	return StringUtil::Format("grpc://%s:%d", host, port);
 }
 
-arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
-                                   std::unique_ptr<arrow::flight::ResultStream> *result) {
-	distributed::DistributedRequest request;
-	if (!request.ParseFromArray(action.body->data(), action.body->size())) {
-		return arrow::Status::Invalid("Failed to parse DistributedRequest");
-	}
-
-	distributed::DistributedResponse response;
-	response.set_success(true);
-
-	switch (request.request_case()) {
-	case distributed::DistributedRequest::kExecutePartition:
-		response.mutable_execute_partition();
-		break;
-	case distributed::DistributedRequest::kWorkerHeartbeat: {
-		auto *hb_resp = response.mutable_worker_heartbeat();
-		hb_resp->set_healthy(true);
-		break;
-	}
-	default:
-		return arrow::Status::Invalid(
-		    StringUtil::Format("Unknown request type for worker: %d", static_cast<int>(request.request_case())));
-	}
-
-	std::string response_data = response.SerializeAsString();
-	auto buffer = arrow::Buffer::FromString(response_data);
-
-	std::vector<arrow::flight::Result> results;
-	results.emplace_back(arrow::flight::Result {buffer});
-	*result = std::make_unique<arrow::flight::SimpleResultStream>(std::move(results));
-
-	return arrow::Status::OK();
-}
-
 arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
                                 std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
 	// The ticket carries the complete ExecutePartition request.
@@ -92,10 +58,8 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 		return arrow::Status::Invalid("DoGet expects ExecutePartition request");
 	}
 
-	// Execute the partition and return results.
-	distributed::DistributedResponse response;
 	std::shared_ptr<arrow::RecordBatchReader> reader;
-	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), response, reader));
+	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), reader));
 
 	if (!reader) {
 		return arrow::Status::Invalid("Failed to create RecordBatchReader: execution produced no reader");
@@ -127,7 +91,6 @@ arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitio
 }
 
 arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
-                                                 distributed::DistributedResponse &resp,
                                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	// Object storage tasks run on their own session of this worker's instance for that database.
 	ARROW_RETURN_NOT_OK(ValidateRequest(req.storage_config()));
@@ -138,29 +101,11 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	ARROW_ASSIGN_OR_RAISE(auto task_conn, object_storage_database->Connect());
 
 	unique_ptr<QueryResult> result;
-	auto exec_status = ExecutePlanFragment(req, *task_conn, result);
+	ARROW_RETURN_NOT_OK(ExecutePlanFragment(req, *task_conn, result));
 
-	if (!exec_status.ok()) {
-		resp.set_success(false);
-		resp.set_error_message(exec_status.message());
-		return exec_status;
-	}
-
-	// Convert result to Arrow format.
 	// This represents the LocalState output from this worker node; the coordinator combines the outputs of all
 	// workers, mirroring how thread-local sink states are combined into a global state.
-	idx_t row_count = 0;
-	auto status = QueryResultToArrowReader(*result, *task_conn->context, reader, &row_count);
-	if (!status.ok()) {
-		return status;
-	}
-
-	resp.set_success(true);
-	auto *exec_resp = resp.mutable_execute_partition();
-	exec_resp->set_partition_id(req.partition_id());
-	exec_resp->set_row_count(row_count);
-
-	return arrow::Status::OK();
+	return QueryResultToArrowReader(*result, *task_conn->context, reader);
 }
 
 arrow::Result<ObjectStorageDatabase *>

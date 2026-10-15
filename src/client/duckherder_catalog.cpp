@@ -217,46 +217,6 @@ void DuckherderCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	GetSchemaCatalogSet().DropEntry(transaction, info.name, true);
 }
 
-void DuckherderCatalog::RegisterRemoteTable(const string &table_name, const string &server_url,
-                                            const string &remote_table_name) {
-	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-	auto remote_table_config = RemoteTableConfig(server_url, remote_table_name);
-	const bool succ = remote_tables.emplace(table_name, std::move(remote_table_config)).second;
-	if (!succ) {
-		throw InvalidInputException("Failed to register table %s because it's already registered!", table_name);
-	}
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Registered remote table %s -> %s:%s", table_name, server_url,
-	                                                 remote_table_name));
-}
-
-void DuckherderCatalog::UnregisterRemoteTable(const string &table_name) {
-	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-	if (remote_tables.erase(table_name) != 1) {
-		throw InvalidInputException("Failed to unregister table %s because it hasn't been registered!", table_name);
-	}
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Unregistered remote table %s", table_name));
-}
-
-bool DuckherderCatalog::IsRemoteTable(const string &schema_name, const string &table_name) const {
-	if (!StringUtil::CIEquals(schema_name, DEFAULT_SCHEMA)) {
-		return false;
-	}
-	concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-	return remote_tables.find(table_name) != remote_tables.end();
-}
-
-RemoteTableConfig DuckherderCatalog::GetRemoteTableConfig(const string &schema_name, const string &table_name) const {
-	if (StringUtil::CIEquals(schema_name, DEFAULT_SCHEMA)) {
-		concurrency::lock_guard<concurrency::mutex> lck(remote_tables_mu);
-		auto table = remote_tables.find(table_name);
-		if (table != remote_tables.end()) {
-			return table->second;
-		}
-	}
-	return RemoteTableConfig(StringUtil::Format("grpc://%s:%d", server_host, server_port),
-	                         QualifiedRemoteName(schema_name, table_name));
-}
-
 string DuckherderCatalog::GetServerUrl() const {
 	return StringUtil::Format("grpc://%s:%d", server_host, server_port);
 }

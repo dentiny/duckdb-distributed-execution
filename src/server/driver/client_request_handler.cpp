@@ -198,13 +198,7 @@ arrow::Status ClientRequestHandler::TableExists(const distributed::TableExistsRe
 		return arrow::Status::OK();
 	}
 
-	auto *exists_resp = resp.mutable_table_exists();
-	if (result->Fetch()) {
-		exists_resp->set_exists(result->GetValue(0, 0).GetValue<int>() > 0);
-	} else {
-		exists_resp->set_exists(false);
-	}
-
+	resp.mutable_table_exists()->set_exists(result->GetValue(0, 0).GetValue<int64_t>() > 0);
 	resp.set_success(true);
 	return arrow::Status::OK();
 }

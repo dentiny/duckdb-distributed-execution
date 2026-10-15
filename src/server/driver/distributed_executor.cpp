@@ -32,21 +32,18 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow
 		DUCKDB_LOG_DEBUG(db_instance, "No storage configured for workers, falling back to local execution");
 		return false;
 	}
-	vector<distributed::ExecutePartitionRequest> requests(plans.size());
-	for (idx_t task_idx = 0; task_idx < plans.size(); ++task_idx) {
-		auto &req = requests[task_idx];
-		req.set_serialized_plan(plans[task_idx]);
-		req.set_partition_id(task_idx);
-		req.set_total_partitions(plans.size());
-		*req.mutable_storage_config() = storage_config;
-		req.set_build_id(PlanSerializer::BuildId());
-	}
-
 	// Each task runs on its own worker. Tasks planned for workers that have since left run locally instead.
 	if (plans.size() > workers.size()) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("%llu tasks but %llu workers, falling back to local execution",
 		                                                 plans.size(), workers.size()));
 		return false;
+	}
+	vector<distributed::ExecutePartitionRequest> requests(plans.size());
+	for (idx_t task_idx = 0; task_idx < plans.size(); ++task_idx) {
+		auto &req = requests[task_idx];
+		req.set_serialized_plan(plans[task_idx]);
+		*req.mutable_storage_config() = storage_config;
+		req.set_build_id(PlanSerializer::BuildId());
 	}
 	task_batches.assign(plans.size(), {});
 	Value thread_setting;

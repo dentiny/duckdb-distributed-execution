@@ -8,7 +8,6 @@ namespace duckdb {
 
 // Forward declaration.
 struct BoundCreateTableInfo;
-class DatabaseInstance;
 class DuckherderCatalog;
 class DuckherderSchemaCatalogEntry;
 
@@ -18,8 +17,6 @@ public:
 
 	// Route table scans through the distributed client.
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
-	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
-	                              const EntryLookupInfo &lookup_info) override;
 
 	// Returns local table storage metadata together with remote index metadata used by the binder.
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
@@ -27,13 +24,10 @@ public:
 private:
 	friend class DuckherderSchemaCatalogEntry;
 
-	DuckherderTableCatalogEntry(DuckherderCatalog &duckherder_catalog_p, DatabaseInstance &db_instance_p,
-	                            DuckTableEntry *duck_table_entry_p,
+	DuckherderTableCatalogEntry(DuckherderCatalog &duckherder_catalog, DuckTableEntry *duck_table_entry_p,
 	                            unique_ptr<BoundCreateTableInfo> create_table_info_p);
 
-	DatabaseInstance &db_instance;
 	unique_ptr<BoundCreateTableInfo> bound_create_table_info;
-	DuckherderCatalog &duckherder_catalog;
 };
 
 } // namespace duckdb

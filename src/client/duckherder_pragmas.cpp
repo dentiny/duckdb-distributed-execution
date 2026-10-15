@@ -13,36 +13,9 @@
 
 namespace duckdb {
 
-/*static*/ PragmaFunction DuckherderPragmas::GetUnregisterRemoteTableFunction() {
-	return PragmaFunction::PragmaCall("duckherder_unregister_remote_table", UnregisterRemoteTable,
-	                                  {LogicalType {LogicalTypeId::VARCHAR}});
-}
-
 /*static*/ ScalarFunction DuckherderPragmas::GetLoadExtensionFunction() {
 	return ScalarFunction("duckherder_load_extension", {LogicalType {LogicalTypeId::VARCHAR}},
 	                      LogicalType {LogicalTypeId::BOOLEAN}, LoadExtension);
-}
-
-/*static*/ void DuckherderPragmas::UnregisterRemoteTable(ClientContext &context, const FunctionParameters &parameters) {
-	auto table_name = parameters.values[0].ToString();
-
-	// Get the duckherder catalog - assuming it's attached as "dh".
-	auto &db_manager = DatabaseManager::Get(context);
-	auto dh_db = db_manager.GetDatabase(context, "dh");
-	if (!dh_db) {
-		throw CatalogException("Duckherder database 'dh' not attached");
-	}
-
-	auto &catalog = dh_db->GetCatalog();
-	if (catalog.GetCatalogType() != "duckherder") {
-		throw CatalogException("Database 'dh' is not a duckherder database");
-	}
-
-	auto dh_catalog_ptr = dynamic_cast<DuckherderCatalog *>(&catalog);
-	if (!dh_catalog_ptr) {
-		throw CatalogException("Failed to cast catalog to DuckherderCatalog");
-	}
-	dh_catalog_ptr->UnregisterRemoteTable(table_name);
 }
 
 /*static*/ void DuckherderPragmas::LoadExtension(DataChunk &args, ExpressionState &state, Vector &result) {

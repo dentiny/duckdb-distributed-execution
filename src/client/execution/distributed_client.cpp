@@ -177,16 +177,6 @@ arrow::Status DistributedClient::QueryBatches(const string &sql, vector<std::sha
 	return GetClient(lock).Query(sql, batches);
 }
 
-bool DistributedClient::TableExists(const string &table_name) {
-	DistributedClientLock lock(*this);
-	bool exists = false;
-	auto status = GetClient(lock).TableExists(table_name, exists);
-	if (!status.ok()) {
-		throw IOException("Failed to check remote table existence: %s", status.ToString());
-	}
-	return exists;
-}
-
 unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, StatementType statement_type,
                                                             const string &client_catalog,
                                                             const vector<LogicalType> *expected_types) {
