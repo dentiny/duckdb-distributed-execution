@@ -7,9 +7,9 @@ import "storage_config.proto";
 // Execute a partition on a worker node.
 message ExecutePartitionRequest {
   // Optimized logical plan fragment, serialized with DuckDB's BinarySerializer.
-  bytes serialized_plan = 5;
+  bytes serialized_plan = 1;
   // Database the task reads from; the worker attaches it read-only on first use.
-  StorageConfig storage_config = 8;
+  StorageConfig storage_config = 2;
   // Driver build; a worker of another build cannot read the plan and rejects the task.
-  string build_id = 9;
+  string build_id = 3;
 }

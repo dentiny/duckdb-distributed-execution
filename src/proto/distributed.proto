@@ -14,36 +14,36 @@ message DistributedRequest {
   // Opaque identifier returned by RegisterClientResponse.
   string client_id = 1;
   // One identifier is assigned when BEGIN starts and is reused through COMMIT or ROLLBACK.
-  uint64 transaction_id = 20;
+  uint64 transaction_id = 2;
   // Monotonically increasing operation identifier within transaction_id. Retries reuse the same value.
-  uint64 request_sequence = 21;
+  uint64 request_sequence = 3;
   // AUTOCOMMIT executes this request as one server-side transaction; EXPLICIT joins BEGIN...COMMIT.
-  TransactionMode transaction_mode = 22;
+  TransactionMode transaction_mode = 4;
 
   oneof request {
     // Client registration and lease management.
-    RegisterClientRequest register_client = 2;
-    UnregisterClientRequest unregister_client = 3;
-    ClientHeartbeatRequest client_heartbeat = 4;
+    RegisterClientRequest register_client = 5;
+    UnregisterClientRequest unregister_client = 6;
+    ClientHeartbeatRequest client_heartbeat = 7;
 
     // Database mutation operations.
-    ExecuteStatementRequest execute_statement = 5;
+    ExecuteStatementRequest execute_statement = 8;
 
     // Query operations.
-    QueryRequest query = 7;
-    TableExistsRequest table_exists = 8;
+    QueryRequest query = 9;
+    TableExistsRequest table_exists = 10;
 
     // General client-server administration.
-    LoadExtensionRequest load_extension = 14;
+    LoadExtensionRequest load_extension = 11;
 
     // Control-worker communication.
-    ExecutePartitionRequest execute_partition = 15;
+    ExecutePartitionRequest execute_partition = 12;
 
     // Monitoring.
-    GetQueryExecutionStatsRequest get_query_execution_stats = 18;
+    GetQueryExecutionStatsRequest get_query_execution_stats = 13;
 
     // Transaction lifecycle.
-    TransactionRequest transaction = 19;
+    TransactionRequest transaction = 14;
   }
 }
 
@@ -52,27 +52,28 @@ message DistributedResponse {
   // TODO(hjiang): Return transport errors through gRPC instead of duplicating them here.
   string error_message = 2;
   // Structured DuckDB application error returned by the control node.
-  RemoteError error = 21;
+  RemoteError error = 3;
 
   oneof response {
     // Client registration and lease management.
-    RegisterClientResponse register_client = 3;
-    UnregisterClientResponse unregister_client = 4;
-    ClientHeartbeatResponse client_heartbeat = 5;
+    RegisterClientResponse register_client = 4;
+    UnregisterClientResponse unregister_client = 5;
+    ClientHeartbeatResponse client_heartbeat = 6;
 
     // Database mutation operations.
-    ExecuteStatementResponse execute_statement = 6;
+    ExecuteStatementResponse execute_statement = 7;
 
     // Query operations.
     QueryResponse query = 8;
     TableExistsResponse table_exists = 9;
 
     // General client-server administration.
-    LoadExtensionResponse load_extension = 15;
+    LoadExtensionResponse load_extension = 10;
+
     // Monitoring.
-    GetQueryExecutionStatsResponse get_query_execution_stats = 19;
+    GetQueryExecutionStatsResponse get_query_execution_stats = 11;
 
     // Transaction lifecycle.
-    TransactionResponse transaction = 20;
+    TransactionResponse transaction = 12;
   }
 }
