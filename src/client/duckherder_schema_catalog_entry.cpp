@@ -4,6 +4,7 @@
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -46,43 +47,20 @@ unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::Copy(ClientContext &conte
 	throw NotImplementedException("Altering Duckherder schemas is not supported");
 }
 
+std::function<void(CatalogEntry &)>
+DuckherderSchemaCatalogEntry::WrapTableEntries(const std::function<void(CatalogEntry &)> &callback) {
+	return [this, &callback](CatalogEntry &entry) {
+		callback(entry.type == CatalogType::TABLE_ENTRY ? GetOrWrapTableEntry(entry) : entry);
+	};
+}
+
 void DuckherderSchemaCatalogEntry::Scan(ClientContext &context, CatalogType type,
                                         const std::function<void(CatalogEntry &)> &callback) {
-	DuckSchemaEntry::Scan(context, type, [&](CatalogEntry &entry) {
-		if (entry.type != CatalogType::TABLE_ENTRY) {
-			callback(entry);
-			return;
-		}
-		EntryLookupInfoKey key {
-		    .type = CatalogType::TABLE_ENTRY,
-		    .name = entry.name,
-		};
-		CatalogEntry *wrapped_entry = nullptr;
-		{
-			concurrency::lock_guard<concurrency::mutex> lck(mu);
-			wrapped_entry = WrapAndCacheTableCatalogEntryWithLock(std::move(key), &entry);
-		}
-		callback(*wrapped_entry);
-	});
+	DuckSchemaEntry::Scan(context, type, WrapTableEntries(callback));
 }
 
 void DuckherderSchemaCatalogEntry::Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
-	DuckSchemaEntry::Scan(type, [&](CatalogEntry &entry) {
-		if (entry.type != CatalogType::TABLE_ENTRY) {
-			callback(entry);
-			return;
-		}
-		EntryLookupInfoKey key {
-		    .type = CatalogType::TABLE_ENTRY,
-		    .name = entry.name,
-		};
-		CatalogEntry *wrapped_entry = nullptr;
-		{
-			concurrency::lock_guard<concurrency::mutex> lck(mu);
-			wrapped_entry = WrapAndCacheTableCatalogEntryWithLock(std::move(key), &entry);
-		}
-		callback(*wrapped_entry);
-	});
+	DuckSchemaEntry::Scan(type, WrapTableEntries(callback));
 }
 
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTransaction transaction,
@@ -220,10 +198,40 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTypeLocal(Catalog
 	return DuckSchemaEntry::CreateType(std::move(transaction), info);
 }
 
-CatalogEntry *DuckherderSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key,
-                                                                                  CatalogEntry *catalog_entry) {
-	D_ASSERT(catalog_entry->type == CatalogType::TABLE_ENTRY);
-	DuckTableEntry *table_catalog_entry = dynamic_cast<DuckTableEntry *>(catalog_entry);
+CatalogEntry &DuckherderSchemaCatalogEntry::GetOrWrapTableEntry(CatalogEntry &table_entry) {
+	const auto timestamp = table_entry.timestamp.load();
+	auto wraps_entry = [&](const CachedCatalogEntry &cached) {
+		return cached.source == &table_entry && cached.oid == table_entry.oid && cached.timestamp == timestamp;
+	};
+	EntryLookupInfoKey key {
+	    .type = CatalogType::TABLE_ENTRY,
+	    .name = table_entry.name,
+	};
+	concurrency::lock_guard<concurrency::mutex> lck(mu);
+	auto cached = catalog_entries.find(key);
+	if (cached != catalog_entries.end() && wraps_entry(cached->second)) {
+		return *cached->second.wrapper;
+	}
+	CachedCatalogEntry current;
+	auto retired = std::find_if(retired_entries.begin(), retired_entries.end(), wraps_entry);
+	if (retired != retired_entries.end()) {
+		current = std::move(*retired);
+		retired_entries.erase(retired);
+	} else {
+		current = CachedCatalogEntry {&table_entry, table_entry.oid, timestamp, WrapTableEntry(table_entry)};
+	}
+	auto &wrapper = *current.wrapper;
+	if (cached != catalog_entries.end()) {
+		retired_entries.emplace_back(std::move(cached->second));
+		cached->second = std::move(current);
+	} else {
+		catalog_entries.emplace(std::move(key), std::move(current));
+	}
+	return wrapper;
+}
+
+unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::WrapTableEntry(CatalogEntry &table_entry) {
+	auto *table_catalog_entry = dynamic_cast<DuckTableEntry *>(&table_entry);
 	D_ASSERT(table_catalog_entry != nullptr);
 
 	auto create_table_info = make_uniq<CreateTableInfo>();
@@ -242,12 +250,7 @@ CatalogEntry *DuckherderSchemaCatalogEntry::WrapAndCacheTableCatalogEntryWithLoc
 	// validation and cascading drops.
 	duckherder_table_catalog_entry->oid = table_catalog_entry->oid;
 	duckherder_table_catalog_entry->set = table_catalog_entry->set;
-	auto *ret = duckherder_table_catalog_entry.get();
-	catalog_entries.erase(key);
-	catalog_entries.emplace(std::move(key),
-	                        CachedCatalogEntry {catalog_entry, catalog_entry->oid, catalog_entry->timestamp.load(),
-	                                            std::move(duckherder_table_catalog_entry)});
-	return ret;
+	return std::move(duckherder_table_catalog_entry);
 }
 
 optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::LookupEntry(CatalogTransaction transaction,
@@ -256,29 +259,10 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::LookupEntry(CatalogTran
 	                 StringUtil::Format("DuckherderSchemaCatalogEntry::LookupEntry lookup entry %s with type %s",
 	                                    lookup_info.GetEntryName(), CatalogTypeToString(lookup_info.GetCatalogType())));
 
-	auto catalog_type = lookup_info.GetCatalogType();
-	EntryLookupInfoKey key {
-	    .type = catalog_type,
-	    .name = lookup_info.GetEntryName(),
-	};
-
 	auto catalog_entry = DuckSchemaEntry::LookupEntry(std::move(transaction), lookup_info);
-	if (catalog_entry == nullptr) {
-		return catalog_entry;
+	if (catalog_entry && catalog_entry->type == CatalogType::TABLE_ENTRY) {
+		return GetOrWrapTableEntry(*catalog_entry);
 	}
-
-	if (catalog_entry->type == CatalogType::TABLE_ENTRY) {
-		concurrency::lock_guard<concurrency::mutex> lck(mu);
-		auto iter = catalog_entries.find(key);
-		if (iter != catalog_entries.end() && iter->second.source == catalog_entry.get() &&
-		    iter->second.oid == catalog_entry->oid && iter->second.timestamp == catalog_entry->timestamp.load()) {
-			DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::LookupEntry cache hit");
-			return iter->second.wrapper.get();
-		}
-		DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::LookupEntry cache miss");
-		return WrapAndCacheTableCatalogEntryWithLock(std::move(key), catalog_entry.get());
-	}
-
 	// TODO(hjiang): Wrap and cache other catalog types.
 	return catalog_entry;
 }
@@ -377,15 +361,6 @@ void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &i
 	}
 
 	DuckSchemaEntry::DropEntry(context, info);
-
-	// Remove from cache after successful drop.
-	EntryLookupInfoKey key {
-	    .type = info.type,
-	    .name = info.name,
-	};
-	concurrency::lock_guard<concurrency::mutex> lck(mu);
-	// Here we don't check erase result since we haven't implemented all catalog entry types.
-	catalog_entries.erase(key);
 }
 
 void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
@@ -429,13 +404,6 @@ void DuckherderSchemaCatalogEntry::AlterLocal(CatalogTransaction transaction, Al
 	string renamed_table;
 	if (info.type == AlterType::ALTER_TABLE) {
 		auto &table_info = info.Cast<AlterTableInfo>();
-		EntryLookupInfoKey key {
-		    .type = CatalogType::TABLE_ENTRY,
-		    .name = info.name,
-		};
-		concurrency::lock_guard<concurrency::mutex> lck(mu);
-		catalog_entries.erase(key);
-		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Cleared cache for table %s after ALTER", info.name));
 		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
 			renamed_table = table_info.Cast<RenameTableInfo>().new_table_name;
 		}

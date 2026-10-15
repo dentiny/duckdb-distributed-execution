@@ -1,0 +1,48 @@
+# name: test/sql/table_entry_cache_lifetime.test
+# description: A catalog scan must not free the table entry a prepared statement is bound to
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8873);
+
+statement ok
+ATTACH DATABASE 'localhost:8873' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.cached_entry (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO dh.cached_entry VALUES (1, 'a'), (2, 'b');
+
+# Binds the scan to the table entry returned by the catalog lookup.
+statement ok
+PREPARE scan_cached_entry AS SELECT id, name FROM dh.cached_entry ORDER BY id;
+
+query II
+EXECUTE scan_cached_entry;
+----
+1	a
+2	b
+
+# Scanning the schema does not change the catalog version, so the prepared statement is not rebound.
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name = 'dh' AND table_name = 'cached_entry';
+----
+1
+
+query II
+EXECUTE scan_cached_entry;
+----
+1	a
+2	b
+
+statement ok
+DEALLOCATE scan_cached_entry;
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

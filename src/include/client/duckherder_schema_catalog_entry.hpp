@@ -65,8 +65,11 @@ private:
 	// Applies an ALTER only to the client-side metadata cache.
 	void AlterLocal(CatalogTransaction transaction, AlterInfo &info);
 
-	CatalogEntry *WrapAndCacheTableCatalogEntryWithLock(EntryLookupInfoKey key, CatalogEntry *catalog_entry)
-	    DUCKDB_REQUIRES(mu);
+	// Returns the cached wrapper of table_entry, wrapping it again if the cached one wraps another version.
+	CatalogEntry &GetOrWrapTableEntry(CatalogEntry &table_entry);
+	unique_ptr<CatalogEntry> WrapTableEntry(CatalogEntry &table_entry);
+	// Calls callback with table entries replaced by their wrappers.
+	std::function<void(CatalogEntry &)> WrapTableEntries(const std::function<void(CatalogEntry &)> &callback);
 
 	void DropRemoteIndex(ClientContext &context, const DropInfo &info);
 	void DropRemoteTable(ClientContext &context, const DropInfo &info);
@@ -89,6 +92,9 @@ private:
 	// Cache for catalog entries, including table entries.
 	unordered_map<EntryLookupInfoKey, CachedCatalogEntry, EntryLookupInfoHash, EntryLookupInfoEqual>
 	    catalog_entries DUCKDB_GUARDED_BY(mu);
+	// Replaced wrappers. Bound plans, e.g. of prepared statements, reference wrappers until they are rebound, so a
+	// wrapper is only freed with the schema. A wrapper is reused when its entry version is looked up again.
+	vector<CachedCatalogEntry> retired_entries DUCKDB_GUARDED_BY(mu);
 	RemoteIndexRegistry remote_indexes;
 };
 
