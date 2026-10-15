@@ -1,5 +1,7 @@
 # DuckDB Distributed Execution Benchmarks
 
+For the TPC-H benchmark (setup, run command, simulated S3 latency, results), see [tpch/README.md](tpch/README.md).
+
 SQL-based benchmarks comparing raw DuckDB vs distributed execution performance.
 
 ## Benchmark Files
