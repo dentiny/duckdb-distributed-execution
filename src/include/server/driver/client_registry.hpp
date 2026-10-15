@@ -17,11 +17,6 @@ namespace duckdb {
 class WorkerManager;
 
 // Registered clients and the control-node databases they are attached to, with lease-based expiration.
-//
-// `mutex` is held only to look up or change the registry, never while a request runs. A request keeps its
-// registration alive through a shared pointer, and the registration keeps its database and admission, so removing a
-// client never waits for its in-flight request. Removed registrations are destroyed after `mutex` is released, since
-// destroying a database's final client closes the database, which may checkpoint to object storage.
 class ClientRegistry {
 public:
 	static constexpr const char *NOT_REGISTERED_ERROR = "Duckherder client is not registered with the control node";
