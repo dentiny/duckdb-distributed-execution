@@ -61,6 +61,8 @@ struct ClientRegistration {
 	atomic<int64_t> last_seen;
 	// DuckDB connections are session-scoped and must not execute concurrent requests.
 	concurrency::mutex connection_mutex;
+	// Set when the client is unregistered or expires. A request that looked the client up earlier must not run.
+	bool closed DUCKDB_GUARDED_BY(connection_mutex) = false;
 	// Dedicated DuckDB session for this registered client.
 	unique_ptr<Connection> connection DUCKDB_GUARDED_BY(connection_mutex);
 	// Distributed execution components for fragments of this client's queries; null when queries must run locally.

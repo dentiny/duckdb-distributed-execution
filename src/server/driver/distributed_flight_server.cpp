@@ -53,7 +53,6 @@ void DistributedFlightServer::Shutdown() {
 }
 
 void DistributedFlightServer::Reset() {
-	const concurrency::unique_lock<concurrency::shared_mutex> lock(clients.mutex);
 	clients.Clear();
 	Initialize();
 }
@@ -127,6 +126,11 @@ arrow::Status DistributedFlightServer::HandleClientAction(const distributed::Dis
 		return arrow::Status::OK();
 	}
 	const concurrency::lock_guard<concurrency::mutex> lock(registration->connection_mutex);
+	if (registration->closed) {
+		response.set_success(false);
+		response.set_error_message(ClientRegistry::NOT_REGISTERED_ERROR);
+		return arrow::Status::OK();
+	}
 	if (request.request_case() == distributed::DistributedRequest::kTransaction) {
 		return transaction_handler.Handle(request, *registration, response);
 	}
@@ -150,7 +154,6 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 	} else if (request.request_case() == distributed::DistributedRequest::kUnregisterClient) {
 		ARROW_RETURN_NOT_OK(clients.Unregister(request.client_id(), response));
 	} else {
-		const concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients.mutex);
 		switch (request.request_case()) {
 		case distributed::DistributedRequest::kExecuteStatement:
 		case distributed::DistributedRequest::kLoadExtension:
@@ -209,14 +212,16 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	if (request.request_case() != distributed::DistributedRequest::kQuery) {
 		return arrow::Status::Invalid("DoGet only supports query requests");
 	}
-	const concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients.mutex);
 	shared_ptr<ClientRegistration> registration;
 	if (!clients.Lookup(request.client_id(), registration)) {
-		return arrow::Status::Invalid("Duckherder client is not registered with the control node");
+		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
 	}
 	ClientRegistry::Touch(registration);
 
 	const concurrency::lock_guard<concurrency::mutex> connection_lock(registration->connection_mutex);
+	if (registration->closed) {
+		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
+	}
 	ARROW_RETURN_NOT_OK(request_handler->HandleQuery(request, *registration));
 
 	ARROW_ASSIGN_OR_RAISE(
@@ -268,10 +273,9 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	request_identity.set_transaction_id(transaction_id);
 	request_identity.set_request_sequence(request_sequence);
 	request_identity.set_transaction_mode(static_cast<distributed::TransactionMode>(transaction_mode));
-	const concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients.mutex);
 	shared_ptr<ClientRegistration> registration;
 	if (!clients.Lookup(client_id, registration)) {
-		return arrow::Status::Invalid("Duckherder client is not registered with the control node");
+		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
 	}
 	if (registration->role != distributed::CLIENT_ROLE_READ_WRITE) {
 		return arrow::Status::Invalid("Duckherder client is read-only");
@@ -279,6 +283,9 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	ClientRegistry::Touch(registration);
 
 	const concurrency::lock_guard<concurrency::mutex> connection_lock(registration->connection_mutex);
+	if (registration->closed) {
+		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
+	}
 
 	// Read all record batches.
 	ARROW_ASSIGN_OR_RAISE(auto schema, reader->GetSchema());

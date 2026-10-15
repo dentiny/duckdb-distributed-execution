@@ -85,8 +85,7 @@ private:
 
 	// Authorize a client request against `required_role` and run it on the client's session.
 	arrow::Status HandleClientAction(const distributed::DistributedRequest &request,
-	                                 distributed::ClientRole required_role, distributed::DistributedResponse &response)
-	    DUCKDB_REQUIRES_SHARED(clients.mutex);
+	                                 distributed::ClientRole required_role, distributed::DistributedResponse &response);
 
 	// Initialize DuckDB instance, connection, and components.
 	void Initialize();

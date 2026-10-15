@@ -44,10 +44,14 @@ arrow::Status ClientRegistry::Register(const distributed::RegisterClientRequest 
 }
 
 arrow::Status ClientRegistry::Unregister(const string &client_id, distributed::DistributedResponse &resp) {
-	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
-	auto entry = clients.find(client_id);
-	if (entry != clients.end()) {
-		Remove(entry);
+	shared_ptr<ClientRegistration> registration;
+	if (Lookup(client_id, registration)) {
+		Close(*registration);
+		const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
+		auto entry = clients.find(client_id);
+		if (entry != clients.end() && entry->second == registration) {
+			Remove(entry);
+		}
 	}
 	resp.set_success(true);
 	resp.mutable_unregister_client();
@@ -55,11 +59,16 @@ arrow::Status ClientRegistry::Unregister(const string &client_id, distributed::D
 }
 
 void ClientRegistry::Clear() {
+	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
+	for (auto &entry : clients) {
+		Close(*entry.second);
+	}
 	clients.clear();
 	databases.clear();
 }
 
 bool ClientRegistry::Lookup(const string &client_id, shared_ptr<ClientRegistration> &registration) {
+	const concurrency::shared_lock<concurrency::shared_mutex> lock(mutex);
 	auto entry = clients.find(client_id);
 	if (entry == clients.end()) {
 		return false;
@@ -72,7 +81,7 @@ bool ClientRegistry::Authorize(const string &client_id, distributed::ClientRole 
                                shared_ptr<ClientRegistration> &registration, distributed::DistributedResponse &resp) {
 	if (!Lookup(client_id, registration)) {
 		resp.set_success(false);
-		resp.set_error_message("Duckherder client is not registered with the control node");
+		resp.set_error_message(NOT_REGISTERED_ERROR);
 		return false;
 	}
 	if (required_role == distributed::CLIENT_ROLE_READ_WRITE &&
@@ -89,11 +98,25 @@ void ClientRegistry::Touch(const shared_ptr<ClientRegistration> &registration) {
 	registration->last_seen = GetSteadyNowMilliSecSinceEpoch();
 }
 
+void ClientRegistry::Close(ClientRegistration &registration) {
+	const concurrency::lock_guard<concurrency::mutex> lock(registration.connection_mutex);
+	registration.closed = true;
+}
+
+bool ClientRegistry::TryClose(ClientRegistration &registration) {
+	if (!registration.connection_mutex.try_lock()) {
+		return false;
+	}
+	const concurrency::lock_guard<concurrency::mutex> lock(registration.connection_mutex, std::adopt_lock);
+	registration.closed = true;
+	return true;
+}
+
 void ClientRegistry::PruneExpired() {
 	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - test_state.GetClientLeaseTimeout().count();
 	for (auto entry = clients.begin(); entry != clients.end();) {
 		auto current = entry++;
-		if (current->second->last_seen.load() < expiration) {
+		if (current->second->last_seen.load() < expiration && TryClose(*current->second)) {
 			Remove(current);
 		}
 	}
