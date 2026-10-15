@@ -25,8 +25,8 @@ public:
 	explicit ServedDatabase(distributed::StorageConfig config_p);
 
 	// Admit a client with its own connection.
-	arrow::Result<shared_ptr<ClientRegistration>> AddClient(distributed::ClientRole role,
-	                                                        WorkerManager &worker_manager) DUCKDB_EXCLUDES(mutex);
+	arrow::Result<shared_ptr<ClientRegistration>> AddClient(distributed::ClientRole role, WorkerManager &worker_manager)
+	    DUCKDB_EXCLUDES(mutex);
 	// Release a client's admission; called when its registration is destroyed.
 	void RemoveClient(distributed::ClientRole role) DUCKDB_EXCLUDES(mutex);
 	bool IsDefault() const;

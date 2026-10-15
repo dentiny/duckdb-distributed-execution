@@ -13,8 +13,8 @@ ClientRegistration::ClientRegistration(shared_ptr<ServedDatabase> served_databas
                                        unique_ptr<Connection> connection_p,
                                        unique_ptr<Connection> executor_connection_p, WorkerManager &worker_manager,
                                        distributed::ClientRole role_p, const distributed::StorageConfig &storage_config)
-    : role(role_p), served_database(std::move(served_database_p)), last_seen(GetSteadyNowMilliSecSinceEpoch()), connection(std::move(connection_p)),
-      executor_connection(std::move(executor_connection_p)) {
+    : role(role_p), served_database(std::move(served_database_p)), last_seen(GetSteadyNowMilliSecSinceEpoch()),
+      connection(std::move(connection_p)), executor_connection(std::move(executor_connection_p)) {
 	if (executor_connection != nullptr) {
 		distributed_executor = make_uniq<DistributedExecutor>(worker_manager, *executor_connection, storage_config);
 		worker_fragments = make_shared_ptr<WorkerFragmentState>(*distributed_executor, *executor_connection);
