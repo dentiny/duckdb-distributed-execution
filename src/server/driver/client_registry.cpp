@@ -18,11 +18,17 @@ arrow::Status ClientRegistry::Register(const distributed::RegisterClientRequest 
 		resp.set_error_message(validation.message());
 		return arrow::Status::OK();
 	}
-	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
-	PruneExpired();
+	{
+		// Expired clients release their admission when destroyed, which must happen before admitting this client.
+		vector<shared_ptr<ClientRegistration>> expired;
+		const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
+		PruneExpired(expired);
+	}
 	auto storage_config = ObjectStorageDatabase::ResolveConfig(req.storage_config());
+	shared_ptr<ServedDatabase> database;
+	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
 	auto &entry = databases[ObjectStorageDatabase::GetKey(storage_config)];
-	auto database = entry.lock();
+	database = entry.lock();
 	if (!database) {
 		database = make_shared_ptr<ServedDatabase>(storage_config);
 		entry = database;
@@ -45,18 +51,27 @@ arrow::Status ClientRegistry::Register(const distributed::RegisterClientRequest 
 }
 
 arrow::Status ClientRegistry::Unregister(const string &client_id, distributed::DistributedResponse &resp) {
-	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
-	clients.erase(client_id);
+	shared_ptr<ClientRegistration> removed;
+	{
+		const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
+		auto entry = clients.find(client_id);
+		if (entry != clients.end()) {
+			removed = std::move(entry->second);
+			clients.erase(entry);
+		}
+	}
 	resp.set_success(true);
 	resp.mutable_unregister_client();
 	return arrow::Status::OK();
 }
 
 void ClientRegistry::Clear() {
+	unordered_map<string, shared_ptr<ClientRegistration>> removed_clients;
+	shared_ptr<ServedDatabase> removed_default;
 	const concurrency::unique_lock<concurrency::shared_mutex> lock(mutex);
-	clients.clear();
+	removed_clients.swap(clients);
+	removed_default = std::move(default_database);
 	databases.clear();
-	default_database.reset();
 }
 
 bool ClientRegistry::Lookup(const string &client_id, shared_ptr<ClientRegistration> &registration) {
@@ -90,11 +105,12 @@ void ClientRegistry::Touch(const shared_ptr<ClientRegistration> &registration) {
 	registration->last_seen = GetSteadyNowMilliSecSinceEpoch();
 }
 
-void ClientRegistry::PruneExpired() {
+void ClientRegistry::PruneExpired(vector<shared_ptr<ClientRegistration>> &expired) {
 	const auto expiration = GetSteadyNowMilliSecSinceEpoch() - test_state.GetClientLeaseTimeout().count();
 	for (auto entry = clients.begin(); entry != clients.end();) {
 		auto current = entry++;
 		if (current->second->last_seen.load() < expiration) {
+			expired.emplace_back(std::move(current->second));
 			clients.erase(current);
 		}
 	}

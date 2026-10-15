@@ -4,6 +4,7 @@
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/vector.hpp"
 #include "server/driver/client_registration.hpp"
 #include "server/driver/distributed_flight_server_test_state.hpp"
 #include "server/driver/served_database.hpp"
@@ -19,7 +20,8 @@ class WorkerManager;
 //
 // `mutex` is held only to look up or change the registry, never while a request runs. A request keeps its
 // registration alive through a shared pointer, and the registration keeps its database and admission, so removing a
-// client never waits for its in-flight request.
+// client never waits for its in-flight request. Removed registrations are destroyed after `mutex` is released, since
+// destroying a database's final client closes the database, which may checkpoint to object storage.
 class ClientRegistry {
 public:
 	static constexpr const char *NOT_REGISTERED_ERROR = "Duckherder client is not registered with the control node";
@@ -43,8 +45,8 @@ public:
 	static void Touch(const shared_ptr<ClientRegistration> &registration);
 
 private:
-	// Remove expired clients and databases no client references anymore.
-	void PruneExpired() DUCKDB_REQUIRES(mutex);
+	// Move expired clients into `expired` and remove databases no client references anymore.
+	void PruneExpired(vector<shared_ptr<ClientRegistration>> &expired) DUCKDB_REQUIRES(mutex);
 
 	mutable concurrency::shared_mutex mutex;
 	DistributedFlightServerTestState &test_state;
