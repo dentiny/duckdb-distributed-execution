@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/pending_query_result.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "server/driver/plan_serializer.hpp"
@@ -12,7 +13,38 @@
 #include "server/worker/row_group_range_scan.hpp"
 #include "server/worker/worker_node.hpp"
 
+#include <chrono>
+#include <thread>
+
 namespace duckdb {
+
+namespace {
+
+// Bounds how late the thread running a task's query notices that the tasks other threads run have finished.
+constexpr std::chrono::microseconds MAX_IDLE_WAIT {200};
+
+// Runs pending to its result like PendingQueryResult::Execute, which spins while other threads run all of the query's
+// tasks; this thread sleeps with exponential backoff instead.
+unique_ptr<QueryResult> ExecutePending(PendingQueryResult &pending) {
+	std::chrono::microseconds idle_wait {10};
+	while (true) {
+		const auto execution_result = pending.ExecuteTask();
+		if (PendingQueryResult::IsResultReady(execution_result)) {
+			return pending.Execute();
+		}
+		if (execution_result == PendingExecutionResult::NO_TASKS_AVAILABLE) {
+			std::this_thread::sleep_for(idle_wait);
+			idle_wait = MinValue(idle_wait * 2, MAX_IDLE_WAIT);
+			continue;
+		}
+		if (execution_result == PendingExecutionResult::BLOCKED) {
+			pending.WaitForTask();
+		}
+		idle_wait = std::chrono::microseconds(10);
+	}
+}
+
+} // namespace
 
 WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p)
     : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p) {
@@ -83,7 +115,12 @@ arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitio
 	} catch (const std::exception &ex) {
 		return arrow::Status::Invalid("Plan fragment deserialization failed: ", ErrorData(ex).Message());
 	}
-	result = task_conn.SendQuery(make_uniq<LogicalPlanStatement>(std::move(plan)));
+	auto pending = task_conn.PendingQuery(make_uniq<LogicalPlanStatement>(std::move(plan)),
+	                                      QueryResultOutputType::ALLOW_STREAMING);
+	if (pending->HasError()) {
+		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", pending->GetError()));
+	}
+	result = ExecutePending(*pending);
 	if (result->HasError()) {
 		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
 	}
