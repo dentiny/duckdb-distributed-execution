@@ -160,11 +160,10 @@ bool DistributedClient::HasActiveRemoteTransaction() {
 	return GetClient(lock).HasActiveTransaction();
 }
 
-unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, idx_t limit, idx_t offset,
-                                                     const vector<LogicalType> *expected_types) {
+unique_ptr<QueryResult> DistributedClient::Query(const string &sql, const vector<LogicalType> *expected_types) {
 	DistributedClientLock lock(*this);
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	auto status = GetClient(lock).ScanTable(table_name, limit, offset, batches);
+	auto status = GetClient(lock).Query(sql, batches);
 	if (!status.ok()) {
 		return MakeErrorResult(status.ToString());
 	}
@@ -173,10 +172,9 @@ unique_ptr<QueryResult> DistributedClient::ScanTable(const string &table_name, i
 	                       expected_types);
 }
 
-arrow::Status DistributedClient::ScanTableBatches(const string &sql,
-                                                  vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
+arrow::Status DistributedClient::QueryBatches(const string &sql, vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
 	DistributedClientLock lock(*this);
-	return GetClient(lock).ScanTable(sql, NO_QUERY_LIMIT, NO_QUERY_OFFSET, batches);
+	return GetClient(lock).Query(sql, batches);
 }
 
 bool DistributedClient::TableExists(const string &table_name) {

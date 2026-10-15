@@ -14,7 +14,6 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckherder_catalog.hpp"
 #include "duckherder_schema_catalog_entry.hpp"
-#include "query_common.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -32,7 +31,7 @@ unique_ptr<CreateInfo> ParseCreateInfo(const string &sql) {
 
 template <class FUNC>
 void ForEachRow(DistributedClient &client, const string &sql, const vector<LogicalType> &types, FUNC &&callback) {
-	auto result = client.ScanTable(sql, NO_QUERY_LIMIT, NO_QUERY_OFFSET, &types);
+	auto result = client.Query(sql, &types);
 	if (result->HasError()) {
 		throw IOException("Failed to load remote catalog metadata: %s", result->GetError());
 	}

@@ -211,7 +211,7 @@ unique_ptr<GlobalTableFunctionState> DistributedTableScanFunction::InitGlobal(Cl
 	}
 
 	auto &client = GetDistributedClient(context, bind_data.table);
-	auto status = client.ScanTableBatches(scan_sql, global_state->batches);
+	auto status = client.QueryBatches(scan_sql, global_state->batches);
 	if (!status.ok()) {
 		throw IOException("Distributed table scan error: %s", status.ToString());
 	}

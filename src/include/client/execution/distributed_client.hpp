@@ -6,7 +6,6 @@
 #include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include "query_common.hpp"
 #include "utils/mutex.hpp"
 
 namespace duckdb {
@@ -56,14 +55,12 @@ public:
 	unique_ptr<QueryResult> LoadExtension(const string &extension_name, const string &repository = "",
 	                                      const string &version = "");
 
-	// Get table data.
+	// Get the result of a remote query.
 	// If [`expected_types`] is unassigned, type information is deduced from arrow schema.
-	unique_ptr<QueryResult> ScanTable(const string &table_name, idx_t limit = NO_QUERY_LIMIT,
-	                                  idx_t offset = NO_QUERY_OFFSET,
-	                                  const vector<LogicalType> *expected_types = nullptr);
+	unique_ptr<QueryResult> Query(const string &sql, const vector<LogicalType> *expected_types = nullptr);
 
 	// Get the Arrow batches of a remote query result, leaving their conversion to the caller.
-	arrow::Status ScanTableBatches(const string &sql, vector<std::shared_ptr<arrow::RecordBatch>> &batches);
+	arrow::Status QueryBatches(const string &sql, vector<std::shared_ptr<arrow::RecordBatch>> &batches);
 
 	// Get query execution statistics from the server.
 	// Returns error QueryResult on failure.

@@ -29,7 +29,7 @@ FlightTestServer &GetTestServer() {
 
 uint64_t CountRows(DistributedFlightClient &client, const string &table_name) {
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	REQUIRE(client.ScanTable(table_name, 100, 0, batches).ok());
+	REQUIRE(client.Query("SELECT * FROM " + table_name, batches).ok());
 	uint64_t row_count = 0;
 	for (const auto &batch : batches) {
 		row_count += batch->num_rows();

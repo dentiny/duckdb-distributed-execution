@@ -206,8 +206,8 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 		return arrow::Status::Invalid("Failed to parse DistributedRequest");
 	}
 
-	if (request.request_case() != distributed::DistributedRequest::kScanTable) {
-		return arrow::Status::Invalid("DoGet only supports SCAN_TABLE requests");
+	if (request.request_case() != distributed::DistributedRequest::kQuery) {
+		return arrow::Status::Invalid("DoGet only supports query requests");
 	}
 	const concurrency::shared_lock<concurrency::shared_mutex> client_lock(clients.mutex);
 	shared_ptr<ClientRegistration> registration;
@@ -217,7 +217,7 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	ClientRegistry::Touch(registration);
 
 	const concurrency::lock_guard<concurrency::mutex> connection_lock(registration->connection_mutex);
-	ARROW_RETURN_NOT_OK(request_handler->HandleScan(request, *registration));
+	ARROW_RETURN_NOT_OK(request_handler->HandleQuery(request, *registration));
 
 	ARROW_ASSIGN_OR_RAISE(
 	    auto reader, arrow::RecordBatchReader::Make(registration->last_query_batches, registration->last_query_schema));

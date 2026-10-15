@@ -225,15 +225,11 @@ arrow::Status DistributedFlightClient::InsertData(const string &table_name, std:
 	return status;
 }
 
-arrow::Status DistributedFlightClient::ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
-                                                 vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
+arrow::Status DistributedFlightClient::Query(const string &sql, vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
 	ARROW_RETURN_NOT_OK(EnsureExplicitTransaction());
 	const concurrency::lock_guard<concurrency::mutex> lock(transaction_mutex);
 	distributed::DistributedRequest req;
-	auto *scan_req = req.mutable_scan_table();
-	scan_req->set_table_name(table_name);
-	scan_req->set_limit(limit);
-	scan_req->set_offset(offset);
+	req.mutable_query()->set_sql(sql);
 	auto identity = AssignRequestIdentity(req);
 
 	auto retry_config = db_instance ? GetRetryConfig(*db_instance) : RetryConfig();

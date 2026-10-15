@@ -53,9 +53,8 @@ public:
 	arrow::Status InsertData(const string &table_name, std::shared_ptr<arrow::RecordBatch> batch,
 	                         distributed::DistributedResponse &response);
 
-	// Scan table and get Arrow Flight stream
-	arrow::Status ScanTable(const string &table_name, uint64_t limit, uint64_t offset,
-	                        vector<std::shared_ptr<arrow::RecordBatch>> &batches);
+	// Run a query and get its result over an Arrow Flight stream.
+	arrow::Status Query(const string &sql, vector<std::shared_ptr<arrow::RecordBatch>> &batches);
 
 	// Get query execution statistics from the server
 	arrow::Status GetQueryExecutionStats(distributed::DistributedResponse &response);

@@ -9,7 +9,6 @@
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
-#include "query_common.hpp"
 #include "server/driver/query_history.hpp"
 #include "server/driver/query_utils.hpp"
 #include "server/driver/worker_fragment_pushdown.hpp"
@@ -57,20 +56,20 @@ arrow::Status ClientRequestHandler::HandleAction(const distributed::DistributedR
 	return arrow::Status::OK();
 }
 
-arrow::Status ClientRequestHandler::HandleScan(const distributed::DistributedRequest &request,
-                                               ClientRegistration &registration) {
+arrow::Status ClientRequestHandler::HandleQuery(const distributed::DistributedRequest &request,
+                                                ClientRegistration &registration) {
 	auto signature = request.SerializeAsString();
 	bool replay = false;
 	ARROW_RETURN_NOT_OK(registration.CheckRequestReplay(request, ClientRequestTransport::DO_GET, signature, replay));
 	if (replay) {
 		return arrow::Status::OK();
 	}
-	// A new request means the previous result can no longer be replayed, so release it before running this scan.
+	// A new request means the previous result can no longer be replayed, so release it before running this query.
 	registration.last_query_schema.reset();
 	registration.last_query_batches.clear();
 	std::shared_ptr<arrow::Schema> schema;
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	ARROW_RETURN_NOT_OK(ScanTable(request.scan_table(), registration, schema, batches));
+	ARROW_RETURN_NOT_OK(RunQuery(request.query(), registration, schema, batches));
 	registration.CacheQueryResult(request, signature, std::move(schema), std::move(batches));
 	return arrow::Status::OK();
 }
@@ -210,31 +209,11 @@ arrow::Status ClientRequestHandler::TableExists(const distributed::TableExistsRe
 	return arrow::Status::OK();
 }
 
-arrow::Status ClientRequestHandler::ScanTable(const distributed::ScanTableRequest &req,
-                                              ClientRegistration &registration, std::shared_ptr<arrow::Schema> &schema,
-                                              vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling scan for table: %s", req.table_name()));
-
-	// TODO(hjiang): aggregate pushdown fix:
-	// Check if table_name actually contains full SQL (temp hack for testing)
-	// In the future, this should come from a dedicated field in the protocol
-	string sql;
-	string table_identifier = req.table_name();
-
-	// If it looks like SQL (contains SELECT), use it as-is
-	// Otherwise, generate SELECT * FROM table
-	if (StringUtil::Contains(StringUtil::Upper(table_identifier), "SELECT")) {
-		sql = table_identifier;
-	} else {
-		sql = StringUtil::Format("SELECT * FROM %s", table_identifier);
-	}
-
-	if (req.limit() != NO_QUERY_LIMIT) {
-		sql += StringUtil::Format(" LIMIT %llu ", req.limit());
-	}
-	if (req.offset() != NO_QUERY_OFFSET) {
-		sql += StringUtil::Format(" OFFSET %llu ", req.offset());
-	}
+arrow::Status ClientRequestHandler::RunQuery(const distributed::QueryRequest &req, ClientRegistration &registration,
+                                             std::shared_ptr<arrow::Schema> &schema,
+                                             vector<std::shared_ptr<arrow::RecordBatch>> &batches) {
+	const auto &sql = req.sql();
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Handling query: %s", sql));
 
 	auto prepared = registration.connection->Prepare(sql);
 	if (prepared->HasError()) {

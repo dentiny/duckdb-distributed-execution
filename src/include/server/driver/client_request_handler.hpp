@@ -26,8 +26,8 @@ public:
 	                           distributed::DistributedResponse &response)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 
-	// Run a scan, leaving its result in the registration's query replay cache.
-	arrow::Status HandleScan(const distributed::DistributedRequest &request, ClientRegistration &registration)
+	// Run a query, leaving its result in the registration's query replay cache.
+	arrow::Status HandleQuery(const distributed::DistributedRequest &request, ClientRegistration &registration)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 
 	// Insert `batches` into `table_name`, stopping at the first failed batch. `signature` identifies the payload.
@@ -45,9 +45,8 @@ private:
 	                            distributed::DistributedResponse &resp) DUCKDB_REQUIRES(registration.connection_mutex);
 	arrow::Status TableExists(const distributed::TableExistsRequest &req, ClientRegistration &registration,
 	                          distributed::DistributedResponse &resp) DUCKDB_REQUIRES(registration.connection_mutex);
-	arrow::Status ScanTable(const distributed::ScanTableRequest &req, ClientRegistration &registration,
-	                        std::shared_ptr<arrow::Schema> &schema,
-	                        vector<std::shared_ptr<arrow::RecordBatch>> &batches)
+	arrow::Status RunQuery(const distributed::QueryRequest &req, ClientRegistration &registration,
+	                       std::shared_ptr<arrow::Schema> &schema, vector<std::shared_ptr<arrow::RecordBatch>> &batches)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 	arrow::Status InsertData(const string &table_name, const std::shared_ptr<arrow::RecordBatch> &batch,
 	                         ClientRegistration &registration, distributed::DistributedResponse &resp)

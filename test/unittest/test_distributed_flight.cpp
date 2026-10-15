@@ -3,7 +3,6 @@
 #include "arrow_utils.hpp"
 #include "distributed.pb.h"
 #include "flight_test_utils.hpp"
-#include "query_common.hpp"
 #include "server/driver/worker_manager.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
@@ -107,7 +106,7 @@ TEST_CASE("Read-only clients cannot write through scans", "[distributed_flight]"
 	ExecuteAutocommit(writer, "CREATE TABLE reader_scan_write (id INTEGER)");
 
 	vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	auto status = reader.ScanTable("INSERT INTO reader_scan_write SELECT 1", 100, 0, batches);
+	auto status = reader.Query("INSERT INTO reader_scan_write SELECT 1", batches);
 	REQUIRE_FALSE(status.ok());
 	REQUIRE_THAT(status.ToString(), Catch::Contains("read-only"));
 	REQUIRE(CountRows(reader, "reader_scan_write") == 0);
@@ -175,8 +174,7 @@ TEST_CASE("DoPut appends typed values on the client connection", "[distributed_f
 	REQUIRE(response.success());
 
 	vector<std::shared_ptr<arrow::RecordBatch>> results;
-	REQUIRE(client.ScanTable("SELECT * FROM " + table_name + " ORDER BY id", NO_QUERY_LIMIT, NO_QUERY_OFFSET, results)
-	            .ok());
+	REQUIRE(client.Query("SELECT * FROM " + table_name + " ORDER BY id", results).ok());
 	REQUIRE(results.size() == 1);
 	DataChunk chunk;
 	ArrowRecordBatchToDataChunk(*conn.context, *results[0], chunk);

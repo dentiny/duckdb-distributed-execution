@@ -2,14 +2,16 @@ syntax = "proto3";
 
 package duckdb.distributed;
 
-message ScanTableRequest {
-  string table_name = 1;
-  uint64 limit = 2;
-  uint64 offset = 3;
+// A read query; a read-write client may also send a statement that writes.
+message QueryRequest {
+  reserved 2, 3;
+  reserved "limit", "offset";
+
+  string sql = 1;
 }
 
-// Scan data is returned over Arrow Flight.
-message ScanTableResponse {
+// Query results are returned over Arrow Flight.
+message QueryResponse {
   uint64 row_count = 1;
 }
 
