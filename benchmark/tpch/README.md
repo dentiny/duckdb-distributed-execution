@@ -84,9 +84,25 @@ The console prints each query number as it runs. Each run writes `results/<time>
 - `verify-n<N>/`: query and reference results
 - `n<N>-driver.log`, `n<N>-worker<i>.log`: process logs
 
+## Test setup
+
+Everything runs on one machine, an i7-12700K with 31 GiB of memory. Its CPUs 0-15 are the 8 performance cores with two threads each, and CPUs 16-19 are the 4 efficiency cores. Each process is pinned to its own CPUs so the processes don't compete with each other:
+
+| Process | CPUs | Memory limit |
+| --- | --- | --- |
+| Client (`bench.sh` and the DuckDB shell it runs) | 0-1 | 4 GiB |
+| Worker 1, 2, 3 | 2-3, 4-5, 6-7 | 4 GiB each |
+| Driver | 8-9 | 4 GiB |
+| RustFS | 16-19 | 2 GiB |
+
+So each DuckDB process gets both threads of one performance core. CPUs 10-15 stay idle.
+
+- **DuckDB processes.** `bench.sh` starts the driver and each worker in its own systemd scope (`systemd-run --user --scope`), which is a cgroup. `AllowedCPUs` pins the scope to its CPUs. `CPUQuota` is set to 100% per CPU; DuckDB reads it to pick its thread count, because it ignores the cpuset. `MemoryMax` caps the scope's memory, and DuckDB sets its memory limit to 80% of it. The client gets the same limits from the outer `systemd-run` in the run command.
+- **RustFS.** RustFS is the S3-compatible object store holding the data. `scripts/local-rustfs.sh` runs it in a Docker container on the same machine, with its data in a Docker volume on the local disk, and serves S3 at `127.0.0.1:19000`. `docker update --cpuset-cpus 16-19 --memory 2g` pins it to the efficiency cores. Because storage is local, every request is fast; `s3_latency.sql` adds the delay a real S3 bucket would have (see above).
+
 ## Results
 
-SF10 with the run command above (`--cold`, one run per query) on an i7-12700K (8 performance cores with two threads each, 4 efficiency cores, 31 GiB). Each DuckDB process gets 2 threads of one performance core and 4 GiB; RustFS gets the 4 efficiency cores. Seconds per query with simulated S3 latency (`s3_latency.sql`). Queries 2, 13, 20 and 22 run on the driver; the others run on the workers.
+SF10 with the run command above (`--cold`, one run per query) on the machine described below. Seconds per query with simulated S3 latency (`s3_latency.sql`). Queries 2, 13, 20 and 22 run on the driver; the others run on the workers.
 
 ![TPC-H SF10 cold start](tpch-sf10-cold.png)
 
