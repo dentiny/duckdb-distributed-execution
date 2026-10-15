@@ -169,6 +169,7 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
 	ARROW_ASSIGN_OR_RAISE(schema, arrow::ImportSchema(&arrow_schema));
 
+	auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
 	while (true) {
 		auto chunk = result.Fetch();
 		if (!chunk || chunk->size() == 0) {
@@ -176,8 +177,6 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 		}
 
 		ArrowArray arrow_array;
-		auto extension_types =
-		    ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
 		ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_properties, extension_types);
 
 		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
