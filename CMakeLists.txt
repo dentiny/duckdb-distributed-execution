@@ -50,8 +50,7 @@ set(UTIL_SOURCES
     src/utils/remote_error.cpp
     src/utils/retry_utils.cpp
     src/utils/sql_render_utils.cpp
-    src/utils/thread_utils.cpp
-    src/utils/time_utils.cpp)
+    src/utils/thread_utils.cpp)
 
 set(CLIENT_EXECUTION_SOURCES
     src/client/execution/distributed_aggregate_pushdown.cpp

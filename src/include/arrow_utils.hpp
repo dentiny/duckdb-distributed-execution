@@ -5,10 +5,8 @@
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/types.hpp"
 
-#include <arrow/array.h>
 #include <arrow/result.h>
 #include <arrow/status.h>
-#include <arrow/type.h>
 #include <memory>
 
 // Throw a DuckDB IOException carrying the error message if `expr`, an arrow::Status or arrow::Result, is not OK.
@@ -21,6 +19,8 @@
 	} while (false)
 
 namespace arrow {
+class Array;
+class DataType;
 class RecordBatch;
 class RecordBatchReader;
 class Schema;

@@ -3,6 +3,8 @@
 #include "duckdb/common/string_util.hpp"
 
 #include <arrow/buffer.h>
+#include <arrow/flight/client.h>
+#include <arrow/record_batch.h>
 
 namespace duckdb {
 
@@ -19,7 +21,7 @@ arrow::Status FlightClientSession::Connect() {
 	if (client && !client_id.empty()) {
 		return arrow::Status::OK();
 	}
-	ARROW_ASSIGN_OR_RAISE(location, arrow::flight::Location::Parse(server_url));
+	ARROW_ASSIGN_OR_RAISE(auto location, arrow::flight::Location::Parse(server_url));
 	ARROW_ASSIGN_OR_RAISE(client, arrow::flight::FlightClient::Connect(location));
 	auto status = RegisterClient();
 	if (!status.ok()) {

@@ -8,6 +8,8 @@
 #include "server/startup_sql.hpp"
 #include "server/validation.hpp"
 
+#include <arrow/record_batch.h>
+#include <arrow/type.h>
 #include <iostream>
 
 namespace duckdb {

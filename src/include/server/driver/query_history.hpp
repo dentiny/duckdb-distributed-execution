@@ -1,11 +1,10 @@
 #pragma once
 
 #include "distributed.pb.h"
+#include "duckdb/common/chrono.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
 #include "utils/mutex.hpp"
-
-#include <chrono>
 
 namespace duckdb {
 

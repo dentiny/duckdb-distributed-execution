@@ -1,10 +1,12 @@
 #pragma once
 
-#include "duckdb.hpp"
-#include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 
 namespace duckdb {
+
+class ClientContext;
+class LogicalOperator;
 
 // Provides utility functions for serializing DuckDB internal structures.
 class PlanSerializer {

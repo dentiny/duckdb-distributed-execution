@@ -5,6 +5,8 @@
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/chrono.hpp"
 #include "duckdb/common/enums/optimizer_type.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -41,9 +43,7 @@
 #include "server/driver/query_utils.hpp"
 #include "utils/sql_render_utils.hpp"
 
-#include <algorithm>
 #include <arrow/flight/client.h>
-#include <chrono>
 #include <utility>
 
 namespace duckdb {

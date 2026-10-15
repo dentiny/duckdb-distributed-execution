@@ -1,17 +1,24 @@
 #pragma once
 
 #include "distributed.pb.h"
-#include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/main/database.hpp"
 #include "server/object_storage_database.hpp"
 #include "utils/mutex.hpp"
 
-#include <arrow/flight/api.h>
+#include <arrow/flight/server.h>
 #include <memory>
 
+namespace arrow {
+class RecordBatchReader;
+} // namespace arrow
+
 namespace duckdb {
+
+class Connection;
+class QueryResult;
 
 // Simple worker node that executes queries on partitioned data.
 class WorkerNode : public arrow::flight::FlightServerBase {
@@ -22,12 +29,6 @@ public:
 	arrow::Status Start();
 	void Shutdown();
 	string GetLocation() const;
-	string GetWorkerId() const {
-		return worker_id;
-	}
-	int GetPort() const {
-		return port;
-	}
 
 	arrow::Status DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
 	                    std::unique_ptr<arrow::flight::FlightDataStream> *stream) override;

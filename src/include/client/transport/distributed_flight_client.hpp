@@ -9,13 +9,15 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
-#include "duckdb/main/query_result.hpp"
 #include "storage_config.pb.h"
 #include "utils/mutex.hpp"
 
-#include <arrow/flight/api.h>
-#include <arrow/record_batch.h>
+#include <arrow/status.h>
 #include <memory>
+
+namespace arrow {
+class RecordBatch;
+} // namespace arrow
 
 namespace duckdb {
 

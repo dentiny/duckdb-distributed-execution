@@ -1,9 +1,9 @@
 #pragma once
 
+#include "duckdb/common/chrono.hpp"
 #include "duckdb/common/types.hpp"
 
 #include <arrow/status.h>
-#include <chrono>
 #include <functional>
 
 namespace duckdb {

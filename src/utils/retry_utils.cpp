@@ -3,11 +3,11 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/random_engine.hpp"
+#include "duckdb/common/thread.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/database.hpp"
 
 #include <limits>
-#include <thread>
 
 namespace duckdb {
 

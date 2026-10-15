@@ -3,8 +3,15 @@
 #include "distributed.pb.h"
 #include "duckdb/common/string.hpp"
 
-#include <arrow/flight/api.h>
+#include <arrow/result.h>
 #include <memory>
+
+namespace arrow {
+namespace flight {
+class FlightClient;
+class FlightStreamReader;
+} // namespace flight
+} // namespace arrow
 
 namespace duckdb {
 
@@ -13,6 +20,7 @@ namespace duckdb {
 class WorkerNodeClient {
 public:
 	explicit WorkerNodeClient(const string &location_p);
+	~WorkerNodeClient();
 
 	// Connect to the worker.
 	arrow::Status Connect();
@@ -24,6 +32,7 @@ public:
 
 private:
 	string location;
+	// Arrow returns std::unique_ptr, which does not convert to duckdb::unique_ptr.
 	std::unique_ptr<arrow::flight::FlightClient> client;
 };
 

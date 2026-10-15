@@ -5,6 +5,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/connection.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "utils/remote_error.hpp"
@@ -132,6 +133,8 @@ DistributedClient::DistributedClient(string server_url_p, distributed::ClientRol
 		                StringUtil::Format("Failed to connect to Flight server: %s", status.ToString()));
 	}
 }
+
+DistributedClient::~DistributedClient() = default;
 
 void DistributedClient::Close() {
 	DistributedClientLock lock(*this);

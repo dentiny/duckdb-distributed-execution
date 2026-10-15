@@ -1,10 +1,27 @@
 #include "server/driver/worker_manager.hpp"
 
+#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/database.hpp"
+#include "server/driver/worker_node_client.hpp"
+#include "server/worker/worker_node.hpp"
 #include "utils/network_utils.hpp"
 
+#include <arrow/util/thread_pool.h>
+
 namespace duckdb {
+
+WorkerInfo::WorkerInfo(string id, string loc)
+    : worker_id(std::move(id)), location(std::move(loc)), client(make_uniq<WorkerNodeClient>(location)) {
+}
+
+WorkerInfo::~WorkerInfo() = default;
+
+WorkerManager::WorkerManager(DuckDB &db_ref) : db(db_ref) {
+}
+
+WorkerManager::~WorkerManager() = default;
 
 arrow::Result<std::shared_ptr<arrow::internal::ThreadPool>> WorkerManager::GetDispatchPool(int32_t threads) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);

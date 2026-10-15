@@ -1,6 +1,5 @@
 #pragma once
 
-#include "duckdb.hpp"
 #include "duckdb/common/enums/access_mode.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
@@ -10,6 +9,9 @@
 #include <arrow/result.h>
 
 namespace duckdb {
+
+class Connection;
+class DuckDB;
 
 // One DuckDB instance configured for one object storage database. Control nodes and workers use this common wrapper
 // with different access modes.

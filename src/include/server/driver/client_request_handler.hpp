@@ -5,9 +5,13 @@
 #include "duckdb/common/vector.hpp"
 #include "server/driver/client_registration.hpp"
 
-#include <arrow/record_batch.h>
 #include <arrow/status.h>
 #include <memory>
+
+namespace arrow {
+class RecordBatch;
+class Schema;
+} // namespace arrow
 
 namespace duckdb {
 

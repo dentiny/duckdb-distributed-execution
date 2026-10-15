@@ -1,6 +1,7 @@
 #include "server/driver/key_range_partition.hpp"
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
@@ -16,8 +17,6 @@
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/row_group_segment_tree.hpp"
 #include "server/driver/plan_serializer.hpp"
-
-#include <algorithm>
 
 namespace duckdb {
 

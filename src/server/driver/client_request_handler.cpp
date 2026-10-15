@@ -15,8 +15,10 @@
 #include "server/driver/worker_fragment_pushdown.hpp"
 #include "utils/remote_error.hpp"
 
+#include <arrow/buffer.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
+#include <arrow/record_batch.h>
 
 namespace duckdb {
 

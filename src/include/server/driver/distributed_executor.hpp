@@ -1,10 +1,17 @@
 #pragma once
 
-#include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/typedefs.hpp"
+#include "duckdb/common/vector.hpp"
 #include "storage_config.pb.h"
 
-#include <arrow/flight/client.h>
+#include <memory>
+
+namespace arrow {
+namespace flight {
+class FlightStreamReader;
+} // namespace flight
+} // namespace arrow
 
 namespace duckdb {
 

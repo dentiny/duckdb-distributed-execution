@@ -2,11 +2,15 @@
 
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/connection.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "server/driver/plan_serializer.hpp"
 #include "server/driver/worker_manager.hpp"
+#include "server/driver/worker_node_client.hpp"
 
-#include <arrow/util/future.h>
+#include <arrow/flight/client.h>
+#include <arrow/util/thread_pool.h>
 
 namespace duckdb {
 

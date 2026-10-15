@@ -16,6 +16,7 @@
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/storage/storage_info.hpp"
 
+#include <arrow/array.h>
 #include <arrow/c/bridge.h>
 #include <arrow/record_batch.h>
 

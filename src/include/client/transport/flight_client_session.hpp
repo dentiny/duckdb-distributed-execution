@@ -8,11 +8,18 @@
 #include "storage_config.pb.h"
 #include "utils/mutex.hpp"
 
-#include <arrow/flight/api.h>
-#include <arrow/record_batch.h>
+#include "duckdb/common/thread.hpp"
+
+#include <arrow/status.h>
 #include <condition_variable>
 #include <memory>
-#include <thread>
+
+namespace arrow {
+class RecordBatch;
+namespace flight {
+class FlightClient;
+} // namespace flight
+} // namespace arrow
 
 namespace duckdb {
 
@@ -45,12 +52,11 @@ private:
 	distributed::ClientRole role;
 	distributed::StorageConfig storage_config;
 	string client_id;
-	arrow::flight::Location location;
 	std::unique_ptr<arrow::flight::FlightClient> client;
 	atomic<bool> stop_heartbeat {false};
 	concurrency::mutex heartbeat_mutex;
 	std::condition_variable heartbeat_cv DUCKDB_GUARDED_BY(heartbeat_mutex);
-	std::thread heartbeat_thread;
+	thread heartbeat_thread;
 };
 
 } // namespace duckdb

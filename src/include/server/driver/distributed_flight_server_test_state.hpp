@@ -1,8 +1,8 @@
 #pragma once
 
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/chrono.hpp"
 
-#include <chrono>
 #include <cstdint>
 
 namespace duckdb {

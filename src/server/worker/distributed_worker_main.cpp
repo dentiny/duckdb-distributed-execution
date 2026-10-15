@@ -29,8 +29,8 @@
 
 #include <csignal>
 #include <iostream>
-#include <memory>
 
+#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "server/worker/worker_node.hpp"
@@ -38,7 +38,7 @@
 using namespace duckdb;
 
 namespace {
-std::unique_ptr<WorkerNode> g_worker;
+unique_ptr<WorkerNode> g_worker;
 
 void SignalHandler(int signal) {
 	std::cout << "Received signal " << signal << ", shutting down worker..." << std::endl;
@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
 
 	try {
 		// Create and start worker node.
-		g_worker = std::make_unique<WorkerNode>(worker_id, host, port);
+		g_worker = make_uniq<WorkerNode>(worker_id, host, port);
 
 		auto status = g_worker->Start();
 		if (!status.ok()) {

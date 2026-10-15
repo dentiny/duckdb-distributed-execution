@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <arrow/array.h>
+#include <arrow/flight/client.h>
 #include <chrono>
 #include <filesystem>
 

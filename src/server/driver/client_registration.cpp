@@ -1,5 +1,6 @@
 #include "server/driver/client_registration.hpp"
 
+#include "duckdb/main/connection.hpp"
 #include "server/driver/distributed_executor.hpp"
 #include "server/driver/served_database.hpp"
 #include "server/driver/worker_fragment_pushdown.hpp"

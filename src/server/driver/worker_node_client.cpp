@@ -1,9 +1,13 @@
 #include "server/driver/worker_node_client.hpp"
 
+#include <arrow/flight/client.h>
+
 namespace duckdb {
 
 WorkerNodeClient::WorkerNodeClient(const string &location_p) : location(std::move(location_p)) {
 }
+
+WorkerNodeClient::~WorkerNodeClient() = default;
 
 arrow::Status WorkerNodeClient::Connect() {
 	arrow::flight::Location flight_location;

@@ -1,18 +1,26 @@
 #pragma once
 
-#include "duckdb.hpp"
-#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
-#include "server/driver/worker_node_client.hpp"
-#include "server/worker/worker_node.hpp"
 #include "utils/mutex.hpp"
 
+#include <arrow/result.h>
 #include <arrow/status.h>
-#include <arrow/util/thread_pool.h>
+#include <memory>
+
+namespace arrow {
+namespace internal {
+class ThreadPool;
+} // namespace internal
+} // namespace arrow
 
 namespace duckdb {
+
+class DuckDB;
+class WorkerNode;
+class WorkerNodeClient;
 
 struct WorkerInfo {
 	string worker_id;
@@ -22,16 +30,15 @@ struct WorkerInfo {
 	unique_ptr<WorkerNodeClient> client;
 	// TODO(hjiang): Add node availability status.
 
-	WorkerInfo(string id, string loc) : worker_id(std::move(id)), location(std::move(loc)) {
-		client = make_uniq<WorkerNodeClient>(location);
-	}
+	WorkerInfo(string id, string loc);
+	~WorkerInfo();
 };
 
 // Manages a pool of worker nodes.
 class WorkerManager {
 public:
-	explicit WorkerManager(DuckDB &db_ref) : db(db_ref) {
-	}
+	explicit WorkerManager(DuckDB &db_ref);
+	~WorkerManager();
 
 	arrow::Result<std::shared_ptr<arrow::internal::ThreadPool>> GetDispatchPool(int32_t threads);
 

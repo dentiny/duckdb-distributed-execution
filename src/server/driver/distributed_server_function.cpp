@@ -1,14 +1,15 @@
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/thread.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "server/driver/distributed_flight_server.hpp"
+#include "server/worker/worker_node.hpp"
 #include "utils/network_utils.hpp"
 #include "utils/no_destructor.hpp"
 #include "utils/thread_utils.hpp"
 
 #include <iostream>
-#include <thread>
 
 namespace duckdb {
 

@@ -3,12 +3,16 @@
 #pragma once
 
 #include "client/transport/distributed_flight_client.hpp"
-#include "duckdb.hpp"
+#include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "utils/mutex.hpp"
 
 namespace duckdb {
+
+class Connection;
+class QueryResult;
+struct LogicalType;
 
 // Query execution statistics entry.
 struct QueryExecutionStatsEntry {
@@ -33,7 +37,7 @@ class DistributedClient {
 public:
 	DistributedClient(string server_url_p, distributed::ClientRole role_p, DatabaseInstance &db_instance,
 	                  distributed::StorageConfig storage_config);
-	~DistributedClient() = default;
+	~DistributedClient();
 
 	void Close();
 	void SetTransactionContext(ClientContext &context);

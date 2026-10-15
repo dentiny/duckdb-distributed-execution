@@ -1,6 +1,8 @@
 #include "server/startup_sql.hpp"
 
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/connection.hpp"
+#include "duckdb/main/database.hpp"
 #include "server/driver/worker_fragment_pushdown.hpp"
 
 #include <cstdlib>

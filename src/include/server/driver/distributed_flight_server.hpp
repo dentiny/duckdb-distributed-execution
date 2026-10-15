@@ -1,7 +1,6 @@
 #pragma once
 
 #include "distributed.pb.h"
-#include "duckdb.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "server/driver/client_registry.hpp"
@@ -9,9 +8,10 @@
 #include "server/driver/distributed_flight_server_test_state.hpp"
 #include "server/driver/query_history.hpp"
 #include "server/driver/transaction_request_handler.hpp"
+#include "duckdb/main/database.hpp"
 #include "server/driver/worker_manager.hpp"
 
-#include <arrow/flight/api.h>
+#include <arrow/flight/server.h>
 #include <memory>
 
 namespace duckdb {

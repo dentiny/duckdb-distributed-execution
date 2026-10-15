@@ -6,6 +6,7 @@
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckherder_extension.hpp"
 
 namespace duckdb {

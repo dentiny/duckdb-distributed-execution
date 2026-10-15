@@ -24,8 +24,8 @@
 
 #include <csignal>
 #include <iostream>
-#include <memory>
 
+#include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "server/driver/distributed_flight_server.hpp"
@@ -33,7 +33,7 @@
 using namespace duckdb;
 
 namespace {
-std::unique_ptr<DistributedFlightServer> g_server;
+unique_ptr<DistributedFlightServer> g_server;
 
 void SignalHandler(int signal) {
 	std::cout << "Received signal " << signal << ", shutting down..." << std::endl;
@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
 
 	try {
 		// Create and start Flight server.
-		g_server = std::make_unique<DistributedFlightServer>(host, port);
+		g_server = make_uniq<DistributedFlightServer>(host, port);
 
 		auto LogServerError = [&](const string &message) {
 			if (g_server) {

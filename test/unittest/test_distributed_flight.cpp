@@ -2,13 +2,14 @@
 
 #include "arrow_utils.hpp"
 #include "distributed.pb.h"
+#include "duckdb/main/connection.hpp"
 #include "flight_test_utils.hpp"
 #include "server/driver/worker_manager.hpp"
 #include "server/object_storage_database.hpp"
 #include "server/validation.hpp"
 #include "server/worker/worker_node.hpp"
 
-#include <arrow/util/future.h>
+#include <arrow/util/thread_pool.h>
 #include <atomic>
 #include <chrono>
 #include <thread>
