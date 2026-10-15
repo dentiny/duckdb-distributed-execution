@@ -131,6 +131,13 @@ TEST_CASE("Test TableExists via protobuf", "[distributed_flight]") {
 	status = client.TableExists("nonexistent_table", not_exists);
 	REQUIRE(status.ok());
 	REQUIRE_FALSE(not_exists);
+
+	ExecuteAutocommit(client, "CREATE TABLE \"o'brien\" (id INTEGER)");
+	bool quoted_exists = false;
+	status = client.TableExists("o'brien", quoted_exists);
+	INFO(status.ToString());
+	REQUIRE(status.ok());
+	REQUIRE(quoted_exists);
 }
 
 TEST_CASE("Test error handling in protobuf responses", "[distributed_flight]") {

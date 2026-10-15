@@ -7,6 +7,7 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/prepared_statement.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
 #include "server/driver/query_history.hpp"
@@ -149,15 +150,14 @@ arrow::Status ClientRequestHandler::ExecuteStatement(const distributed::ExecuteS
 arrow::Status ClientRequestHandler::LoadExtension(const distributed::LoadExtensionRequest &req,
                                                   ClientRegistration &registration,
                                                   distributed::DistributedResponse &resp) {
+	const auto extension_name = KeywordHelper::WriteQuoted(req.extension_name());
 	// Execute INSTALL first.
-	string sql = "FORCE INSTALL " + req.extension_name();
-	if (!req.repository().empty() || !req.version().empty()) {
-		if (!req.repository().empty()) {
-			sql += " FROM '" + req.repository() + "'";
-		}
-		if (!req.version().empty()) {
-			sql += " VERSION '" + req.version() + "'";
-		}
+	auto sql = StringUtil::Format("FORCE INSTALL %s", extension_name);
+	if (!req.repository().empty()) {
+		sql += StringUtil::Format(" FROM %s", KeywordHelper::WriteQuoted(req.repository()));
+	}
+	if (!req.version().empty()) {
+		sql += StringUtil::Format(" VERSION %s", KeywordHelper::WriteQuoted(req.version()));
 	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
 	auto install_result = registration.connection->Query(sql);
@@ -169,7 +169,7 @@ arrow::Status ClientRequestHandler::LoadExtension(const distributed::LoadExtensi
 	}
 
 	// Then LOAD the extension.
-	sql = "LOAD " + req.extension_name();
+	sql = StringUtil::Format("LOAD %s", extension_name);
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Load extension with %s", sql));
 	auto load_result = registration.connection->Query(sql);
 	if (load_result->HasError()) {
@@ -187,8 +187,8 @@ arrow::Status ClientRequestHandler::LoadExtension(const distributed::LoadExtensi
 arrow::Status ClientRequestHandler::TableExists(const distributed::TableExistsRequest &req,
                                                 ClientRegistration &registration,
                                                 distributed::DistributedResponse &resp) {
-	string sql =
-	    StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '%s'", req.table_name());
+	auto sql = StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = %s",
+	                              KeywordHelper::WriteQuoted(req.table_name()));
 
 	auto result = registration.connection->Query(sql);
 
