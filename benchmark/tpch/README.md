@@ -86,32 +86,32 @@ The console prints each query number as it runs. Each run writes `results/<time>
 
 ## Results
 
-SF10 with the run command above (`--cold`, one run per query) on an i7-12700K (8 performance cores with two threads each, 4 efficiency cores, 31 GiB). Each DuckDB process gets 2 threads of one performance core and 4 GiB; RustFS gets the 4 efficiency cores. Seconds per query, with simulated S3 latency (`s3_latency.sql`) and without:
+SF10 with the run command above (`--cold`, one run per query) on an i7-12700K (8 performance cores with two threads each, 4 efficiency cores, 31 GiB). Each DuckDB process gets 2 threads of one performance core and 4 GiB; RustFS gets the 4 efficiency cores. Seconds per query with simulated S3 latency (`s3_latency.sql`). Queries 2, 13, 20 and 22 run on the driver; the others run on the workers.
 
 ![TPC-H SF10 cold start](tpch-sf10-cold.png)
 
-| Query | Latency, 0 workers | Latency, 3 workers | None, 0 workers | None, 3 workers |
-| ---: | ---: | ---: | ---: | ---: |
-| 1 | 28.79 | 20.04 | 2.89 | 2.09 |
-| 2 | 4.47 | 4.45 | 0.35 | 0.36 |
-| 3 | 44.30 | 44.59 | 3.77 | 3.65 |
-| 4 | 28.33 | 28.43 | 2.53 | 2.30 |
-| 5 | 48.95 | 48.88 | 3.90 | 3.70 |
-| 6 | 29.89 | 21.09 | 2.27 | 1.81 |
-| 7 | 54.46 | 53.93 | 4.13 | 4.01 |
-| 8 | 62.36 | 62.16 | 4.09 | 4.15 |
-| 9 | 67.14 | 67.17 | 5.60 | 5.57 |
-| 10 | 47.59 | 47.34 | 3.98 | 3.92 |
-| 11 | 4.04 | 4.13 | 0.30 | 0.31 |
-| 12 | 30.91 | 30.86 | 2.42 | 2.40 |
-| 13 | 22.81 | 22.59 | 2.60 | 2.62 |
-| 14 | 44.18 | 44.31 | 3.36 | 3.27 |
-| 15 | 41.29 | 41.56 | 3.02 | 2.91 |
-| 16 | 2.79 | 2.72 | 0.44 | 0.44 |
-| 17 | 42.51 | 42.87 | 3.11 | 3.08 |
-| 18 | 30.01 | 30.03 | 4.02 | 3.95 |
-| 19 | 48.19 | 48.26 | 3.78 | 3.73 |
-| 20 | 46.97 | 47.66 | 3.44 | 3.44 |
-| 21 | 44.71 | 44.56 | 4.27 | 4.25 |
-| 22 | 5.62 | 5.66 | 0.68 | 0.69 |
-| **Total** | **780.3** | **763.3** | **65.0** | **62.7** |
+| Query | 0 workers | 3 workers | Speedup |
+| ---: | ---: | ---: | ---: |
+| 1 | 28.97 | 10.60 | 2.73x |
+| 2 | 4.51 | 4.44 | 1.02x |
+| 3 | 45.08 | 16.69 | 2.70x |
+| 4 | 28.06 | 10.46 | 2.68x |
+| 5 | 49.38 | 19.01 | 2.60x |
+| 6 | 29.80 | 10.63 | 2.80x |
+| 7 | 54.32 | 19.64 | 2.77x |
+| 8 | 61.66 | 22.41 | 2.75x |
+| 9 | 67.73 | 26.68 | 2.54x |
+| 10 | 47.20 | 22.23 | 2.12x |
+| 11 | 4.10 | 3.60 | 1.14x |
+| 12 | 30.64 | 10.95 | 2.80x |
+| 13 | 22.32 | 22.83 | 0.98x |
+| 14 | 44.06 | 15.89 | 2.77x |
+| 15 | 40.74 | 14.77 | 2.76x |
+| 16 | 2.69 | 2.09 | 1.29x |
+| 17 | 42.30 | 32.68 | 1.29x |
+| 18 | 30.05 | 15.67 | 1.92x |
+| 19 | 49.23 | 17.40 | 2.83x |
+| 20 | 46.60 | 46.82 | 1.00x |
+| 21 | 44.12 | 16.42 | 2.69x |
+| 22 | 5.69 | 5.75 | 0.99x |
+| **Total** | **779.3** | **367.7** | **2.12x** |
