@@ -4,7 +4,7 @@
 #include "duckdb/common/string.hpp"
 #include "storage_config.pb.h"
 
-#include <arrow/record_batch.h>
+#include <arrow/flight/client.h>
 
 namespace duckdb {
 
@@ -19,9 +19,9 @@ public:
 	                    distributed::StorageConfig storage_config_p);
 
 	idx_t NumWorkers();
-	// Runs each of plans, written by PlanSerializer, as one worker task and stores its result in task_batches.
-	// Returns false if any task cannot run on a worker; merging the others would drop that task's rows.
-	bool ExecutePlans(const vector<string> &plans, vector<arrow::RecordBatchVector> &task_batches);
+	// Starts each of plans, written by PlanSerializer, as one worker task and stores the stream of its result in
+	// streams. Returns false if any task cannot start on a worker; merging the others would drop that task's rows.
+	bool ExecutePlans(const vector<string> &plans, vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams);
 
 private:
 	WorkerManager &worker_manager;

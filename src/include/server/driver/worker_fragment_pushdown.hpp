@@ -6,6 +6,14 @@
 #include "server/driver/query_history.hpp"
 #include "utils/mutex.hpp"
 
+#include <memory>
+
+namespace arrow {
+namespace flight {
+class FlightStreamReader;
+} // namespace flight
+} // namespace arrow
+
 namespace duckdb {
 
 class Catalog;
@@ -36,8 +44,13 @@ public:
 
 	WorkerFragmentState(DistributedExecutor &executor_p, Connection &connection_p);
 
-	// Returns the concatenated results of the fragment's tasks as chunks of arbitrary size.
-	vector<unique_ptr<DataChunk>> Execute(ClientContext &context, const WorkerFragment &fragment);
+	// Starts the fragment's tasks on workers and stores the stream of each task's result in streams. Returns false if
+	// a task cannot start on a worker.
+	bool StartTasks(const WorkerFragment &fragment,
+	                vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams);
+	// Runs the whole fragment on the driver and returns its result as chunks of arbitrary size.
+	vector<unique_ptr<DataChunk>> ExecuteLocally(const WorkerFragment &fragment);
+	void RecordExecution(QueryExecutionInfo info);
 	// Returns the fragments executed since the last call.
 	vector<QueryExecutionInfo> TakeExecutions();
 	idx_t NumWorkers();
@@ -48,7 +61,7 @@ private:
 	DistributedExecutor &executor;
 	Connection &connection;
 	Catalog &catalog;
-	// Fragments of one query can run concurrently on scheduler threads.
+	// Fragments of one query can finish concurrently on scheduler threads.
 	concurrency::mutex executions_mutex;
 	vector<QueryExecutionInfo> executions DUCKDB_GUARDED_BY(executions_mutex);
 };

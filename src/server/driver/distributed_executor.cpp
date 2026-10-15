@@ -21,7 +21,8 @@ idx_t DistributedExecutor::NumWorkers() {
 
 // Distributed execution mirrors DuckDB's parallel execution model: each worker task runs the plan fragment on its
 // rows like a thread fills its LocalSinkState, and the driver combines the task results like the GlobalSinkState.
-bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow::RecordBatchVector> &task_batches) {
+bool DistributedExecutor::ExecutePlans(const vector<string> &plans,
+                                       vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams) {
 	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
@@ -45,7 +46,8 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow
 		*req.mutable_storage_config() = storage_config;
 		req.set_build_id(PlanSerializer::BuildId());
 	}
-	task_batches.assign(plans.size(), {});
+	streams.clear();
+	streams.resize(plans.size());
 	Value thread_setting;
 	if (!db_instance.TryGetCurrentSetting("duckherder_async_threads", thread_setting)) {
 		throw InternalException("Duckherder async thread setting is not registered");
@@ -64,10 +66,10 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow
 	arrow::Status dispatch_error = arrow::Status::OK();
 	dispatches.reserve(requests.size());
 	for (idx_t task_idx = 0; task_idx < requests.size(); ++task_idx) {
-		// Flight calls block while the worker runs; keep their waits outside
-		// DuckDB's CPU-sized task pool.
+		// DoGet blocks until the worker starts the task; keep the waits outside DuckDB's CPU-sized task pool.
 		auto submitted = pool->Submit([&, task_idx]() -> arrow::Status {
-			return workers[task_idx]->client->ExecutePartition(requests[task_idx], task_batches[task_idx]);
+			ARROW_ASSIGN_OR_RAISE(streams[task_idx], workers[task_idx]->client->ExecutePartition(requests[task_idx]));
+			return arrow::Status::OK();
 		});
 		if (!submitted.ok()) {
 			dispatch_error = submitted.status();
@@ -80,7 +82,16 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow
 	for (auto &dispatch : dispatches) {
 		dispatch.Wait();
 	}
+	auto cancel_streams = [&]() {
+		for (auto &stream : streams) {
+			if (stream) {
+				stream->Cancel();
+			}
+		}
+		streams.clear();
+	};
 	if (!dispatch_error.ok()) {
+		cancel_streams();
 		throw IOException("Worker dispatch failed: %s", dispatch_error.ToString());
 	}
 	for (idx_t task_idx = 0; task_idx < dispatches.size(); ++task_idx) {
@@ -88,10 +99,11 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans, vector<arrow
 		if (!status.ok()) {
 			// Merging the remaining partitions would silently drop this task's rows.
 			DUCKDB_LOG_WARNING(db_instance,
-			                   StringUtil::Format("Worker %s failed executing task %llu, falling back to local "
+			                   StringUtil::Format("Worker %s failed starting task %llu, falling back to local "
 			                                      "execution: %s",
 			                                      workers[task_idx]->worker_id,
 			                                      static_cast<long long unsigned>(task_idx), status.ToString()));
+			cancel_streams();
 			return false;
 		}
 	}

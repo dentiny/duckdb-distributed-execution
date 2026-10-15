@@ -104,8 +104,9 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	ARROW_RETURN_NOT_OK(ExecutePlanFragment(req, *task_conn, result));
 
 	// This represents the LocalState output from this worker node; the coordinator combines the outputs of all
-	// workers, mirroring how thread-local sink states are combined into a global state.
-	return QueryResultToArrowReader(*result, *task_conn->context, reader);
+	// workers, mirroring how thread-local sink states are combined into a global state. The reader pulls batches from
+	// the streaming result as Flight sends them.
+	return QueryResultToArrowReader(std::move(task_conn), std::move(result), reader);
 }
 
 arrow::Result<ObjectStorageDatabase *>

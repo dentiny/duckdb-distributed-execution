@@ -12,16 +12,14 @@ arrow::Status WorkerNodeClient::Connect() {
 	return arrow::Status::OK();
 }
 
-arrow::Status WorkerNodeClient::ExecutePartition(const distributed::ExecutePartitionRequest &request,
-                                                 arrow::RecordBatchVector &batches) {
+arrow::Result<std::unique_ptr<arrow::flight::FlightStreamReader>>
+WorkerNodeClient::ExecutePartition(const distributed::ExecutePartitionRequest &request) {
 	distributed::DistributedRequest req;
 	*req.mutable_execute_partition() = request;
 
 	arrow::flight::Ticket ticket;
 	ticket.ticket = req.SerializeAsString();
-	ARROW_ASSIGN_OR_RAISE(auto stream, client->DoGet(ticket));
-	ARROW_ASSIGN_OR_RAISE(batches, stream->ToRecordBatches());
-	return arrow::Status::OK();
+	return client->DoGet(ticket);
 }
 
 } // namespace duckdb

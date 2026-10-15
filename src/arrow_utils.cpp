@@ -6,11 +6,13 @@
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/main/chunk_scan_state/query_result.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/connection.hpp"
 #include "duckdb/main/materialized_query_result.hpp"
 #include "duckdb/storage/storage_info.hpp"
 
@@ -190,42 +192,62 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 	return arrow::Status::OK();
 }
 
-arrow::Status QueryResultToArrowReader(QueryResult &result, ClientContext &context,
-                                       std::shared_ptr<arrow::RecordBatchReader> &reader) {
-	if (!result.client_properties.client_context) {
-		result.client_properties.client_context = &context;
+namespace {
+
+class QueryResultArrowReader : public arrow::RecordBatchReader {
+public:
+	QueryResultArrowReader(unique_ptr<Connection> connection_p, unique_ptr<QueryResult> result_p,
+	                       ClientProperties client_properties_p, std::shared_ptr<arrow::Schema> schema_p)
+	    : connection(std::move(connection_p)), result(std::move(result_p)), scan_state(*result),
+	      client_properties(std::move(client_properties_p)), schema_(std::move(schema_p)),
+	      extension_types(ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result->types)) {
 	}
-	auto client_properties = result.client_properties;
-	client_properties.arrow_lossless_conversion = true;
 
-	ArrowSchema arrow_schema;
-	ArrowConverter::ToArrowSchema(&arrow_schema, result.types, result.names, client_properties);
-	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
+	std::shared_ptr<arrow::Schema> schema() const override {
+		return schema_;
+	}
 
-	std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-	auto extension_types = ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, result.types);
-	QueryResultChunkScanState scan_state(result);
-	while (true) {
+	arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch> *batch) override {
 		ArrowArray arrow_array;
 		idx_t fetched = 0;
 		ErrorData error;
 		if (!ArrowUtil::TryFetchChunk(scan_state, client_properties, DEFAULT_ROW_GROUP_SIZE, &arrow_array, fetched,
 		                              error, extension_types)) {
-			return arrow::Status::Invalid("Task execution failed: " + error.Message());
+			return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", error.Message()));
 		}
 		if (fetched == 0) {
-			break;
+			batch->reset();
+			return arrow::Status::OK();
 		}
-
-		auto batch_result = arrow::ImportRecordBatch(&arrow_array, schema);
-		if (!batch_result.ok()) {
-			return arrow::Status::Invalid("Failed to import Arrow batch");
-		}
-
-		batches.emplace_back(batch_result.MoveValueUnsafe());
+		ARROW_ASSIGN_OR_RAISE(*batch, arrow::ImportRecordBatch(&arrow_array, schema_));
+		return arrow::Status::OK();
 	}
 
-	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make(std::move(batches), schema));
+private:
+	// Destroyed last, as the result reads through its context.
+	unique_ptr<Connection> connection;
+	unique_ptr<QueryResult> result;
+	QueryResultChunkScanState scan_state;
+	ClientProperties client_properties;
+	std::shared_ptr<arrow::Schema> schema_;
+	unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
+};
+
+} // namespace
+
+arrow::Status QueryResultToArrowReader(unique_ptr<Connection> connection, unique_ptr<QueryResult> result,
+                                       std::shared_ptr<arrow::RecordBatchReader> &reader) {
+	auto client_properties = result->client_properties;
+	if (!client_properties.client_context) {
+		client_properties.client_context = connection->context.get();
+	}
+	client_properties.arrow_lossless_conversion = true;
+
+	ArrowSchema arrow_schema;
+	ArrowConverter::ToArrowSchema(&arrow_schema, result->types, result->names, client_properties);
+	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
+	reader = std::make_shared<QueryResultArrowReader>(std::move(connection), std::move(result),
+	                                                  std::move(client_properties), std::move(schema));
 	return arrow::Status::OK();
 }
 

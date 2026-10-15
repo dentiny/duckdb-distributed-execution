@@ -42,6 +42,7 @@
 #include "utils/sql_render_utils.hpp"
 
 #include <algorithm>
+#include <arrow/flight/client.h>
 #include <chrono>
 #include <utility>
 
@@ -65,46 +66,194 @@ struct WorkerFragmentBindData : public TableFunctionData {
 	WorkerFragment fragment;
 };
 
-struct WorkerFragmentGlobalState : public GlobalTableFunctionState {
-	bool started = false;
-	ErrorData error;
-	vector<unique_ptr<DataChunk>> chunks;
-	idx_t chunk_idx = 0;
-	idx_t chunk_offset = 0;
+// The fragment's result: the stream of each worker task, each read by one thread at a time, or the chunks of its local
+// execution.
+class WorkerFragmentGlobalState : public GlobalTableFunctionState {
+public:
+	WorkerFragmentGlobalState(shared_ptr<WorkerFragmentState> fragment_state_p, idx_t max_threads_p)
+	    : fragment_state(std::move(fragment_state_p)), max_threads(max_threads_p) {
+	}
+
+	~WorkerFragmentGlobalState() override {
+		// Stops the workers of a query that ends before reading all their rows, e.g. on an error.
+		const concurrency::lock_guard<concurrency::mutex> lock(mu);
+		if (finished_streams < streams.size()) {
+			for (auto &stream : streams) {
+				stream->Cancel();
+			}
+		}
+	}
+
+	idx_t MaxThreads() const override {
+		return max_threads;
+	}
+
+	// Starts the fragment on the first call; later calls wait until it has started.
+	void Start(const WorkerFragment &fragment) {
+		const concurrency::lock_guard<concurrency::mutex> start_lock(start_mu);
+		if (started) {
+			return;
+		}
+		started = true;
+		start_time = std::chrono::steady_clock::now();
+		info.sql = fragment.description;
+		vector<std::unique_ptr<arrow::flight::FlightStreamReader>> task_streams;
+		if (fragment_state->StartTasks(fragment, task_streams)) {
+			info.execution_mode =
+			    task_streams.size() == 1 ? QueryExecutionMode::DELEGATED : QueryExecutionMode::ROW_GROUP_PARTITION;
+			info.merge_strategy = fragment.merge_strategy;
+			info.num_workers_used = task_streams.size();
+			info.num_tasks_generated = task_streams.size();
+			const concurrency::lock_guard<concurrency::mutex> lock(mu);
+			streams = std::move(task_streams);
+			return;
+		}
+		auto local_chunks = fragment_state->ExecuteLocally(fragment);
+		RecordExecution();
+		const concurrency::lock_guard<concurrency::mutex> lock(mu);
+		chunks = std::move(local_chunks);
+	}
+
+	// Returns the next chunk for a thread reading the stream at stream_idx, if any, or nullptr if there are no rows
+	// left. Reads the next unclaimed stream once that stream ends.
+	unique_ptr<DataChunk> Next(ClientContext &context, const WorkerFragment &fragment, optional_idx &stream_idx) {
+		while (true) {
+			optional_ptr<arrow::flight::FlightStreamReader> stream;
+			{
+				const concurrency::lock_guard<concurrency::mutex> lock(mu);
+				if (streams.empty()) {
+					return next_chunk < chunks.size() ? std::move(chunks[next_chunk++]) : nullptr;
+				}
+				if (!stream_idx.IsValid()) {
+					if (next_stream == streams.size()) {
+						return nullptr;
+					}
+					stream_idx = next_stream++;
+				}
+				stream = streams[stream_idx.GetIndex()].get();
+			}
+			auto next = stream->Next();
+			if (!next.ok()) {
+				throw IOException("Worker task %llu of fragment '%s' failed: %s", stream_idx.GetIndex(),
+				                  fragment.description, next.status().ToString());
+			}
+			if (next->data) {
+				if (next->data->num_rows() == 0) {
+					continue;
+				}
+				auto chunk = make_uniq<DataChunk>();
+				ArrowRecordBatchToDataChunk(context, *next->data, *chunk, &fragment.types);
+				return chunk;
+			}
+			stream_idx = optional_idx();
+			bool all_finished;
+			{
+				const concurrency::lock_guard<concurrency::mutex> lock(mu);
+				all_finished = ++finished_streams == streams.size();
+			}
+			if (all_finished) {
+				RecordExecution();
+			}
+		}
+	}
+
+	void SetError(ErrorData error_p) {
+		const concurrency::lock_guard<concurrency::mutex> lock(mu);
+		if (!error.HasError()) {
+			error = std::move(error_p);
+		}
+	}
+
+	void ThrowIfError() {
+		const concurrency::lock_guard<concurrency::mutex> lock(mu);
+		if (error.HasError()) {
+			error.Throw();
+		}
+	}
+
+private:
+	void RecordExecution() {
+		info.query_duration =
+		    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+		fragment_state->RecordExecution(std::move(info));
+	}
+
+	const shared_ptr<WorkerFragmentState> fragment_state;
+	const idx_t max_threads;
+	concurrency::mutex start_mu;
+	bool started DUCKDB_GUARDED_BY(start_mu) = false;
+	// Written by Start, and read once the fragment has ended.
+	std::chrono::steady_clock::time_point start_time;
+	QueryExecutionInfo info;
+	concurrency::mutex mu;
+	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> streams DUCKDB_GUARDED_BY(mu);
+	idx_t next_stream DUCKDB_GUARDED_BY(mu) = 0;
+	idx_t finished_streams DUCKDB_GUARDED_BY(mu) = 0;
+	vector<unique_ptr<DataChunk>> chunks DUCKDB_GUARDED_BY(mu);
+	idx_t next_chunk DUCKDB_GUARDED_BY(mu) = 0;
+	ErrorData error DUCKDB_GUARDED_BY(mu);
 };
 
-// Runs the fragment on a scheduler thread, so the source blocks instead of the executor polling for its result.
-class WorkerFragmentTask : public AsyncTask {
+struct WorkerFragmentLocalState : public LocalTableFunctionState {
+	bool HasRows() const {
+		return chunk && offset < chunk->size();
+	}
+
+	optional_idx stream_idx;
+	unique_ptr<DataChunk> chunk;
+	idx_t offset = 0;
+	bool finished = false;
+};
+
+// Reads the next chunk on a scheduler thread, so the source blocks instead of the executor polling while workers
+// compute and send it.
+class WorkerFragmentReadTask : public AsyncTask {
 public:
-	WorkerFragmentTask(ClientContext &context_p, const WorkerFragment &fragment_p, WorkerFragmentGlobalState &state_p)
-	    : context(context_p), fragment(fragment_p), state(state_p) {
+	WorkerFragmentReadTask(ClientContext &context_p, const WorkerFragment &fragment_p,
+	                       WorkerFragmentGlobalState &global_p, WorkerFragmentLocalState &local_p)
+	    : context(context_p), fragment(fragment_p), global(global_p), local(local_p) {
 	}
 
 	void Execute() override {
 		try {
-			state.chunks = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME)
-			                   ->Execute(context, fragment);
+			global.Start(fragment);
+			local.chunk = global.Next(context, fragment, local.stream_idx);
+			local.offset = 0;
+			local.finished = !local.chunk;
 		} catch (const std::exception &ex) {
-			state.error = ErrorData(ex);
+			global.SetError(ErrorData(ex));
+			local.finished = true;
 		}
 	}
 
 private:
 	ClientContext &context;
 	const WorkerFragment &fragment;
-	WorkerFragmentGlobalState &state;
+	WorkerFragmentGlobalState &global;
+	WorkerFragmentLocalState &local;
 };
 
 unique_ptr<GlobalTableFunctionState> WorkerFragmentInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
-	return make_uniq<WorkerFragmentGlobalState>();
+	auto fragment_state = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME);
+	if (!fragment_state) {
+		throw InternalException("Worker fragment runs without a worker fragment state");
+	}
+	const auto &fragment = input.bind_data->Cast<WorkerFragmentBindData>().fragment;
+	return make_uniq<WorkerFragmentGlobalState>(std::move(fragment_state),
+	                                            MaxValue<idx_t>(fragment.task_plans.size(), 1));
+}
+
+unique_ptr<LocalTableFunctionState> WorkerFragmentInitLocal(ExecutionContext &context, TableFunctionInitInput &input,
+                                                            GlobalTableFunctionState *global_state) {
+	return make_uniq<WorkerFragmentLocalState>();
 }
 
 void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &state = data.global_state->Cast<WorkerFragmentGlobalState>();
-	if (!state.started) {
-		state.started = true;
-		auto task =
-		    make_uniq<WorkerFragmentTask>(context, data.bind_data->Cast<WorkerFragmentBindData>().fragment, state);
+	auto &global = data.global_state->Cast<WorkerFragmentGlobalState>();
+	auto &local = data.local_state->Cast<WorkerFragmentLocalState>();
+	if (!local.HasRows() && !local.finished) {
+		auto task = make_uniq<WorkerFragmentReadTask>(context, data.bind_data->Cast<WorkerFragmentBindData>().fragment,
+		                                              global, local);
 		if (data.results_execution_mode == AsyncResultsExecutionMode::TASK_EXECUTOR) {
 			vector<unique_ptr<AsyncTask>> tasks;
 			tasks.emplace_back(std::move(task));
@@ -114,25 +263,19 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 		}
 		task->Execute();
 	}
-	if (state.error.HasError()) {
-		state.error.Throw();
-	}
-	while (state.chunk_idx < state.chunks.size() && state.chunk_offset == state.chunks[state.chunk_idx]->size()) {
-		state.chunks[state.chunk_idx++].reset();
-		state.chunk_offset = 0;
-	}
-	if (state.chunk_idx == state.chunks.size()) {
+	global.ThrowIfError();
+	if (!local.HasRows()) {
 		output.SetCardinality(0);
 		return;
 	}
-	auto &chunk = *state.chunks[state.chunk_idx];
-	auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, chunk.size() - state.chunk_offset);
+	auto &chunk = *local.chunk;
+	auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, chunk.size() - local.offset);
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
-		VectorOperations::Copy(chunk.data[col_idx], output.data[col_idx], state.chunk_offset + count,
-		                       state.chunk_offset, /*target_offset=*/0);
+		VectorOperations::Copy(chunk.data[col_idx], output.data[col_idx], local.offset + count, local.offset,
+		                       /*target_offset=*/0);
 	}
 	output.SetCardinality(count);
-	state.chunk_offset += count;
+	local.offset += count;
 }
 
 // Returns the table `get` scans if workers can partition it, or nullptr.
@@ -153,7 +296,8 @@ string GetTableName(TableCatalogEntry &table) {
 }
 
 unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
-	TableFunction function("worker_fragment", {}, WorkerFragmentExecute, nullptr, WorkerFragmentInitGlobal);
+	TableFunction function("worker_fragment", {}, WorkerFragmentExecute, nullptr, WorkerFragmentInitGlobal,
+	                       WorkerFragmentInitLocal);
 	auto types = fragment.types;
 	vector<string> names;
 	names.reserve(types.size());
@@ -884,44 +1028,31 @@ WorkerFragmentState::WorkerFragmentState(DistributedExecutor &executor_p, Connec
                   ->GetCatalog()) {
 }
 
-vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &context, const WorkerFragment &fragment) {
-	QueryExecutionInfo info;
-	info.sql = fragment.description;
-	const auto start = std::chrono::steady_clock::now();
-	vector<arrow::RecordBatchVector> task_batches;
-	vector<unique_ptr<DataChunk>> chunks;
-	if (executor.ExecutePlans(fragment.task_plans, task_batches)) {
-		for (auto &batches : task_batches) {
-			for (auto &batch : batches) {
-				auto chunk = make_uniq<DataChunk>();
-				ArrowRecordBatchToDataChunk(context, *batch, *chunk, &fragment.types);
-				batch.reset();
-				chunks.emplace_back(std::move(chunk));
-			}
-		}
-		info.execution_mode =
-		    fragment.task_plans.size() == 1 ? QueryExecutionMode::DELEGATED : QueryExecutionMode::ROW_GROUP_PARTITION;
-		info.merge_strategy = fragment.merge_strategy;
-		info.num_workers_used = fragment.task_plans.size();
-		info.num_tasks_generated = fragment.task_plans.size();
-	} else {
-		auto plan = PlanSerializer::DeserializeLogicalPlan(*connection.context, fragment.plan);
-		auto result = connection.Query(make_uniq<LogicalPlanStatement>(std::move(plan)));
-		if (result->HasError()) {
-			result->ThrowError();
-		}
-		if (result->types != fragment.types) {
-			throw InternalException("Worker fragment '%s' returned unexpected types", fragment.description);
-		}
-		for (auto chunk = result->Fetch(); chunk && chunk->size() > 0; chunk = result->Fetch()) {
-			chunks.emplace_back(std::move(chunk));
-		}
+bool WorkerFragmentState::StartTasks(const WorkerFragment &fragment,
+                                     vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams) {
+	return executor.ExecutePlans(fragment.task_plans, streams);
+}
+
+vector<unique_ptr<DataChunk>> WorkerFragmentState::ExecuteLocally(const WorkerFragment &fragment) {
+	// Materialized, as concurrent fragments share the connection and a new query would invalidate a streaming result.
+	auto plan = PlanSerializer::DeserializeLogicalPlan(*connection.context, fragment.plan);
+	auto result = connection.Query(make_uniq<LogicalPlanStatement>(std::move(plan)));
+	if (result->HasError()) {
+		result->ThrowError();
 	}
-	info.query_duration =
-	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+	if (result->types != fragment.types) {
+		throw InternalException("Worker fragment '%s' returned unexpected types", fragment.description);
+	}
+	vector<unique_ptr<DataChunk>> chunks;
+	for (auto chunk = result->Fetch(); chunk && chunk->size() > 0; chunk = result->Fetch()) {
+		chunks.emplace_back(std::move(chunk));
+	}
+	return chunks;
+}
+
+void WorkerFragmentState::RecordExecution(QueryExecutionInfo info) {
 	const concurrency::lock_guard<concurrency::mutex> lock(executions_mutex);
 	executions.emplace_back(std::move(info));
-	return chunks;
 }
 
 bool WorkerFragmentState::IsSameCatalog(const TableCatalogEntry &table) const {

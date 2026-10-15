@@ -833,18 +833,21 @@ TEST_CASE("Workers reject plans of another build and the driver runs them locall
 		request.set_serialized_plan(PlanSerializer::SerializeLogicalPlan(*plan));
 		*request.mutable_storage_config() = fixture.config;
 		request.set_build_id("other/0.0.0");
-		arrow::RecordBatchVector batches;
-		auto status = worker_client.ExecutePartition(request, batches);
-		REQUIRE_FALSE(status.ok());
-		REQUIRE(StringUtil::Contains(status.ToString(), "cannot run on worker mismatch_worker"));
+		auto stream = worker_client.ExecutePartition(request);
+		REQUIRE_FALSE(stream.ok());
+		REQUIRE(StringUtil::Contains(stream.status().ToString(), "cannot run on worker mismatch_worker"));
 		request.set_build_id(PlanSerializer::BuildId());
-		REQUIRE(worker_client.ExecutePartition(request, batches).ok());
-		REQUIRE(batches.size() == 1);
-		REQUIRE(batches[0]->num_rows() == 1);
-		REQUIRE(batches[0]->column(0)->type_id() == arrow::Type::INT64);
-		REQUIRE(batches[0]->column(1)->type_id() == arrow::Type::INT64);
-		REQUIRE(std::static_pointer_cast<arrow::Int64Array>(batches[0]->column(0))->Value(0) == 300000);
-		REQUIRE(std::static_pointer_cast<arrow::Int64Array>(batches[0]->column(1))->Value(0) == 299999);
+		stream = worker_client.ExecutePartition(request);
+		REQUIRE(stream.ok());
+		auto batches = (*stream)->ToRecordBatches();
+		REQUIRE(batches.ok());
+		REQUIRE(batches->size() == 1);
+		const auto &batch = (*batches)[0];
+		REQUIRE(batch->num_rows() == 1);
+		REQUIRE(batch->column(0)->type_id() == arrow::Type::INT64);
+		REQUIRE(batch->column(1)->type_id() == arrow::Type::INT64);
+		REQUIRE(std::static_pointer_cast<arrow::Int64Array>(batch->column(0))->Value(0) == 300000);
+		REQUIRE(std::static_pointer_cast<arrow::Int64Array>(batch->column(1))->Value(0) == 299999);
 		worker.Shutdown();
 
 		// A task that fails on its worker, whatever the reason, makes the driver run the fragment itself.
