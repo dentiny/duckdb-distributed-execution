@@ -6,9 +6,6 @@ import "storage_config.proto";
 
 // Execute a partition on a worker node.
 message ExecutePartitionRequest {
-  reserved 1, 2, 6, 7;
-  reserved "sql", "partition_data", "column_names", "column_types";
-
   uint64 partition_id = 3;
   uint64 total_partitions = 4;
   // Optimized logical plan fragment, serialized with DuckDB's BinarySerializer.

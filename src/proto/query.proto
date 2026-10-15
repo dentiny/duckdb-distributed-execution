@@ -4,9 +4,6 @@ package duckdb.distributed;
 
 // A read query; a read-write client may also send a statement that writes.
 message QueryRequest {
-  reserved 2, 3;
-  reserved "limit", "offset";
-
   string sql = 1;
 }
 
