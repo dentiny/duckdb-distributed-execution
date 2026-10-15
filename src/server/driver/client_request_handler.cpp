@@ -90,11 +90,8 @@ arrow::Status ClientRequestHandler::HandleInsert(const distributed::DistributedR
 		}
 		return arrow::Status::OK();
 	}
-	for (auto &batch : batches) {
-		ARROW_RETURN_NOT_OK(InsertData(table_name, batch, registration, response));
-		if (!response.success()) {
-			break;
-		}
+	if (!batches.empty()) {
+		InsertData(table_name, batches, registration, response);
 	}
 	registration.CacheActionResponse(request_identity, ClientRequestTransport::DO_PUT, signature, response);
 	return arrow::Status::OK();
@@ -250,10 +247,9 @@ arrow::Status ClientRequestHandler::RunQuery(const distributed::QueryRequest &re
 	return QueryResultToArrowBatches(*result, schema, batches);
 }
 
-arrow::Status ClientRequestHandler::InsertData(const string &table_name,
-                                               const std::shared_ptr<arrow::RecordBatch> &batch,
-                                               ClientRegistration &registration,
-                                               distributed::DistributedResponse &resp) {
+void ClientRequestHandler::InsertData(const string &table_name,
+                                      const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
+                                      ClientRegistration &registration, distributed::DistributedResponse &resp) {
 	try {
 		// Parse only the target name; batch values stay typed throughout ingestion.
 		Parser parser;
@@ -269,20 +265,20 @@ arrow::Status ClientRequestHandler::InsertData(const string &table_name,
 			insert.schema = DEFAULT_SCHEMA;
 		}
 		Appender appender(*registration.connection, insert.catalog, insert.schema, insert.table);
-		DataChunk chunk;
-		ArrowRecordBatchToDataChunk(*registration.connection->context, *batch, chunk, &appender.GetActiveTypes());
-		appender.AppendDataChunk(chunk);
+		for (auto &batch : batches) {
+			DataChunk chunk;
+			ArrowRecordBatchToDataChunk(*registration.connection->context, *batch, chunk, &appender.GetActiveTypes());
+			appender.AppendDataChunk(chunk);
+		}
 		appender.Close();
 	} catch (const std::exception &ex) {
 		resp.set_success(false);
 		auto error = ErrorData(ex);
 		resp.set_error_message(error.Message());
 		ToRemoteError(error, *resp.mutable_error());
-		return arrow::Status::OK();
+		return;
 	}
-
 	resp.set_success(true);
-	return arrow::Status::OK();
 }
 
 } // namespace duckdb

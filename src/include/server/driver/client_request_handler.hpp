@@ -30,7 +30,7 @@ public:
 	arrow::Status HandleQuery(const distributed::DistributedRequest &request, ClientRegistration &registration)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 
-	// Insert `batches` into `table_name`, stopping at the first failed batch. `signature` identifies the payload.
+	// Insert `batches` into `table_name`, reporting failures in `response`. `signature` identifies the payload.
 	arrow::Status HandleInsert(const distributed::DistributedRequest &request_identity, const string &table_name,
 	                           const vector<std::shared_ptr<arrow::RecordBatch>> &batches, const string &signature,
 	                           ClientRegistration &registration, distributed::DistributedResponse &response)
@@ -48,8 +48,9 @@ private:
 	arrow::Status RunQuery(const distributed::QueryRequest &req, ClientRegistration &registration,
 	                       std::shared_ptr<arrow::Schema> &schema, vector<std::shared_ptr<arrow::RecordBatch>> &batches)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
-	arrow::Status InsertData(const string &table_name, const std::shared_ptr<arrow::RecordBatch> &batch,
-	                         ClientRegistration &registration, distributed::DistributedResponse &resp)
+	// Append `batches` to `table_name` through one Appender, reporting failures in `resp`.
+	void InsertData(const string &table_name, const vector<std::shared_ptr<arrow::RecordBatch>> &batches,
+	                ClientRegistration &registration, distributed::DistributedResponse &resp)
 	    DUCKDB_REQUIRES(registration.connection_mutex);
 
 	DatabaseInstance &db_instance;
