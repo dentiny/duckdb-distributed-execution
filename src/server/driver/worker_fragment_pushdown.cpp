@@ -6,6 +6,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/enums/optimizer_type.hpp"
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
@@ -16,6 +17,7 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
+#include "duckdb/parallel/async_result.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -64,21 +66,57 @@ struct WorkerFragmentBindData : public TableFunctionData {
 };
 
 struct WorkerFragmentGlobalState : public GlobalTableFunctionState {
+	bool started = false;
+	ErrorData error;
 	vector<unique_ptr<DataChunk>> chunks;
 	idx_t chunk_idx = 0;
 	idx_t chunk_offset = 0;
 };
 
+// Runs the fragment on a scheduler thread, so the source blocks instead of the executor polling for its result.
+class WorkerFragmentTask : public AsyncTask {
+public:
+	WorkerFragmentTask(ClientContext &context_p, const WorkerFragment &fragment_p, WorkerFragmentGlobalState &state_p)
+	    : context(context_p), fragment(fragment_p), state(state_p) {
+	}
+
+	void Execute() override {
+		try {
+			state.chunks = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME)
+			                   ->Execute(context, fragment);
+		} catch (const std::exception &ex) {
+			state.error = ErrorData(ex);
+		}
+	}
+
+private:
+	ClientContext &context;
+	const WorkerFragment &fragment;
+	WorkerFragmentGlobalState &state;
+};
+
 unique_ptr<GlobalTableFunctionState> WorkerFragmentInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
-	auto &bind_data = input.bind_data->Cast<WorkerFragmentBindData>();
-	auto result = make_uniq<WorkerFragmentGlobalState>();
-	result->chunks = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME)
-	                     ->Execute(context, bind_data.fragment);
-	return std::move(result);
+	return make_uniq<WorkerFragmentGlobalState>();
 }
 
 void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &state = data.global_state->Cast<WorkerFragmentGlobalState>();
+	if (!state.started) {
+		state.started = true;
+		auto task =
+		    make_uniq<WorkerFragmentTask>(context, data.bind_data->Cast<WorkerFragmentBindData>().fragment, state);
+		if (data.results_execution_mode == AsyncResultsExecutionMode::TASK_EXECUTOR) {
+			vector<unique_ptr<AsyncTask>> tasks;
+			tasks.emplace_back(std::move(task));
+			data.async_result = AsyncResult(std::move(tasks));
+			output.SetCardinality(0);
+			return;
+		}
+		task->Execute();
+	}
+	if (state.error.HasError()) {
+		state.error.Throw();
+	}
 	while (state.chunk_idx < state.chunks.size() && state.chunk_offset == state.chunks[state.chunk_idx]->size()) {
 		state.chunks[state.chunk_idx++].reset();
 		state.chunk_offset = 0;
@@ -881,6 +919,7 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::Execute(ClientContext &contex
 	}
 	info.query_duration =
 	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+	const concurrency::lock_guard<concurrency::mutex> lock(executions_mutex);
 	executions.emplace_back(std::move(info));
 	return chunks;
 }
@@ -890,6 +929,7 @@ bool WorkerFragmentState::IsSameCatalog(const TableCatalogEntry &table) const {
 }
 
 vector<QueryExecutionInfo> WorkerFragmentState::TakeExecutions() {
+	const concurrency::lock_guard<concurrency::mutex> lock(executions_mutex);
 	return std::exchange(executions, {});
 }
 

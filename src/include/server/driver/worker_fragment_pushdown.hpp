@@ -4,6 +4,7 @@
 #include "duckdb/main/client_context_state.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "server/driver/query_history.hpp"
+#include "utils/mutex.hpp"
 
 namespace duckdb {
 
@@ -47,7 +48,9 @@ private:
 	DistributedExecutor &executor;
 	Connection &connection;
 	Catalog &catalog;
-	vector<QueryExecutionInfo> executions;
+	// Fragments of one query can run concurrently on scheduler threads.
+	concurrency::mutex executions_mutex;
+	vector<QueryExecutionInfo> executions DUCKDB_GUARDED_BY(executions_mutex);
 };
 
 // Serializes plan once per task, restricting partitioned, one of its scans, to a contiguous run of whole row
