@@ -1,6 +1,6 @@
 #include "client/execution/distributed_table_scan_function.hpp"
 
-#include "arrow_utils.hpp"
+#include "arrow_record_batch_converter.hpp"
 #include "client/duckherder_catalog.hpp"
 #include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"

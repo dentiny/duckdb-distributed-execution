@@ -1,5 +1,6 @@
 #include "catch/catch.hpp"
 
+#include "arrow_record_batch_converter.hpp"
 #include "arrow_utils.hpp"
 #include "distributed.pb.h"
 #include "duckdb/main/connection.hpp"

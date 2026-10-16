@@ -1,6 +1,6 @@
 #include "server/driver/worker_fragment_pushdown.hpp"
 
-#include "arrow_utils.hpp"
+#include "arrow_record_batch_converter.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"

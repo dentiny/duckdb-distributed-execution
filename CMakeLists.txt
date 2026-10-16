@@ -116,6 +116,7 @@ set(EXTENSION_SOURCES
     ${SERVER_DRIVER_SOURCES}
     ${SERVER_WORKER_SOURCES}
     ${UTIL_SOURCES}
+    src/arrow_record_batch_converter.cpp
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
     src/duckherder_extension.cpp

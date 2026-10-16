@@ -1,5 +1,6 @@
 #include "server/driver/client_request_handler.hpp"
 
+#include "arrow_record_batch_converter.hpp"
 #include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
