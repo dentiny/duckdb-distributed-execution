@@ -382,11 +382,13 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 		alter_view = true;
 	}
 
-	auto &context = transaction.GetContext();
-	AlterLocal(std::move(transaction), info);
+	// Catalog loading on ATTACH mirrors foreign keys through a system transaction, which has no client context.
 	if (alter_sql.empty()) {
+		AlterLocal(std::move(transaction), info);
 		return;
 	}
+	auto &context = transaction.GetContext();
+	AlterLocal(std::move(transaction), info);
 
 	auto &client = duckherder_catalog.GetClient(context);
 	auto result = alter_view
