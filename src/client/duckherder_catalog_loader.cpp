@@ -98,7 +98,10 @@ void DuckherderCatalogLoader::Load() {
 		           auto &table = pending_tables[schema_name][entry_name];
 		           table.info = unique_ptr_cast<CreateInfo, CreateTableInfo>(
 		               ParseCreateInfo(chunk.GetValue(3, row_idx).GetValue<string>()));
-		           table.estimated_size = chunk.GetValue(5, row_idx);
+		           auto estimated_size = chunk.GetValue(5, row_idx);
+		           if (!estimated_size.IsNull()) {
+			           table.estimated_size = estimated_size.GetValue<idx_t>();
+		           }
 	           });
 
 	for (auto &schema_tables : pending_tables) {
@@ -172,8 +175,8 @@ void DuckherderCatalogLoader::LoadTable(const string &schema_name, const string 
 	auto bound_info = binder->BindCreateTableInfo(std::move(table.info), schema);
 	schema.CreateTableLocal(transaction, *bound_info);
 
-	if (!table.estimated_size.IsNull()) {
-		catalog.SetEstimatedCardinality(schema.name, table_name, table.estimated_size.GetValue<idx_t>());
+	if (table.estimated_size.IsValid()) {
+		catalog.SetEstimatedCardinality(schema.name, table_name, table.estimated_size.GetIndex());
 	}
 }
 

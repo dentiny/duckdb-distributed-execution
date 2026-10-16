@@ -2,8 +2,8 @@
 
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/string.hpp"
-#include "duckdb/common/types/value.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 
 namespace duckdb {
@@ -11,6 +11,7 @@ namespace duckdb {
 class ClientContext;
 class DuckherderCatalog;
 class DuckherderSchemaCatalogEntry;
+class Value;
 
 // Loads the control node's schemas, enum types, and tables into a Duckherder catalog's local metadata cache.
 class DuckherderCatalogLoader {
@@ -22,7 +23,7 @@ public:
 private:
 	struct PendingTable {
 		unique_ptr<CreateTableInfo> info;
-		Value estimated_size;
+		optional_idx estimated_size;
 		bool loaded = false;
 	};
 
