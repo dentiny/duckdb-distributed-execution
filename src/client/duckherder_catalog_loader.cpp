@@ -1,10 +1,12 @@
 #include "client/duckherder_catalog_loader.hpp"
 
 #include "client/execution/distributed_client.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
@@ -46,6 +48,15 @@ void ForEachRow(DistributedClient &client, const string &sql, const vector<Logic
 	}
 }
 
+vector<PhysicalIndex> GetKeyIndexes(const ColumnList &columns, const vector<string> &names) {
+	vector<PhysicalIndex> indexes;
+	indexes.reserve(names.size());
+	for (auto &name : names) {
+		indexes.emplace_back(columns.GetColumn(name).Physical());
+	}
+	return indexes;
+}
+
 } // namespace
 
 DuckherderCatalogLoader::DuckherderCatalogLoader(DuckherderCatalog &catalog_p, ClientContext &context_p)
@@ -79,14 +90,25 @@ void DuckherderCatalogLoader::Load() {
 		           }
 
 		           auto entry_name = chunk.GetValue(2, row_idx).GetValue<string>();
-		           auto &schema = catalog.GetSchema(transaction, schema_name).Cast<DuckherderSchemaCatalogEntry>();
 		           if (entry_order == 1) {
+			           auto &schema = catalog.GetSchema(transaction, schema_name).Cast<DuckherderSchemaCatalogEntry>();
 			           LoadEnumType(schema, entry_name, chunk.GetValue(4, row_idx));
 			           return;
 		           }
-		           LoadTable(schema, entry_name, chunk.GetValue(3, row_idx).GetValue<string>(),
-		                     chunk.GetValue(5, row_idx));
+		           auto &table = pending_tables[schema_name][entry_name];
+		           table.info = unique_ptr_cast<CreateInfo, CreateTableInfo>(
+		               ParseCreateInfo(chunk.GetValue(3, row_idx).GetValue<string>()));
+		           auto estimated_size = chunk.GetValue(5, row_idx);
+		           if (!estimated_size.IsNull()) {
+			           table.estimated_size = estimated_size.GetValue<idx_t>();
+		           }
 	           });
+
+	for (auto &schema_tables : pending_tables) {
+		for (auto &table : schema_tables.second) {
+			LoadTable(schema_tables.first, table.first, table.second);
+		}
+	}
 }
 
 void DuckherderCatalogLoader::LoadSchema(const string &schema_name) {
@@ -110,17 +132,51 @@ void DuckherderCatalogLoader::LoadEnumType(DuckherderSchemaCatalogEntry &schema,
 	schema.CreateTypeLocal(transaction, type_info);
 }
 
-void DuckherderCatalogLoader::LoadTable(DuckherderSchemaCatalogEntry &schema, const string &table_name,
-                                        const string &sql, const Value &estimated_size) {
-	auto info = unique_ptr_cast<CreateInfo, CreateTableInfo>(ParseCreateInfo(sql));
-	info->schema = schema.name;
-	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+void DuckherderCatalogLoader::LoadTable(const string &schema_name, const string &table_name, PendingTable &table) {
+	if (table.loaded) {
+		return;
+	}
+	table.loaded = true;
+
+	auto &schema = catalog.GetSchema(transaction, schema_name).Cast<DuckherderSchemaCatalogEntry>();
+	auto &info = *table.info;
+	// The binder looks up referenced tables by catalog name, which is not registered until ATTACH completes, so
+	// load referenced tables first and pre-resolve the key indexes. DuckDB rejects foreign keys across schemas.
+	for (auto &constraint : info.constraints) {
+		if (constraint->type != ConstraintType::FOREIGN_KEY) {
+			continue;
+		}
+		auto &fk = constraint->Cast<ForeignKeyConstraint>();
+		if (fk.info.type != ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
+			continue;
+		}
+		fk.info.schema = schema.name;
+		fk.info.fk_keys = GetKeyIndexes(info.columns, fk.fk_columns);
+		if (StringUtil::CIEquals(fk.info.table, info.table)) {
+			fk.info.type = ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE;
+			fk.info.pk_keys = GetKeyIndexes(info.columns, fk.pk_columns);
+			continue;
+		}
+		auto &schema_tables = pending_tables[schema_name];
+		auto pending = schema_tables.find(fk.info.table);
+		if (pending == schema_tables.end()) {
+			throw CatalogException("Table %s.%s referenced by %s is missing from remote metadata", schema_name,
+			                       fk.info.table, table_name);
+		}
+		LoadTable(schema_name, pending->first, pending->second);
+		auto &referenced =
+		    schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, fk.info.table)->Cast<TableCatalogEntry>();
+		fk.info.pk_keys = GetKeyIndexes(referenced.GetColumns(), fk.pk_columns);
+	}
+
+	info.schema = schema.name;
+	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	auto binder = Binder::CreateBinder(context);
-	auto bound_info = binder->BindCreateTableInfo(std::move(info), schema);
+	auto bound_info = binder->BindCreateTableInfo(std::move(table.info), schema);
 	schema.CreateTableLocal(transaction, *bound_info);
 
-	if (!estimated_size.IsNull()) {
-		catalog.SetEstimatedCardinality(schema.name, table_name, estimated_size.GetValue<idx_t>());
+	if (table.estimated_size.IsValid()) {
+		catalog.SetEstimatedCardinality(schema.name, table_name, table.estimated_size.GetIndex());
 	}
 }
 

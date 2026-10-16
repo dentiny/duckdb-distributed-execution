@@ -1,0 +1,42 @@
+# name: test/sql/attach_foreign_key_catalog.test
+# description: ATTACH loads a child table whose name sorts before its foreign key's parent
+# group: [sql]
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8866);
+
+statement ok
+ATTACH 'localhost:8866/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
+
+statement ok
+CREATE TABLE b_parent (id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE a_child (id INTEGER, parent_id INTEGER REFERENCES b_parent(id));
+
+statement ok
+INSERT INTO b_parent VALUES (1);
+
+statement ok
+INSERT INTO a_child VALUES (10, 1);
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+ATTACH 'localhost:8866/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+query II
+SELECT * FROM dh.a_child;
+----
+10	1

@@ -217,4 +217,27 @@ SELECT "new id", "extra value" FROM dh.cachecase WHERE "new id" = 1;
 1	7
 
 statement ok
+ALTER TABLE dh.cachecase ALTER COLUMN "extra value" SET DEFAULT 9;
+
+statement ok
+INSERT INTO dh.cachecase ("new id") VALUES (6);
+
+query I
+SELECT "extra value" FROM dh.cachecase WHERE "new id" = 6;
+----
+9
+
+# DROP DEFAULT is parsed as SET DEFAULT without an expression.
+statement ok
+ALTER TABLE dh.cachecase ALTER COLUMN "extra value" DROP DEFAULT;
+
+statement ok
+INSERT INTO dh.cachecase ("new id") VALUES (7);
+
+query I
+SELECT "extra value" FROM dh.cachecase WHERE "new id" = 7;
+----
+NULL
+
+statement ok
 DROP TABLE dh.cachecase;

@@ -81,9 +81,14 @@ string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
 	}
 	case AlterTableType::SET_DEFAULT: {
 		auto &set_default_info = info.Cast<SetDefaultInfo>();
-		sql += StringUtil::Format("ALTER COLUMN %s SET DEFAULT %s",
-		                          KeywordHelper::WriteOptionallyQuoted(set_default_info.column_name),
-		                          set_default_info.expression->ToString());
+		auto column_name = KeywordHelper::WriteOptionallyQuoted(set_default_info.column_name);
+		// DROP DEFAULT is parsed as SET DEFAULT with no expression.
+		if (!set_default_info.expression) {
+			sql += StringUtil::Format("ALTER COLUMN %s DROP DEFAULT", column_name);
+			break;
+		}
+		sql +=
+		    StringUtil::Format("ALTER COLUMN %s SET DEFAULT %s", column_name, set_default_info.expression->ToString());
 		break;
 	}
 	case AlterTableType::SET_NOT_NULL: {
