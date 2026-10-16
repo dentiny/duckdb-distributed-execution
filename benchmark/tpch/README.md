@@ -84,34 +84,82 @@ The console prints each query number as it runs. Each run writes `results/<time>
 - `verify-n<N>/`: query and reference results
 - `n<N>-driver.log`, `n<N>-worker<i>.log`: process logs
 
+## Test setup
+
+Everything runs on one machine, an i7-12700K with 31 GiB of memory. Its CPUs 0-15 are the 8 performance cores with two threads each, and CPUs 16-19 are the 4 efficiency cores. Each process is pinned to its own CPUs so the processes don't compete with each other:
+
+| Process | CPUs | Memory limit |
+| --- | --- | --- |
+| Client (`bench.sh` and the DuckDB shell it runs) | 0-1 | 4 GiB |
+| Worker 1, 2, 3 | 2-3, 4-5, 6-7 | 4 GiB each |
+| Driver | 8-9 | 4 GiB |
+| RustFS | 16-19 | 2 GiB |
+
+So each DuckDB process gets both threads of one performance core. CPUs 10-15 stay idle.
+
+- **DuckDB processes.** `bench.sh` starts the driver and each worker in its own systemd scope (`systemd-run --user --scope`), which is a cgroup. `AllowedCPUs` pins the scope to its CPUs. `CPUQuota` is set to 100% per CPU; DuckDB reads it to pick its thread count, because it ignores the cpuset. `MemoryMax` caps the scope's memory, and DuckDB sets its memory limit to 80% of it. The client gets the same limits from the outer `systemd-run` in the run command.
+- **RustFS.** RustFS is the S3-compatible object store holding the data. `scripts/local-rustfs.sh` runs it in a Docker container on the same machine, with its data in a Docker volume on the local disk, and serves S3 at `127.0.0.1:19000`. `docker update --cpuset-cpus 16-19 --memory 2g` pins it to the efficiency cores. Because storage is local, every request is fast; `s3_latency.sql` adds the delay a real S3 bucket would have (see above).
+
 ## Results
 
-SF10 with the run command above (`--cold`, one run per query) on an i7-12700K (8 performance cores with two threads each, 4 efficiency cores, 31 GiB). Each DuckDB process gets 2 threads of one performance core and 4 GiB; RustFS gets the 4 efficiency cores. Seconds per query, with simulated S3 latency (`s3_latency.sql`) and without:
+SF10 with the run command above (`--cold`, one run per query) on the machine described below. Seconds per query; Speedup is 0 workers over 3 workers. Queries 2, 13, 20 and 22 run on the driver; the others run on the workers. With 1 worker, the worker has the same two CPUs as the driver, so it takes as long as 0 workers.
 
-![TPC-H SF10 cold start](tpch-sf10-cold.png)
+With simulated S3 latency (`s3_latency.sql`):
 
-| Query | Latency, 0 workers | Latency, 3 workers | None, 0 workers | None, 3 workers |
+![TPC-H SF10 cold start with simulated S3 latency](tpch-sf10-cold.png)
+
+| Query | 0 workers | 1 worker | 3 workers | Speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 28.79 | 20.04 | 2.89 | 2.09 |
-| 2 | 4.47 | 4.45 | 0.35 | 0.36 |
-| 3 | 44.30 | 44.59 | 3.77 | 3.65 |
-| 4 | 28.33 | 28.43 | 2.53 | 2.30 |
-| 5 | 48.95 | 48.88 | 3.90 | 3.70 |
-| 6 | 29.89 | 21.09 | 2.27 | 1.81 |
-| 7 | 54.46 | 53.93 | 4.13 | 4.01 |
-| 8 | 62.36 | 62.16 | 4.09 | 4.15 |
-| 9 | 67.14 | 67.17 | 5.60 | 5.57 |
-| 10 | 47.59 | 47.34 | 3.98 | 3.92 |
-| 11 | 4.04 | 4.13 | 0.30 | 0.31 |
-| 12 | 30.91 | 30.86 | 2.42 | 2.40 |
-| 13 | 22.81 | 22.59 | 2.60 | 2.62 |
-| 14 | 44.18 | 44.31 | 3.36 | 3.27 |
-| 15 | 41.29 | 41.56 | 3.02 | 2.91 |
-| 16 | 2.79 | 2.72 | 0.44 | 0.44 |
-| 17 | 42.51 | 42.87 | 3.11 | 3.08 |
-| 18 | 30.01 | 30.03 | 4.02 | 3.95 |
-| 19 | 48.19 | 48.26 | 3.78 | 3.73 |
-| 20 | 46.97 | 47.66 | 3.44 | 3.44 |
-| 21 | 44.71 | 44.56 | 4.27 | 4.25 |
-| 22 | 5.62 | 5.66 | 0.68 | 0.69 |
-| **Total** | **780.3** | **763.3** | **65.0** | **62.7** |
+| 1 | 28.63 | 29.68 | 10.89 | 2.63x |
+| 2 | 4.73 | 4.32 | 4.62 | 1.02x |
+| 3 | 44.68 | 44.71 | 15.79 | 2.83x |
+| 4 | 28.54 | 28.73 | 10.72 | 2.66x |
+| 5 | 48.08 | 48.32 | 17.53 | 2.74x |
+| 6 | 29.62 | 30.71 | 10.75 | 2.75x |
+| 7 | 54.43 | 53.85 | 19.71 | 2.76x |
+| 8 | 61.82 | 62.78 | 22.38 | 2.76x |
+| 9 | 66.83 | 66.97 | 26.59 | 2.51x |
+| 10 | 46.97 | 47.44 | 22.05 | 2.13x |
+| 11 | 4.24 | 3.99 | 3.20 | 1.32x |
+| 12 | 30.17 | 30.89 | 11.05 | 2.73x |
+| 13 | 22.57 | 23.02 | 22.56 | 1.00x |
+| 14 | 44.55 | 43.74 | 16.06 | 2.77x |
+| 15 | 41.88 | 41.60 | 14.99 | 2.79x |
+| 16 | 2.71 | 2.67 | 2.35 | 1.15x |
+| 17 | 42.49 | 42.59 | 33.20 | 1.28x |
+| 18 | 29.88 | 29.89 | 11.85 | 2.52x |
+| 19 | 48.71 | 48.67 | 17.46 | 2.79x |
+| 20 | 46.95 | 47.66 | 47.71 | 0.98x |
+| 21 | 44.57 | 44.14 | 16.14 | 2.76x |
+| 22 | 5.90 | 5.77 | 5.51 | 1.07x |
+| **Total** | **778.9** | **782.1** | **363.1** | **2.15x** |
+
+Without simulated latency:
+
+![TPC-H SF10 cold start without latency](tpch-sf10-cold-no-latency.png)
+
+| Query | 0 workers | 1 worker | 3 workers | Speedup |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 2.87 | 2.94 | 1.79 | 1.60x |
+| 2 | 0.41 | 0.41 | 0.41 | 1.00x |
+| 3 | 3.75 | 3.65 | 2.46 | 1.53x |
+| 4 | 2.43 | 2.43 | 2.01 | 1.21x |
+| 5 | 3.79 | 3.72 | 2.50 | 1.51x |
+| 6 | 2.29 | 2.33 | 1.73 | 1.32x |
+| 7 | 4.02 | 4.08 | 2.77 | 1.45x |
+| 8 | 4.14 | 4.02 | 2.80 | 1.48x |
+| 9 | 5.58 | 5.55 | 3.61 | 1.54x |
+| 10 | 3.94 | 3.90 | 3.29 | 1.20x |
+| 11 | 0.35 | 0.35 | 0.65 | 0.53x |
+| 12 | 2.52 | 2.58 | 1.92 | 1.32x |
+| 13 | 2.63 | 2.66 | 2.65 | 0.99x |
+| 14 | 3.46 | 3.44 | 2.48 | 1.40x |
+| 15 | 3.10 | 3.20 | 2.28 | 1.36x |
+| 16 | 0.47 | 0.48 | 0.82 | 0.57x |
+| 17 | 3.11 | 3.17 | 4.45 | 0.70x |
+| 18 | 4.08 | 4.09 | 2.43 | 1.68x |
+| 19 | 3.72 | 3.71 | 2.56 | 1.45x |
+| 20 | 3.43 | 3.43 | 3.57 | 0.96x |
+| 21 | 4.18 | 4.28 | 2.67 | 1.57x |
+| 22 | 0.71 | 0.72 | 0.70 | 1.00x |
+| **Total** | **65.0** | **65.1** | **50.6** | **1.29x** |
