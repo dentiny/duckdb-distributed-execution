@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.10)
 # Set extension name here
 set(TARGET_NAME duckherder)
 
-set(CMAKE_CXX_FLAGS"${CMAKE_CXX_FLAGS} -Wunused-variable -Wunused-function -Wunused-but-set-variable"
+set(CMAKE_CXX_FLAGS
+    "${CMAKE_CXX_FLAGS} -Wunused-variable -Wunused-function -Wunused-but-set-variable"
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
