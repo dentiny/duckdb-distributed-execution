@@ -57,7 +57,7 @@ void ConvertArrowArrayToDuckDBVector(ClientContext &context, const std::shared_p
 	vector<LogicalType> expected_types {type};
 	ArrowRecordBatchConverter converter(context, *batch, &expected_types);
 	DataChunk chunk;
-	chunk.Initialize(Allocator::DefaultAllocator(), converter.GetTypes());
+	chunk.Initialize(context, converter.GetTypes());
 	converter.Next(chunk);
 	duckdb_vector.Reference(chunk.data[0]);
 }
@@ -81,9 +81,10 @@ unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType st
 		names.resize(types.size());
 	}
 
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	auto collection = types.empty() ? make_uniq<ColumnDataCollection>(Allocator::Get(context), types)
+	                                : make_uniq<ColumnDataCollection>(context, types);
 	DataChunk chunk;
-	chunk.Initialize(Allocator::DefaultAllocator(), types);
+	chunk.Initialize(context, types);
 	for (auto &batch : batches) {
 		ArrowRecordBatchConverter converter(context, *batch, &types);
 		while (converter.Next(chunk)) {

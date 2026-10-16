@@ -1,6 +1,5 @@
 #include "arrow_record_batch_converter.hpp"
 
-#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
@@ -52,7 +51,7 @@ ArrowRecordBatchConverter::ArrowRecordBatchConverter(ClientContext &context_p, c
 		needs_cast = needs_cast || inferred_types[column_idx] != types[column_idx];
 	}
 	if (needs_cast) {
-		inferred.Initialize(Allocator::DefaultAllocator(), inferred_types);
+		inferred.Initialize(context, inferred_types);
 	}
 }
 
