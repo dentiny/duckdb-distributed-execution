@@ -1,5 +1,6 @@
 #include "server/driver/client_request_handler.hpp"
 
+#include "arrow_record_batch_converter.hpp"
 #include "arrow_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -267,10 +268,14 @@ void ClientRequestHandler::InsertData(const string &table_name,
 			insert.schema = DEFAULT_SCHEMA;
 		}
 		Appender appender(*registration.connection, insert.catalog, insert.schema, insert.table);
+		auto &types = appender.GetActiveTypes();
+		DataChunk chunk;
+		chunk.Initialize(Allocator::DefaultAllocator(), types);
 		for (auto &batch : batches) {
-			DataChunk chunk;
-			ArrowRecordBatchToDataChunk(*registration.connection->context, *batch, chunk, &appender.GetActiveTypes());
-			appender.AppendDataChunk(chunk);
+			ArrowRecordBatchConverter converter(*registration.connection->context, *batch, &types);
+			while (converter.Next(chunk)) {
+				appender.AppendDataChunk(chunk);
+			}
 		}
 		appender.Close();
 	} catch (const std::exception &ex) {

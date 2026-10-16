@@ -45,12 +45,9 @@ if(${BUILD_UNITTESTS})
 endif()
 
 set(UTIL_SOURCES
-    src/utils/catalog_utils.cpp
-    src/utils/network_utils.cpp
-    src/utils/remote_error.cpp
-    src/utils/retry_utils.cpp
-    src/utils/sql_render_utils.cpp
-    src/utils/thread_utils.cpp)
+    src/utils/catalog_utils.cpp src/utils/network_utils.cpp
+    src/utils/remote_error.cpp src/utils/retry_utils.cpp
+    src/utils/sql_render_utils.cpp src/utils/thread_utils.cpp)
 
 set(CLIENT_EXECUTION_SOURCES
     src/client/execution/distributed_aggregate_pushdown.cpp
@@ -119,6 +116,7 @@ set(EXTENSION_SOURCES
     ${SERVER_DRIVER_SOURCES}
     ${SERVER_WORKER_SOURCES}
     ${UTIL_SOURCES}
+    src/arrow_record_batch_converter.cpp
     src/arrow_utils.cpp
     src/base_query_recorder.cpp
     src/duckherder_extension.cpp
