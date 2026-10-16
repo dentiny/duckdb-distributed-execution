@@ -270,7 +270,7 @@ void ClientRequestHandler::InsertData(const string &table_name,
 		Appender appender(*registration.connection, insert.catalog, insert.schema, insert.table);
 		auto &types = appender.GetActiveTypes();
 		DataChunk chunk;
-		chunk.Initialize(Allocator::DefaultAllocator(), types);
+		chunk.Initialize(*registration.connection->context, types);
 		for (auto &batch : batches) {
 			ArrowRecordBatchConverter converter(*registration.connection->context, *batch, &types);
 			while (converter.Next(chunk)) {
