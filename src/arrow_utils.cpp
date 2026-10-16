@@ -41,19 +41,17 @@ ArrowTableSchema GetArrowTableSchema(ClientContext &context, const arrow::Schema
 
 } // namespace
 
-void ArrowRecordBatchToDataChunk(ClientContext &context, const arrow::RecordBatch &batch, DataChunk &out,
-                                 const vector<LogicalType> *expected_types) {
+ArrowRecordBatchConverter::ArrowRecordBatchConverter(ClientContext &context_p, const arrow::RecordBatch &batch,
+                                                     const vector<LogicalType> *expected_types)
+    : context(context_p), owned_array(make_shared_ptr<ArrowArrayWrapper>()),
+      row_count(NumericCast<idx_t>(batch.num_rows())) {
 	ArrowSchemaWrapper arrow_schema;
-	auto owned_array = make_shared_ptr<ArrowArrayWrapper>();
 	ThrowOnArrowError(arrow::ExportRecordBatch(batch, &owned_array->arrow_array, &arrow_schema.arrow_schema),
 	                  "Exporting Arrow record batch");
-
-	ArrowTableSchema arrow_table;
 	ArrowTableFunction::PopulateArrowTableSchema(context, arrow_table, arrow_schema.arrow_schema);
 	auto &inferred_types = arrow_table.GetTypes();
 	auto &arrow_types = arrow_table.GetColumns();
 	auto column_count = NumericCast<idx_t>(batch.num_columns());
-	auto row_count = NumericCast<idx_t>(batch.num_rows());
 
 	if (inferred_types.size() != column_count ||
 	    NumericCast<idx_t>(owned_array->arrow_array.n_children) != column_count) {
@@ -63,59 +61,67 @@ void ArrowRecordBatchToDataChunk(ClientContext &context, const arrow::RecordBatc
 		throw InvalidInputException("Expected %llu columns but Arrow batch contains %llu", expected_types->size(),
 		                            column_count);
 	}
+	types = expected_types ? *expected_types : inferred_types;
 
-	DataChunk inferred;
-	inferred.Initialize(Allocator::DefaultAllocator(), inferred_types, row_count);
-	inferred.SetCardinality(row_count);
-
+	scan_states.reserve(column_count);
+	bool needs_cast = false;
 	for (idx_t column_idx = 0; column_idx < column_count; column_idx++) {
 		auto arrow_type_entry = arrow_types.find(column_idx);
 		if (arrow_type_entry == arrow_types.end()) {
 			throw InvalidInputException("Arrow schema is missing column %llu", column_idx);
 		}
-		auto &arrow_type = *arrow_type_entry->second;
-		arrow_type.ThrowIfInvalid();
-		auto child_array = owned_array->arrow_array.children[column_idx];
-		if (!child_array) {
+		arrow_type_entry->second->ThrowIfInvalid();
+		if (!owned_array->arrow_array.children[column_idx]) {
 			throw InvalidInputException("Arrow record batch is missing column %llu", column_idx);
 		}
+		scan_states.emplace_back(make_uniq<ArrowArrayScanState>(context));
+		scan_states.back()->owned_data = owned_array;
+		needs_cast = needs_cast || inferred_types[column_idx] != types[column_idx];
+	}
+	if (needs_cast) {
+		inferred.Initialize(Allocator::DefaultAllocator(), inferred_types);
+	}
+}
 
-		ArrowArrayScanState scan_state(context);
-		scan_state.owned_data = owned_array;
+bool ArrowRecordBatchConverter::Next(DataChunk &out) {
+	out.Reset();
+	if (!HasNext()) {
+		return false;
+	}
+	const auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, row_count - offset);
+	auto &inferred_types = arrow_table.GetTypes();
+	auto &arrow_types = arrow_table.GetColumns();
+	inferred.Reset();
+	for (idx_t column_idx = 0; column_idx < types.size(); column_idx++) {
+		const bool cast = inferred_types[column_idx] != types[column_idx];
+		auto &target = cast ? inferred.data[column_idx] : out.data[column_idx];
+		auto &arrow_type = *arrow_types.at(column_idx);
+		auto &child_array = *owned_array->arrow_array.children[column_idx];
+		auto &scan_state = *scan_states[column_idx];
 		switch (arrow_type.GetPhysicalType()) {
 		case ArrowArrayPhysicalType::DICTIONARY_ENCODED:
-			ArrowToDuckDBConversion::ColumnArrowToDuckDBDictionary(inferred.data[column_idx], *child_array, 0,
-			                                                       scan_state, row_count, arrow_type);
+			ArrowToDuckDBConversion::ColumnArrowToDuckDBDictionary(target, child_array, offset, scan_state, count,
+			                                                       arrow_type);
 			break;
 		case ArrowArrayPhysicalType::RUN_END_ENCODED:
-			ArrowToDuckDBConversion::ColumnArrowToDuckDBRunEndEncoded(inferred.data[column_idx], *child_array, 0,
-			                                                          scan_state, row_count, arrow_type);
+			ArrowToDuckDBConversion::ColumnArrowToDuckDBRunEndEncoded(target, child_array, offset, scan_state, count,
+			                                                          arrow_type);
 			break;
 		case ArrowArrayPhysicalType::DEFAULT:
-			ArrowToDuckDBConversion::SetValidityMask(inferred.data[column_idx], *child_array, 0, row_count,
+			ArrowToDuckDBConversion::SetValidityMask(target, child_array, offset, count,
 			                                         owned_array->arrow_array.offset, -1);
-			ArrowToDuckDBConversion::ColumnArrowToDuckDB(inferred.data[column_idx], *child_array, 0, scan_state,
-			                                             row_count, arrow_type);
+			ArrowToDuckDBConversion::ColumnArrowToDuckDB(target, child_array, offset, scan_state, count, arrow_type);
 			break;
 		default:
 			throw NotImplementedException("Unsupported Arrow physical type");
 		}
-	}
-
-	if (!expected_types) {
-		out.Move(inferred);
-		return;
-	}
-
-	out.Initialize(Allocator::DefaultAllocator(), *expected_types, row_count);
-	out.SetCardinality(row_count);
-	for (idx_t column_idx = 0; column_idx < column_count; column_idx++) {
-		if (inferred_types[column_idx] == (*expected_types)[column_idx]) {
-			out.data[column_idx].Reference(inferred.data[column_idx]);
-		} else {
-			VectorOperations::Cast(context, inferred.data[column_idx], out.data[column_idx], row_count);
+		if (cast) {
+			VectorOperations::Cast(context, target, out.data[column_idx], count);
 		}
 	}
+	out.SetCardinality(count);
+	offset += count;
+	return true;
 }
 
 LogicalType ArrowTypeToDuckDBType(ClientContext &context, const std::shared_ptr<arrow::DataType> &arrow_type) {
@@ -126,11 +132,16 @@ LogicalType ArrowTypeToDuckDBType(ClientContext &context, const std::shared_ptr<
 
 void ConvertArrowArrayToDuckDBVector(ClientContext &context, const std::shared_ptr<arrow::Array> &arrow_array,
                                      Vector &duckdb_vector, const LogicalType &type, idx_t num_rows) {
+	if (num_rows > STANDARD_VECTOR_SIZE) {
+		throw InvalidInputException("Cannot convert %llu rows into one vector", num_rows);
+	}
 	auto schema = arrow::schema({arrow::field("value", arrow_array->type())});
 	auto batch = arrow::RecordBatch::Make(std::move(schema), NumericCast<int64_t>(num_rows), {arrow_array});
 	vector<LogicalType> expected_types {type};
+	ArrowRecordBatchConverter converter(context, *batch, &expected_types);
 	DataChunk chunk;
-	ArrowRecordBatchToDataChunk(context, *batch, chunk, &expected_types);
+	chunk.Initialize(Allocator::DefaultAllocator(), converter.GetTypes());
+	converter.Next(chunk);
 	duckdb_vector.Reference(chunk.data[0]);
 }
 
@@ -154,10 +165,13 @@ unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType st
 	}
 
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	DataChunk chunk;
+	chunk.Initialize(Allocator::DefaultAllocator(), types);
 	for (auto &batch : batches) {
-		DataChunk chunk;
-		ArrowRecordBatchToDataChunk(context, *batch, chunk, expected_types ? &types : nullptr);
-		collection->Append(chunk);
+		ArrowRecordBatchConverter converter(context, *batch, &types);
+		while (converter.Next(chunk)) {
+			collection->Append(chunk);
+		}
 		batch.reset();
 	}
 	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),

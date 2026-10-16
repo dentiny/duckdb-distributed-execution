@@ -1,0 +1,72 @@
+# name: test/sql/worker_fragment_enum_nulls.test
+# description: Worker fragments return ENUM columns with NULLs in batches larger than a vector
+# group: [sql]
+
+# Workers send row-group-sized Arrow batches, and ENUM columns arrive dictionary-encoded. DuckDB's Arrow conversion
+# fills at most STANDARD_VECTOR_SIZE rows at a time, so converting a whole batch with NULLs overflows its validity
+# mask: debug builds fail on the out-of-range row, other builds corrupt the heap.
+
+require duckherder
+
+require duckdb_object_storage
+
+statement ok
+SELECT duckherder_start_local_server(8864, 4);
+
+statement ok
+ATTACH DATABASE 'localhost:8864/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
+
+statement ok
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral');
+
+statement ok
+CREATE TABLE enum_nulls (id INTEGER, m mood);
+
+# 250,000 rows span three row groups, so each worker task returns batches of up to 122,880 rows.
+statement ok
+INSERT INTO enum_nulls
+SELECT i, CASE i % 4 WHEN 1 THEN 'happy' WHEN 2 THEN 'sad' WHEN 3 THEN 'neutral' END
+FROM range(0, 250000) t(i);
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+# Only read-only clients of shared storage run worker fragments.
+statement ok
+ATTACH DATABASE 'localhost:8864/database.db' AS dh (TYPE duckherder, READ_ONLY, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+statement ok
+USE dh;
+
+# Workers cannot merge aggregates with a FILTER, so they return the scanned rows and the driver aggregates them.
+query IIIII
+SELECT
+    count(*),
+    count(*) FILTER (WHERE m IS NULL),
+    count(*) FILTER (WHERE m = 'happy'),
+    count(*) FILTER (WHERE m = 'sad'),
+    sum(id) FILTER (WHERE m IS NULL)
+FROM enum_nulls;
+----
+250000	62500	62500	62500	7812375000
+
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats()
+              WHERE sql LIKE 'scan over%enum_nulls%' AND execution_mode = 'ROW_GROUP_PARTITION');
+----
+true
+
+statement ok
+USE memory;
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

@@ -66,6 +66,19 @@ struct WorkerFragmentBindData : public TableFunctionData {
 	WorkerFragment fragment;
 };
 
+struct WorkerFragmentLocalState : public LocalTableFunctionState {
+	bool HasRows() const {
+		return (batch && batch->HasNext()) || (chunk && offset < chunk->size());
+	}
+
+	optional_idx stream_idx;
+	// The batch of a worker task being converted, or the chunk of the local execution being emitted.
+	unique_ptr<ArrowRecordBatchConverter> batch;
+	unique_ptr<DataChunk> chunk;
+	idx_t offset = 0;
+	bool finished = false;
+};
+
 // The fragment's result: the stream of each worker task, each read by one thread at a time, or the chunks of its local
 // execution.
 class WorkerFragmentGlobalState : public GlobalTableFunctionState {
@@ -114,38 +127,44 @@ public:
 		chunks = std::move(local_chunks);
 	}
 
-	// Returns the next chunk for a thread reading the stream at stream_idx, if any, or nullptr if there are no rows
-	// left. Reads the next unclaimed stream once that stream ends.
-	unique_ptr<DataChunk> Next(ClientContext &context, const WorkerFragment &fragment, optional_idx &stream_idx) {
+	// Sets the next batch or chunk of local, a thread reading the stream at local.stream_idx. Returns false if there
+	// are no rows left. Reads the next unclaimed stream once that stream ends.
+	bool Next(ClientContext &context, const WorkerFragment &fragment, WorkerFragmentLocalState &local) {
+		local.batch.reset();
+		local.chunk.reset();
+		local.offset = 0;
 		while (true) {
 			optional_ptr<arrow::flight::FlightStreamReader> stream;
 			{
 				const concurrency::lock_guard<concurrency::mutex> lock(mu);
 				if (streams.empty()) {
-					return next_chunk < chunks.size() ? std::move(chunks[next_chunk++]) : nullptr;
-				}
-				if (!stream_idx.IsValid()) {
-					if (next_stream == streams.size()) {
-						return nullptr;
+					if (next_chunk == chunks.size()) {
+						return false;
 					}
-					stream_idx = next_stream++;
+					local.chunk = std::move(chunks[next_chunk++]);
+					return true;
 				}
-				stream = streams[stream_idx.GetIndex()].get();
+				if (!local.stream_idx.IsValid()) {
+					if (next_stream == streams.size()) {
+						return false;
+					}
+					local.stream_idx = next_stream++;
+				}
+				stream = streams[local.stream_idx.GetIndex()].get();
 			}
 			auto next = stream->Next();
 			if (!next.ok()) {
-				throw IOException("Worker task %llu of fragment '%s' failed: %s", stream_idx.GetIndex(),
+				throw IOException("Worker task %llu of fragment '%s' failed: %s", local.stream_idx.GetIndex(),
 				                  fragment.description, next.status().ToString());
 			}
 			if (next->data) {
 				if (next->data->num_rows() == 0) {
 					continue;
 				}
-				auto chunk = make_uniq<DataChunk>();
-				ArrowRecordBatchToDataChunk(context, *next->data, *chunk, &fragment.types);
-				return chunk;
+				local.batch = make_uniq<ArrowRecordBatchConverter>(context, *next->data, &fragment.types);
+				return true;
 			}
-			stream_idx = optional_idx();
+			local.stream_idx = optional_idx();
 			bool all_finished;
 			{
 				const concurrency::lock_guard<concurrency::mutex> lock(mu);
@@ -194,17 +213,6 @@ private:
 	ErrorData error DUCKDB_GUARDED_BY(mu);
 };
 
-struct WorkerFragmentLocalState : public LocalTableFunctionState {
-	bool HasRows() const {
-		return chunk && offset < chunk->size();
-	}
-
-	optional_idx stream_idx;
-	unique_ptr<DataChunk> chunk;
-	idx_t offset = 0;
-	bool finished = false;
-};
-
 // Reads the next chunk on a scheduler thread, so the source blocks instead of the executor polling while workers
 // compute and send it.
 class WorkerFragmentReadTask : public AsyncTask {
@@ -217,9 +225,7 @@ public:
 	void Execute() override {
 		try {
 			global.Start(fragment);
-			local.chunk = global.Next(context, fragment, local.stream_idx);
-			local.offset = 0;
-			local.finished = !local.chunk;
+			local.finished = !global.Next(context, fragment, local);
 		} catch (const std::exception &ex) {
 			global.SetError(ErrorData(ex));
 			local.finished = true;
@@ -266,6 +272,10 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 	global.ThrowIfError();
 	if (!local.HasRows()) {
 		output.SetCardinality(0);
+		return;
+	}
+	if (local.batch) {
+		local.batch->Next(output);
 		return;
 	}
 	auto &chunk = *local.chunk;

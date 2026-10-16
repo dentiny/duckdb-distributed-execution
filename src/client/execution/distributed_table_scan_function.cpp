@@ -126,10 +126,11 @@ struct DistributedTableScanGlobalState : public GlobalTableFunctionState {
 };
 
 struct DistributedTableScanLocalState : public LocalTableFunctionState {
-	// The claimed batch, converted to DuckDB vectors and emitted one vector at a time.
-	unique_ptr<DataChunk> batch;
+	// The claimed batch, converted to DuckDB vectors one vector at a time.
+	unique_ptr<ArrowRecordBatchConverter> batch;
 	idx_t batch_index = 0;
-	idx_t batch_offset = 0;
+	// The last vector converted from batch, which the output references.
+	DataChunk chunk;
 };
 
 namespace {
@@ -225,31 +226,30 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	auto &global_state = data.global_state->Cast<DistributedTableScanGlobalState>();
 	auto &local_state = data.local_state->Cast<DistributedTableScanLocalState>();
 
-	while (!local_state.batch || local_state.batch_offset == local_state.batch->size()) {
+	while (!local_state.batch || !local_state.batch->HasNext()) {
 		auto batch_idx = global_state.next_batch++;
 		if (batch_idx >= global_state.batches.size()) {
 			output.SetCardinality(0);
 			return;
 		}
-		// Only this thread claims the batch, so it can release the Arrow copy once converted.
+		// Only this thread claims the batch, so it releases the Arrow data once the batch is converted.
 		auto batch = std::move(global_state.batches[batch_idx]);
-		local_state.batch = make_uniq<DataChunk>();
-		ArrowRecordBatchToDataChunk(context, *batch, *local_state.batch, &global_state.expected_types);
+		local_state.batch = make_uniq<ArrowRecordBatchConverter>(context, *batch, &global_state.expected_types);
 		local_state.batch_index = batch_idx;
-		local_state.batch_offset = 0;
 	}
 
+	if (local_state.chunk.ColumnCount() == 0) {
+		local_state.chunk.Initialize(context, global_state.expected_types);
+	}
+	local_state.batch->Next(local_state.chunk);
 	// The remote query already returns the projected columns in output order.
-	auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, local_state.batch->size() - local_state.batch_offset);
-	output.SetCardinality(count);
+	output.SetCardinality(local_state.chunk.size());
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
 		if (global_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
 			continue;
 		}
-		VectorOperations::Copy(local_state.batch->data[col_idx], output.data[col_idx], local_state.batch_offset + count,
-		                       local_state.batch_offset, /*target_offset=*/0);
+		output.data[col_idx].Reference(local_state.chunk.data[col_idx]);
 	}
-	local_state.batch_offset += count;
 }
 
 } // namespace duckdb

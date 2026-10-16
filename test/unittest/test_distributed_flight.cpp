@@ -184,8 +184,10 @@ TEST_CASE("DoPut appends typed values on the client connection", "[distributed_f
 	vector<std::shared_ptr<arrow::RecordBatch>> results;
 	REQUIRE(client.Query("SELECT * FROM " + table_name + " ORDER BY id", results).ok());
 	REQUIRE(results.size() == 1);
+	ArrowRecordBatchConverter converter(*conn.context, *results[0]);
 	DataChunk chunk;
-	ArrowRecordBatchToDataChunk(*conn.context, *results[0], chunk);
+	chunk.Initialize(*conn.context, converter.GetTypes());
+	REQUIRE(converter.Next(chunk));
 	REQUIRE(chunk.size() == 3);
 	REQUIRE(chunk.GetValue(0, 0) == Value::INTEGER(1));
 	REQUIRE(chunk.GetValue(0, 1) == Value::INTEGER(2));
