@@ -48,6 +48,13 @@ struct ExchangeReadGlobalState : public GlobalTableFunctionState {
 };
 
 struct ExchangeReadLocalState : public LocalTableFunctionState {
+	~ExchangeReadLocalState() override {
+		// A query that ends early, e.g. on a LIMIT or an error, stops the producer from sending the rest.
+		if (stream) {
+			stream->Cancel();
+		}
+	}
+
 	// The client outlives its stream.
 	unique_ptr<WorkerNodeClient> client;
 	std::unique_ptr<arrow::flight::FlightStreamReader> stream;

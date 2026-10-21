@@ -4,6 +4,7 @@
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -128,14 +129,13 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 
 namespace {
 
-class QueryResultArrowReader : public arrow::RecordBatchReader {
+class ChunkArrowReader : public arrow::RecordBatchReader {
 public:
-	QueryResultArrowReader(unique_ptr<Connection> connection_p, unique_ptr<QueryResult> result_p,
-	                       ClientProperties client_properties_p, std::shared_ptr<arrow::Schema> schema_p)
-	    : connection(std::move(connection_p)), stream(std::move(result_p)),
+	ChunkArrowReader(unique_ptr<Connection> connection_p, ChunkFetcher fetch_p, const vector<LogicalType> &types,
+	                 ClientProperties client_properties_p, std::shared_ptr<arrow::Schema> schema_p)
+	    : connection(std::move(connection_p)), fetch(std::move(fetch_p)),
 	      client_properties(std::move(client_properties_p)), schema_(std::move(schema_p)),
-	      extension_types(
-	          ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, stream.GetTypes())) {
+	      extension_types(ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, types)) {
 	}
 
 	std::shared_ptr<arrow::Schema> schema() const override {
@@ -144,11 +144,8 @@ public:
 
 	arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch> *batch) override {
 		try {
-			auto chunk = stream.Fetch();
+			auto chunk = fetch();
 			if (!chunk || chunk->size() == 0) {
-				if (stream.HasError()) {
-					return arrow::Status::Invalid("Task execution failed: ", stream.GetError());
-				}
 				batch->reset();
 				return arrow::Status::OK();
 			}
@@ -158,14 +155,15 @@ public:
 			ARROW_ASSIGN_OR_RAISE(*batch, arrow::ImportRecordBatch(&arrow_array, schema_));
 			return arrow::Status::OK();
 		} catch (const std::exception &ex) {
-			return arrow::Status::Invalid("Task execution failed: ", ex.what());
+			ErrorData error(ex);
+			return arrow::Status::Invalid("Task execution failed: ", error.Message());
 		}
 	}
 
 private:
-	// Destroyed last, as the result reads through its context.
+	// Destroyed last, as fetch may read through its context.
 	unique_ptr<Connection> connection;
-	QueryResultStream<> stream;
+	ChunkFetcher fetch;
 	ClientProperties client_properties;
 	std::shared_ptr<arrow::Schema> schema_;
 	unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
@@ -173,21 +171,38 @@ private:
 
 } // namespace
 
-arrow::Status QueryResultToArrowReader(unique_ptr<Connection> connection, unique_ptr<QueryResult> result,
-                                       std::shared_ptr<arrow::RecordBatchReader> &reader) {
-	auto client_properties = result->client_properties;
+arrow::Status ChunksToArrowReader(unique_ptr<Connection> connection, const vector<LogicalType> &types,
+                                  const vector<string> &names, ClientProperties client_properties, ChunkFetcher fetch,
+                                  std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	if (!client_properties.client_context) {
 		client_properties.client_context = connection->context.get();
 	}
 	client_properties.arrow_lossless_conversion = true;
 
 	ArrowSchema arrow_schema;
-	ArrowConverter::ToArrowSchema(&arrow_schema, result->GetTypes(), IdentifiersToStrings(result->GetNames()),
-	                              client_properties);
+	ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
 	ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&arrow_schema));
-	reader = std::make_shared<QueryResultArrowReader>(std::move(connection), std::move(result),
-	                                                  std::move(client_properties), std::move(schema));
+	reader = std::make_shared<ChunkArrowReader>(std::move(connection), std::move(fetch), types,
+	                                            std::move(client_properties), std::move(schema));
 	return arrow::Status::OK();
+}
+
+arrow::Status QueryResultToArrowReader(unique_ptr<Connection> connection, unique_ptr<QueryResult> result,
+                                       std::shared_ptr<arrow::RecordBatchReader> &reader) {
+	auto types = result->GetTypes();
+	auto names = IdentifiersToStrings(result->GetNames());
+	auto client_properties = result->client_properties;
+	auto stream = make_shared_ptr<QueryResultStream<>>(std::move(result));
+	return ChunksToArrowReader(
+	    std::move(connection), types, names, std::move(client_properties),
+	    [stream]() {
+		    auto chunk = stream->Fetch();
+		    if (!chunk && stream->HasError()) {
+			    throw InvalidInputException(stream->GetError());
+		    }
+		    return chunk;
+	    },
+	    reader);
 }
 
 } // namespace duckdb

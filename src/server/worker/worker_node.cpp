@@ -18,8 +18,8 @@
 
 namespace duckdb {
 
-WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p)
-    : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p) {
+WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, std::chrono::milliseconds exchange_ttl_p)
+    : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p), exchange_ttl(exchange_ttl_p) {
 	db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
 	// Workers need core functions when created from a loadable extension.
 	db->LoadStaticExtension<CoreFunctionsExtension>();
@@ -81,8 +81,7 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 	return arrow::Status::OK();
 }
 
-arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context,
-                                   const arrow::flight::Action &action,
+arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
                                    std::unique_ptr<arrow::flight::ResultStream> *result) {
 	distributed::DistributedRequest request;
 	if (!action.body || !request.ParseFromArray(action.body->data(), action.body->size())) {
@@ -142,24 +141,27 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	return QueryResultToArrowReader(std::move(task_conn), std::move(result), reader);
 }
 
-arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionRequest &req, ObjectStorageDatabase &database,
-                                        QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader) {
+arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionRequest &req,
+                                        ObjectStorageDatabase &database, QueryResult &result,
+                                        std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	const auto &write = req.exchange_write();
-	if (write.bucket_count() == 0 || result.types.empty() || result.types.back() != LogicalType {LogicalTypeId::INTEGER}) {
+	if (write.bucket_count() == 0 || result.types.empty() ||
+	    result.types.back() != LogicalType {LogicalTypeId::INTEGER}) {
 		return arrow::Status::Invalid("Exchange producer plans must end with an INTEGER bucket column");
 	}
 	vector<LogicalType> types(result.types.begin(), result.types.end() - 1);
-	shared_ptr<ExchangeBuffer> buffer;
+	auto buffer = make_shared_ptr<ExchangeBuffer>(database, types, write.bucket_count());
 	{
 		const concurrency::lock_guard<concurrency::mutex> lock(exchange_mutex);
-		auto &entry = exchanges[write.exchange_id()];
-		if (!entry) {
-			entry = make_shared_ptr<ExchangeBuffer>(database, types, write.bucket_count());
+		const auto now = std::chrono::steady_clock::now();
+		for (auto entry = exchanges.begin(); entry != exchanges.end();) {
+			entry = now - entry->second->CreatedAt() > exchange_ttl ? exchanges.erase(entry) : std::next(entry);
 		}
-		buffer = entry;
-	}
-	if (buffer->GetTypes() != types || buffer->BucketCount() != write.bucket_count()) {
-		return arrow::Status::Invalid("Exchange ", write.exchange_id(), " was written with other columns or buckets");
+		// A retried or concurrent producer would add its rows twice.
+		if (!exchanges.emplace(write.exchange_id(), buffer).second) {
+			return arrow::Status::Invalid("Exchange ", write.exchange_id(), " already has a producer on worker ",
+			                              worker_id);
+		}
 	}
 	vector<uint64_t> counts(write.bucket_count(), 0);
 	try {
@@ -180,6 +182,8 @@ arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionReque
 	} catch (const std::exception &ex) {
 		return arrow::Status::Invalid("Exchange write failed: ", ErrorData(ex).Message());
 	}
+
+	buffer->Seal();
 
 	arrow::UInt64Builder builder;
 	ARROW_RETURN_NOT_OK(builder.AppendValues(counts));

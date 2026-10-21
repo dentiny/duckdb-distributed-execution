@@ -4,9 +4,11 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/types.hpp"
+#include "duckdb/main/client_properties.hpp"
 
 #include <arrow/result.h>
 #include <arrow/status.h>
+#include <functional>
 #include <memory>
 
 // Throw a DuckDB IOException carrying the error message if `expr`, an arrow::Status or arrow::Result, is not OK.
@@ -51,6 +53,15 @@ unique_ptr<QueryResult> MakeArrowResult(ClientContext &context, StatementType st
 // The result's client properties must reference a client context.
 arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arrow::Schema> &schema,
                                         vector<std::shared_ptr<arrow::RecordBatch>> &batches);
+
+// Returns the next chunk to convert, or null at the end of the rows. Throws on failure.
+using ChunkFetcher = std::function<unique_ptr<DataChunk>()>;
+
+// Convert the chunks returned by fetch, with columns types and names, into a reader over Arrow record batches, fetched
+// as they are read. The reader keeps connection, whose context the conversion and fetch may use, alive.
+arrow::Status ChunksToArrowReader(unique_ptr<Connection> connection, const vector<LogicalType> &types,
+                                  const vector<string> &names, ClientProperties client_properties, ChunkFetcher fetch,
+                                  std::shared_ptr<arrow::RecordBatchReader> &reader);
 
 // Convert a DuckDB query result of connection into a reader over row-group-sized Arrow record batches, fetched from the
 // result as they are read. Larger batches reduce per-message overhead on every network hop.

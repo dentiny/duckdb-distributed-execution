@@ -19,6 +19,7 @@
 #include <arrow/flight/client.h>
 #include <chrono>
 #include <filesystem>
+#include <thread>
 
 using namespace duckdb; // NOLINT
 
@@ -69,27 +70,55 @@ int64_t Int64At(const std::shared_ptr<arrow::RecordBatch> &batch, int column, in
 	return std::static_pointer_cast<arrow::Int64Array>(batch->column(column))->Value(row);
 }
 
-} // namespace
-
-TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
-	auto root = std::filesystem::temp_directory_path() /
-	            StringUtil::Format("duckherder_exchange_%s",
-	                               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-	std::filesystem::create_directories(root);
-	{
-		distributed::StorageConfig config;
+// A served database holding t, whose k is not stored in order, so every row group holds keys of every bucket.
+struct ExchangeFixture {
+	explicit ExchangeFixture(const string &name)
+	    : root(std::filesystem::temp_directory_path() /
+	           StringUtil::Format("%s_%s", name,
+	                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))) {
+		std::filesystem::create_directories(root);
 		config.set_database_uri("duckdb_objfs://exchange.db");
 		config.mutable_local()->set_root(root.string());
 		auto database_result = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
 		REQUIRE(database_result.ok());
-		auto database = std::move(database_result).ValueOrDie();
+		database = std::move(database_result).ValueOrDie();
 		auto con_result = database->Connect();
 		REQUIRE(con_result.ok());
-		auto &con = **con_result;
-		// k is not stored in order, so every row group holds keys of both buckets.
+		con = std::move(con_result).ValueOrDie();
 		REQUIRE_FALSE(
-		    con.Query("CREATE TABLE t AS SELECT i AS id, (i * 7919) % 1000 AS k FROM range(300000) t(i)")->HasError());
+		    con->Query("CREATE TABLE t AS SELECT i AS id, (i * 7919) % 1000 AS k FROM range(300000) t(i)")->HasError());
+	}
+	~ExchangeFixture() {
+		con.reset();
+		database.reset();
+		std::filesystem::remove_all(root);
+	}
 
+	// Returns a producer task of exchange_id running sql, which must end with the bucket column, over all of t.
+	distributed::ExecutePartitionRequest Producer(const string &sql, const string &exchange_id, idx_t bucket_count) {
+		auto plan = OptimizePlan(*con, sql);
+		distributed::ExecutePartitionRequest request;
+		request.set_serialized_plan(PlanSerializer::SerializeLogicalPlan(*plan));
+		*request.mutable_storage_config() = config;
+		request.set_build_id(PlanSerializer::BuildId());
+		request.mutable_exchange_write()->set_exchange_id(exchange_id);
+		request.mutable_exchange_write()->set_bucket_count(NumericCast<uint32_t>(bucket_count));
+		return request;
+	}
+
+	std::filesystem::path root;
+	distributed::StorageConfig config;
+	unique_ptr<ObjectStorageDatabase> database;
+	unique_ptr<Connection> con;
+};
+
+} // namespace
+
+TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
+	ExchangeFixture fixture("duckherder_exchange");
+	{
+		auto &config = fixture.config;
+		auto &con = *fixture.con;
 		vector<unique_ptr<WorkerNode>> workers;
 		vector<unique_ptr<WorkerNodeClient>> clients;
 		vector<string> locations;
@@ -121,7 +150,8 @@ TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
 			REQUIRE(batches.size() == 1);
 			REQUIRE(batches[0]->num_rows() == 2);
 			for (idx_t bucket = 0; bucket < 2; ++bucket) {
-				auto rows = std::static_pointer_cast<arrow::UInt64Array>(batches[0]->column(0))->Value(NumericCast<int64_t>(bucket));
+				auto &bucket_counts = static_cast<const arrow::UInt64Array &>(*batches[0]->column(0));
+				auto rows = bucket_counts.Value(NumericCast<int64_t>(bucket));
 				// Both tasks see keys of both buckets.
 				REQUIRE(rows > 0);
 				bucket_rows[bucket] += NumericCast<int64_t>(rows);
@@ -147,8 +177,9 @@ TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
 				replacer.replacement_bindings.emplace_back(
 				    bindings[idx], ColumnBinding(EXCHANGE_TABLE_INDEX, column.GetPrimaryIndex()));
 			}
-			slot = MakeExchangeRead(EXCHANGE_TABLE_INDEX, "x", bucket, locations, {LogicalType {LogicalTypeId::BIGINT}, LogicalType {LogicalTypeId::BIGINT}},
-			                        {"id", "k"}, 150000);
+			vector<LogicalType> types {LogicalType {LogicalTypeId::BIGINT}, LogicalType {LogicalTypeId::BIGINT}};
+			slot =
+			    MakeExchangeRead(EXCHANGE_TABLE_INDEX, "x", bucket, locations, std::move(types), {"id", "k"}, 150000);
 			replacer.VisitOperator(*consumer);
 
 			distributed::ExecutePartitionRequest request;
@@ -191,5 +222,48 @@ TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
 			worker->Shutdown();
 		}
 	}
-	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Exchanges are readable only once their producer finishes", "[exchange]") {
+	ExchangeFixture fixture("duckherder_exchange_producer");
+	WorkerNode worker("exchange_producer_worker", "localhost", GetAvailablePort(9700));
+	REQUIRE(worker.Start().ok());
+	WorkerNodeClient client(worker.GetLocation());
+	REQUIRE(client.Connect().ok());
+
+	// A producer that fails leaves its partial rows unreadable.
+	auto failing = fixture.Producer("SELECT id, (CASE WHEN id < 200000 THEN 0 ELSE 5 END)::INTEGER FROM t", "bad", 2);
+	auto stream = client.ExecutePartition(failing);
+	auto status = stream.ok() ? (*stream)->ToRecordBatches().status() : stream.status();
+	REQUIRE(StringUtil::Contains(status.ToString(), "Exchange row has no valid bucket"));
+	stream = client.ReadExchange("bad", 0);
+	REQUIRE_FALSE(stream.ok());
+	REQUIRE(StringUtil::Contains(stream.status().ToString(), "still being written or its producer failed"));
+
+	// A second producer of the same exchange on a worker would add its rows twice.
+	auto producer = fixture.Producer("SELECT id, (k % 2)::INTEGER FROM t", "x", 2);
+	REQUIRE(ReadAll(client.ExecutePartition(producer)).size() == 1);
+	stream = client.ExecutePartition(producer);
+	REQUIRE_FALSE(stream.ok());
+	REQUIRE(StringUtil::Contains(stream.status().ToString(), "already has a producer"));
+	REQUIRE(ReadAll(client.ReadExchange("x", 1)).size() == 2);
+	worker.Shutdown();
+}
+
+TEST_CASE("Workers drop exchanges the driver never releases", "[exchange]") {
+	ExchangeFixture fixture("duckherder_exchange_ttl");
+	WorkerNode worker("exchange_ttl_worker", "localhost", GetAvailablePort(9750), std::chrono::milliseconds(0));
+	REQUIRE(worker.Start().ok());
+	WorkerNodeClient client(worker.GetLocation());
+	REQUIRE(client.Connect().ok());
+
+	REQUIRE(ReadAll(client.ExecutePartition(fixture.Producer("SELECT id, 0 FROM t", "old", 1))).size() == 1);
+	REQUIRE(ReadAll(client.ReadExchange("old", 0)).size() == 3);
+	std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	// Writing another exchange drops the expired one.
+	REQUIRE(ReadAll(client.ExecutePartition(fixture.Producer("SELECT id, 0 FROM t", "new", 1))).size() == 1);
+	auto stream = client.ReadExchange("old", 0);
+	REQUIRE_FALSE(stream.ok());
+	REQUIRE(StringUtil::Contains(stream.status().ToString(), "has no exchange old"));
+	worker.Shutdown();
 }

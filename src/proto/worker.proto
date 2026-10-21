@@ -20,7 +20,7 @@ message ExecutePartitionRequest {
 // bucket_count - 1. The worker keeps the other columns in that bucket until the exchange is released, and returns one
 // row per bucket with the number of rows it added.
 message ExchangeWrite {
-  // Unique per exchange; tasks of one exchange on the same worker add to the same buckets.
+  // Unique per exchange; each worker runs at most one producer task of an exchange.
   string exchange_id = 1;
   uint32 bucket_count = 2;
 }
