@@ -12,4 +12,26 @@ message ExecutePartitionRequest {
   StorageConfig storage_config = 2;
   // Driver build; a worker of another build cannot read the plan and rejects the task.
   string build_id = 3;
+  // Set if the task's rows go into exchange buckets on the worker instead of being returned.
+  ExchangeWrite exchange_write = 4;
+}
+
+// Makes an ExecutePartition task an exchange producer: the plan's last column is the bucket of each row, 0 to
+// bucket_count - 1. The worker keeps the other columns in that bucket until the exchange is released, and returns one
+// row per bucket with the number of rows it added.
+message ExchangeWrite {
+  // Unique per exchange; tasks of one exchange on the same worker add to the same buckets.
+  string exchange_id = 1;
+  uint32 bucket_count = 2;
+}
+
+// Streams the rows of one bucket of an exchange on the worker.
+message ReadExchangeRequest {
+  string exchange_id = 1;
+  uint32 bucket = 2;
+}
+
+// Drops an exchange's buckets on the worker.
+message ReleaseExchangeRequest {
+  string exchange_id = 1;
 }

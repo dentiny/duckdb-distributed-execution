@@ -9,6 +9,7 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "server/startup_sql.hpp"
+#include "server/worker/exchange_read.hpp"
 #include <string_view>
 
 namespace duckdb {
@@ -144,6 +145,7 @@ arrow::Result<unique_ptr<ObjectStorageDatabase>> ObjectStorageDatabase::Create(c
 	try {
 		auto instance = make_shared_ptr<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
 		instance->LoadStaticExtension<CoreFunctionsExtension>();
+		RegisterExchangeRead(*instance->instance);
 		Connection conn(*instance);
 		ARROW_RETURN_NOT_OK(Execute(conn, "LOAD duckdb_object_storage"));
 		// Arrow 1.5 encodes decimals at their physical width instead of always as 128-bit, shrinking scan results.

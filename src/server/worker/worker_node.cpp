@@ -12,6 +12,10 @@
 #include "server/worker/row_group_range_scan.hpp"
 #include "server/worker/worker_node.hpp"
 
+#include <arrow/array/builder_primitive.h>
+#include <arrow/flight/types.h>
+#include <arrow/record_batch.h>
+
 namespace duckdb {
 
 WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p)
@@ -50,18 +54,23 @@ string WorkerNode::GetLocation() const {
 
 arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
                                 std::unique_ptr<arrow::flight::FlightDataStream> *stream) {
-	// The ticket carries the complete ExecutePartition request.
+	// The ticket carries the complete request.
 	distributed::DistributedRequest request;
 	if (!request.ParseFromArray(ticket.ticket.data(), ticket.ticket.size())) {
 		return arrow::Status::Invalid("Failed to parse ticket");
 	}
 
-	if (request.request_case() != distributed::DistributedRequest::kExecutePartition) {
-		return arrow::Status::Invalid("DoGet expects ExecutePartition request");
-	}
-
 	std::shared_ptr<arrow::RecordBatchReader> reader;
-	ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), reader));
+	switch (request.request_case()) {
+	case distributed::DistributedRequest::kExecutePartition:
+		ARROW_RETURN_NOT_OK(HandleExecutePartition(request.execute_partition(), reader));
+		break;
+	case distributed::DistributedRequest::kReadExchange:
+		ARROW_RETURN_NOT_OK(HandleReadExchange(request.read_exchange(), reader));
+		break;
+	default:
+		return arrow::Status::Invalid("DoGet expects an ExecutePartition or ReadExchange request");
+	}
 
 	if (!reader) {
 		return arrow::Status::Invalid("Failed to create RecordBatchReader: execution produced no reader");
@@ -69,6 +78,25 @@ arrow::Status WorkerNode::DoGet(const arrow::flight::ServerCallContext &context,
 
 	*stream = std::make_unique<arrow::flight::RecordBatchStream>(reader);
 
+	return arrow::Status::OK();
+}
+
+arrow::Status WorkerNode::DoAction(const arrow::flight::ServerCallContext &context,
+                                   const arrow::flight::Action &action,
+                                   std::unique_ptr<arrow::flight::ResultStream> *result) {
+	distributed::DistributedRequest request;
+	if (!action.body || !request.ParseFromArray(action.body->data(), action.body->size())) {
+		return arrow::Status::Invalid("Failed to parse action body");
+	}
+	if (request.request_case() != distributed::DistributedRequest::kReleaseExchange) {
+		return arrow::Status::Invalid("DoAction expects a ReleaseExchange request");
+	}
+	{
+		const concurrency::lock_guard<concurrency::mutex> lock(exchange_mutex);
+		// Readers still streaming a bucket keep its buffer alive.
+		exchanges.erase(request.release_exchange().exchange_id());
+	}
+	*result = std::make_unique<arrow::flight::SimpleResultStream>(std::vector<arrow::flight::Result> {});
 	return arrow::Status::OK();
 }
 
@@ -104,11 +132,76 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 
 	unique_ptr<QueryResult> result;
 	ARROW_RETURN_NOT_OK(ExecutePlanFragment(req, *task_conn, result));
+	if (req.has_exchange_write()) {
+		return WriteExchange(req, *object_storage_database, *result, reader);
+	}
 
 	// This represents the LocalState output from this worker node; the coordinator combines the outputs of all
 	// workers, mirroring how thread-local sink states are combined into a global state. The reader pulls batches from
 	// the streaming result as Flight sends them.
 	return QueryResultToArrowReader(std::move(task_conn), std::move(result), reader);
+}
+
+arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionRequest &req, ObjectStorageDatabase &database,
+                                        QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader) {
+	const auto &write = req.exchange_write();
+	if (write.bucket_count() == 0 || result.types.empty() || result.types.back() != LogicalType {LogicalTypeId::INTEGER}) {
+		return arrow::Status::Invalid("Exchange producer plans must end with an INTEGER bucket column");
+	}
+	vector<LogicalType> types(result.types.begin(), result.types.end() - 1);
+	shared_ptr<ExchangeBuffer> buffer;
+	{
+		const concurrency::lock_guard<concurrency::mutex> lock(exchange_mutex);
+		auto &entry = exchanges[write.exchange_id()];
+		if (!entry) {
+			entry = make_shared_ptr<ExchangeBuffer>(database, types, write.bucket_count());
+		}
+		buffer = entry;
+	}
+	if (buffer->GetTypes() != types || buffer->BucketCount() != write.bucket_count()) {
+		return arrow::Status::Invalid("Exchange ", write.exchange_id(), " was written with other columns or buckets");
+	}
+	vector<uint64_t> counts(write.bucket_count(), 0);
+	try {
+		while (true) {
+			ErrorData error;
+			unique_ptr<DataChunk> chunk;
+			if (!result.TryFetch(chunk, error)) {
+				return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", error.Message()));
+			}
+			if (!chunk || chunk->size() == 0) {
+				break;
+			}
+			auto added = buffer->Append(*chunk);
+			for (idx_t bucket = 0; bucket < added.size(); ++bucket) {
+				counts[bucket] += added[bucket];
+			}
+		}
+	} catch (const std::exception &ex) {
+		return arrow::Status::Invalid("Exchange write failed: ", ErrorData(ex).Message());
+	}
+
+	arrow::UInt64Builder builder;
+	ARROW_RETURN_NOT_OK(builder.AppendValues(counts));
+	ARROW_ASSIGN_OR_RAISE(auto rows, builder.Finish());
+	auto schema = arrow::schema({arrow::field("rows", arrow::uint64())});
+	auto batch = arrow::RecordBatch::Make(schema, rows->length(), {rows});
+	ARROW_ASSIGN_OR_RAISE(reader, arrow::RecordBatchReader::Make({batch}, schema));
+	return arrow::Status::OK();
+}
+
+arrow::Status WorkerNode::HandleReadExchange(const distributed::ReadExchangeRequest &req,
+                                             std::shared_ptr<arrow::RecordBatchReader> &reader) {
+	shared_ptr<ExchangeBuffer> buffer;
+	{
+		const concurrency::lock_guard<concurrency::mutex> lock(exchange_mutex);
+		auto entry = exchanges.find(req.exchange_id());
+		if (entry == exchanges.end()) {
+			return arrow::Status::KeyError("Worker ", worker_id, " has no exchange ", req.exchange_id());
+		}
+		buffer = entry->second;
+	}
+	return ExchangeBuffer::ReadBucket(std::move(buffer), req.bucket(), reader);
 }
 
 arrow::Result<ObjectStorageDatabase *>
