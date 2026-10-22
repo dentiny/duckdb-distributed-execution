@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/atomic.hpp"
-#include "duckdb/common/chrono.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/unique_ptr.hpp"
@@ -33,9 +32,6 @@ public:
 	idx_t BucketCount() const {
 		return buckets.size();
 	}
-	std::chrono::steady_clock::time_point CreatedAt() const {
-		return created_at;
-	}
 
 	// Adds each row of chunk, whose last column is its bucket, to that bucket without the bucket column. Returns the
 	// number of rows added to each bucket. Only the producer calls it, before Seal.
@@ -50,7 +46,6 @@ public:
 private:
 	ObjectStorageDatabase &database;
 	vector<LogicalType> types;
-	const std::chrono::steady_clock::time_point created_at;
 	vector<unique_ptr<ColumnDataCollection>> buckets;
 	// Set by the producer after its last Append, so readers see every row without locking.
 	atomic<bool> sealed {false};

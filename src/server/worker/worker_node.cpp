@@ -18,8 +18,8 @@
 
 namespace duckdb {
 
-WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p, std::chrono::milliseconds exchange_ttl_p)
-    : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p), exchange_ttl(exchange_ttl_p) {
+WorkerNode::WorkerNode(string worker_id_p, string host_p, int port_p)
+    : worker_id(std::move(worker_id_p)), host(std::move(host_p)), port(port_p) {
 	db = make_uniq<DuckDB>(/*path=*/nullptr, /*config=*/nullptr);
 	// Workers need core functions when created from a loadable extension.
 	db->LoadStaticExtension<CoreFunctionsExtension>();
@@ -153,10 +153,6 @@ arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionReque
 	auto buffer = make_shared_ptr<ExchangeBuffer>(database, types, write.bucket_count());
 	{
 		const concurrency::lock_guard<concurrency::mutex> lock(exchange_mutex);
-		const auto now = std::chrono::steady_clock::now();
-		for (auto entry = exchanges.begin(); entry != exchanges.end();) {
-			entry = now - entry->second->CreatedAt() > exchange_ttl ? exchanges.erase(entry) : std::next(entry);
-		}
 		// A retried or concurrent producer would add its rows twice.
 		if (!exchanges.emplace(write.exchange_id(), buffer).second) {
 			return arrow::Status::Invalid("Exchange ", write.exchange_id(), " already has a producer on worker ",

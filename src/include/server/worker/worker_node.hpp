@@ -3,7 +3,6 @@
 #include "distributed.pb.h"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include "duckdb/common/chrono.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/main/database.hpp"
 #include "server/object_storage_database.hpp"
@@ -25,9 +24,7 @@ class QueryResult;
 // Simple worker node that executes queries on partitioned data.
 class WorkerNode : public arrow::flight::FlightServerBase {
 public:
-	// Exchanges the driver has not released after exchange_ttl_p, e.g. because its query was cancelled, are dropped.
-	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0,
-	                    std::chrono::milliseconds exchange_ttl_p = std::chrono::hours(1));
+	explicit WorkerNode(string worker_id_p, string host_p = "0.0.0.0", int port_p = 0);
 	~WorkerNode() override = default;
 
 	arrow::Status Start();
@@ -72,7 +69,6 @@ private:
 	// Keyed by exchange ID. Declared after the databases, whose buffer managers hold the rows, so it is destroyed
 	// first.
 	unordered_map<string, shared_ptr<ExchangeBuffer>> exchanges DUCKDB_GUARDED_BY(exchange_mutex);
-	std::chrono::milliseconds exchange_ttl;
 };
 
 } // namespace duckdb

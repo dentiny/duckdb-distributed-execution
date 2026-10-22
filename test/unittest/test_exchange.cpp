@@ -19,7 +19,6 @@
 #include <arrow/flight/client.h>
 #include <chrono>
 #include <filesystem>
-#include <thread>
 
 using namespace duckdb; // NOLINT
 
@@ -247,23 +246,5 @@ TEST_CASE("Exchanges are readable only once their producer finishes", "[exchange
 	REQUIRE_FALSE(stream.ok());
 	REQUIRE(StringUtil::Contains(stream.status().ToString(), "already has a producer"));
 	REQUIRE(ReadAll(client.ReadExchange("x", 1)).size() == 2);
-	worker.Shutdown();
-}
-
-TEST_CASE("Workers drop exchanges the driver never releases", "[exchange]") {
-	ExchangeFixture fixture("duckherder_exchange_ttl");
-	WorkerNode worker("exchange_ttl_worker", "localhost", GetAvailablePort(9750), std::chrono::milliseconds(0));
-	REQUIRE(worker.Start().ok());
-	WorkerNodeClient client(worker.GetLocation());
-	REQUIRE(client.Connect().ok());
-
-	REQUIRE(ReadAll(client.ExecutePartition(fixture.Producer("SELECT id, 0 FROM t", "old", 1))).size() == 1);
-	REQUIRE(ReadAll(client.ReadExchange("old", 0)).size() == 3);
-	std::this_thread::sleep_for(std::chrono::milliseconds(5));
-	// Writing another exchange drops the expired one.
-	REQUIRE(ReadAll(client.ExecutePartition(fixture.Producer("SELECT id, 0 FROM t", "new", 1))).size() == 1);
-	auto stream = client.ReadExchange("old", 0);
-	REQUIRE_FALSE(stream.ok());
-	REQUIRE(StringUtil::Contains(stream.status().ToString(), "has no exchange old"));
 	worker.Shutdown();
 }

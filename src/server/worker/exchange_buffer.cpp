@@ -13,7 +13,7 @@
 namespace duckdb {
 
 ExchangeBuffer::ExchangeBuffer(ObjectStorageDatabase &database_p, vector<LogicalType> types_p, idx_t bucket_count)
-    : database(database_p), types(std::move(types_p)), created_at(std::chrono::steady_clock::now()) {
+    : database(database_p), types(std::move(types_p)) {
 	auto &buffer_manager = BufferManager::GetBufferManager(*database.GetInstance().instance);
 	buckets.reserve(bucket_count);
 	for (idx_t bucket = 0; bucket < bucket_count; ++bucket) {
