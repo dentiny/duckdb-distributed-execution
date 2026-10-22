@@ -88,7 +88,7 @@ bool ClientRegistry::Authorize(const string &client_id, distributed::ClientRole 
                                shared_ptr<ClientRegistration> &registration, distributed::DistributedResponse &resp) {
 	if (!Lookup(client_id, registration)) {
 		resp.set_success(false);
-		resp.set_error_message(NOT_REGISTERED_ERROR);
+		resp.set_error_message(string(NOT_REGISTERED_ERROR));
 		return false;
 	}
 	if (required_role == distributed::CLIENT_ROLE_READ_WRITE &&

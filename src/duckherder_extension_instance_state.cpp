@@ -14,7 +14,7 @@ shared_ptr<BaseQueryRecorder> DuckherderInstanceState::GetQueryRecorder() const 
 }
 
 void SetInstanceState(DatabaseInstance &instance, shared_ptr<DuckherderInstanceState> state) {
-	instance.GetObjectCache().Put(DuckherderInstanceState::CACHE_KEY, std::move(state));
+	instance.GetObjectCache().Put(string(DuckherderInstanceState::CACHE_KEY), std::move(state));
 }
 
 DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(ClientContext &client_context) {
@@ -23,7 +23,7 @@ DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(ClientContext &client
 }
 
 DuckherderInstanceState &GetDuckherderInstanceStateOrThrow(DatabaseInstance &instance) {
-	auto state = instance.GetObjectCache().Get<DuckherderInstanceState>(DuckherderInstanceState::CACHE_KEY);
+	auto state = instance.GetObjectCache().Get<DuckherderInstanceState>(string(DuckherderInstanceState::CACHE_KEY));
 	if (state == nullptr) {
 		throw InternalException("duckherder instance state not found - extension not properly loaded");
 	}

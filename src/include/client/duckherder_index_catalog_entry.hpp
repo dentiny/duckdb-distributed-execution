@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 
 namespace duckdb {
@@ -17,8 +18,8 @@ public:
 
 	~DuckherderIndexCatalogEntry() override;
 
-	string GetSchemaName() const override;
-	string GetTableName() const override;
+	Identifier GetSchemaName() const override;
+	Identifier GetTableName() const override;
 	void Rollback(CatalogEntry &prev_entry) override;
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
@@ -28,8 +29,8 @@ public:
 private:
 	Catalog &duckherder_catalog_ref;
 	// For remote indexes, store schema and table names directly.
-	string remote_schema_name;
-	string remote_table_name;
+	Identifier remote_schema_name;
+	Identifier remote_table_name;
 };
 
 } // namespace duckdb

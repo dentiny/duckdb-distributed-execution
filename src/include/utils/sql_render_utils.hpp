@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/string.hpp"
@@ -40,7 +41,7 @@ struct RemoteAggregateQuery {
 	string sql;
 	// Groups followed by aggregates.
 	vector<LogicalType> types;
-	vector<string> names;
+	vector<Identifier> names;
 };
 
 // Renders `aggregate` over `get`, its scan of `table`, as a query on `table_name`, or returns nullptr if it cannot be

@@ -20,6 +20,9 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 include_directories(src/include)
 include_directories(${DuckDB_SOURCE_DIR}/extension/core_functions/include)
 include_directories(src/include/client)

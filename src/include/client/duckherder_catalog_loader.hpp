@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -27,15 +28,15 @@ private:
 		bool loaded = false;
 	};
 
-	void LoadSchema(const string &schema_name);
-	void LoadEnumType(DuckherderSchemaCatalogEntry &schema, const string &type_name, const Value &labels);
-	void LoadTable(const string &schema_name, const string &table_name, PendingTable &table);
+	void LoadSchema(const Identifier &schema_name);
+	void LoadEnumType(DuckherderSchemaCatalogEntry &schema, const Identifier &type_name, const Value &labels);
+	void LoadTable(const Identifier &schema_name, const Identifier &table_name, PendingTable &table);
 
 	DuckherderCatalog &catalog;
 	ClientContext &context;
 	CatalogTransaction transaction;
 	// Schema name -> table name -> table.
-	case_insensitive_map_t<case_insensitive_map_t<PendingTable>> pending_tables;
+	identifier_map_t<identifier_map_t<PendingTable>> pending_tables;
 };
 
 } // namespace duckdb

@@ -25,14 +25,15 @@ public:
 
 	unique_ptr<LogicalExtensionOperator> Deserialize(Deserializer &deserializer) override {
 		auto create_info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(201, "create_info");
-		auto catalog_name = deserializer.ReadProperty<string>(202, "catalog_name");
-		auto schema_name = deserializer.ReadProperty<string>(203, "schema_name");
-		auto table_name = deserializer.ReadProperty<string>(204, "table_name");
+		auto catalog_name = deserializer.ReadProperty<Identifier>(202, "catalog_name");
+		auto schema_name = deserializer.ReadProperty<Identifier>(203, "schema_name");
+		auto table_name = deserializer.ReadProperty<Identifier>(204, "table_name");
 
 		auto &context = deserializer.Get<ClientContext &>();
 		auto &catalog = Catalog::GetCatalog(context, catalog_name);
 		auto &schema = catalog.GetSchema(context, schema_name);
-		auto &entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, schema_name, table_name);
+		auto &entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY,
+		                                QualifiedName(catalog.GetName(), schema_name, table_name));
 		auto &table = entry.Cast<TableCatalogEntry>();
 		auto info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(create_info));
 		return make_uniq<LogicalRemoteCreateIndexOperator>(std::move(info), schema, table);
@@ -53,9 +54,9 @@ PhysicalOperator &LogicalRemoteCreateIndexOperator::CreatePlan(ClientContext &co
 	auto info_copy = unique_ptr_cast<CreateInfo, CreateIndexInfo>(info->Copy());
 
 	// Pass the catalog, schema, and table names instead of references to avoid dangling reference issues.
-	string catalog_name = schema.catalog.GetName();
-	string schema_name = schema.name;
-	string table_name = table.name;
+	Identifier catalog_name = schema.catalog.GetName();
+	Identifier schema_name = schema.name;
+	Identifier table_name = table.name;
 
 	return planner.Make<PhysicalRemoteCreateIndexOperator>(std::move(info_copy), std::move(catalog_name),
 	                                                       std::move(schema_name), std::move(table_name),

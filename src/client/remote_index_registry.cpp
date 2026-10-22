@@ -33,10 +33,10 @@ void RemoteIndexRegistry::Add(TableCatalogEntry &table, const CreateIndexInfo &i
 	}
 
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
-	indexes[table.name].push_back({info.index_name, std::move(index_info)});
+	indexes[table.name].push_back({info.GetIndexName(), std::move(index_info)});
 }
 
-vector<IndexInfo> RemoteIndexRegistry::Get(const string &table_name) {
+vector<IndexInfo> RemoteIndexRegistry::Get(const Identifier &table_name) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	auto entry = indexes.find(table_name);
 	if (entry == indexes.end()) {
@@ -50,7 +50,7 @@ vector<IndexInfo> RemoteIndexRegistry::Get(const string &table_name) {
 	return result;
 }
 
-void RemoteIndexRegistry::RemoveIndex(const string &index_name) {
+void RemoteIndexRegistry::RemoveIndex(const Identifier &index_name) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	for (auto &table_indexes : indexes) {
 		auto &table_index_list = table_indexes.second;
@@ -61,7 +61,7 @@ void RemoteIndexRegistry::RemoveIndex(const string &index_name) {
 	}
 }
 
-void RemoteIndexRegistry::RemoveTable(const string &table_name) {
+void RemoteIndexRegistry::RemoveTable(const Identifier &table_name) {
 	concurrency::lock_guard<concurrency::mutex> lck(mu);
 	indexes.erase(table_name);
 }

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "client/transport/distributed_flight_client.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/string.hpp"
@@ -46,7 +47,7 @@ public:
 
 	// Execute one complete non-query statement on the control node.
 	unique_ptr<QueryResult> ExecuteStatement(const string &sql, StatementType statement_type,
-	                                         const string &client_catalog = "",
+	                                         const Identifier &client_catalog = "",
 	                                         const vector<LogicalType> *expected_types = nullptr);
 
 	unique_ptr<QueryResult> CommitTransaction();

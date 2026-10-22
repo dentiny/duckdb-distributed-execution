@@ -21,19 +21,20 @@ namespace duckdb {
 
 DuckherderIndexCatalogEntry::DuckherderIndexCatalogEntry(Catalog &duckherder_catalog_p, SchemaCatalogEntry &schema,
                                                          CreateIndexInfo &info)
-    : DuckIndexEntry(duckherder_catalog_p, schema, info,
-                     make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckherder_catalog_p), info.index_name)),
+    : DuckIndexEntry(
+          duckherder_catalog_p, schema, info,
+          make_shared_ptr<IndexDataTableInfo>(GetDummyDataTableInfo(duckherder_catalog_p), info.GetIndexName())),
       duckherder_catalog_ref(duckherder_catalog_p), remote_schema_name(schema.name), remote_table_name(info.table) {
 }
 
 DuckherderIndexCatalogEntry::~DuckherderIndexCatalogEntry() {
 }
 
-string DuckherderIndexCatalogEntry::GetSchemaName() const {
+Identifier DuckherderIndexCatalogEntry::GetSchemaName() const {
 	return remote_schema_name;
 }
 
-string DuckherderIndexCatalogEntry::GetTableName() const {
+Identifier DuckherderIndexCatalogEntry::GetTableName() const {
 	return remote_table_name;
 }
 

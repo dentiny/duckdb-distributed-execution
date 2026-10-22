@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
@@ -15,19 +16,19 @@ class TableCatalogEntry;
 class RemoteIndexRegistry {
 public:
 	void Add(TableCatalogEntry &table, const CreateIndexInfo &info);
-	vector<IndexInfo> Get(const string &table_name);
-	void RemoveIndex(const string &index_name);
-	void RemoveTable(const string &table_name);
+	vector<IndexInfo> Get(const Identifier &table_name);
+	void RemoveIndex(const Identifier &index_name);
+	void RemoveTable(const Identifier &table_name);
 
 private:
 	struct RemoteIndexMetadata {
-		string name;
+		Identifier name;
 		IndexInfo info;
 	};
 
 	concurrency::mutex mu;
 	// Keyed by table name.
-	unordered_map<string, vector<RemoteIndexMetadata>> indexes DUCKDB_GUARDED_BY(mu);
+	identifier_map_t<vector<RemoteIndexMetadata>> indexes DUCKDB_GUARDED_BY(mu);
 };
 
 } // namespace duckdb

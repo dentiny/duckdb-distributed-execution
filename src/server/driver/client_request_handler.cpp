@@ -8,7 +8,7 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/prepared_statement.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
 #include "server/driver/query_history.hpp"
@@ -150,14 +150,14 @@ arrow::Status ClientRequestHandler::ExecuteStatement(const distributed::ExecuteS
 arrow::Status ClientRequestHandler::LoadExtension(const distributed::LoadExtensionRequest &req,
                                                   ClientRegistration &registration,
                                                   distributed::DistributedResponse &resp) {
-	const auto extension_name = KeywordHelper::WriteQuoted(req.extension_name());
+	const auto extension_name = SQLString::ToString(req.extension_name());
 	// Execute INSTALL first.
 	auto sql = StringUtil::Format("FORCE INSTALL %s", extension_name);
 	if (!req.repository().empty()) {
-		sql += StringUtil::Format(" FROM %s", KeywordHelper::WriteQuoted(req.repository()));
+		sql += StringUtil::Format(" FROM %s", SQLString::ToString(req.repository()));
 	}
 	if (!req.version().empty()) {
-		sql += StringUtil::Format(" VERSION %s", KeywordHelper::WriteQuoted(req.version()));
+		sql += StringUtil::Format(" VERSION %s", SQLString::ToString(req.version()));
 	}
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Install extension with %s", sql));
 	auto install_result = registration.connection->Query(sql);
@@ -188,7 +188,7 @@ arrow::Status ClientRequestHandler::TableExists(const distributed::TableExistsRe
                                                 ClientRegistration &registration,
                                                 distributed::DistributedResponse &resp) {
 	auto sql = StringUtil::Format("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = %s",
-	                              KeywordHelper::WriteQuoted(req.table_name()));
+	                              SQLString::ToString(req.table_name()));
 
 	auto result = registration.connection->Query(sql);
 
@@ -260,14 +260,14 @@ void ClientRequestHandler::InsertData(const string &table_name,
 		if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::INSERT_STATEMENT) {
 			throw InvalidInputException("DoPut requires a single table name");
 		}
-		auto &insert = parser.statements[0]->Cast<InsertStatement>();
+		auto &insert = *parser.statements[0]->Cast<InsertStatement>().node;
+		auto target = insert.qualified_name;
 		// Like SQL binding, a two-part name can refer to catalog.table instead of schema.table.
-		if (insert.catalog.empty() && !insert.schema.empty() &&
-		    !registration.connection->TableInfo(insert.catalog, insert.schema, insert.table)) {
-			insert.catalog = std::move(insert.schema);
-			insert.schema = DEFAULT_SCHEMA;
+		if (target.Catalog().empty() && !target.Schema().empty() &&
+		    !registration.connection->TableInfo(target.Catalog(), target.Schema(), target.Name())) {
+			target = QualifiedName(target.Schema(), Identifier::DefaultSchema(), target.Name());
 		}
-		Appender appender(*registration.connection, insert.catalog, insert.schema, insert.table);
+		Appender appender(*registration.connection, target.Catalog(), target.Schema(), target.Name());
 		auto &types = appender.GetActiveTypes();
 		DataChunk chunk;
 		chunk.Initialize(*registration.connection->context, types);

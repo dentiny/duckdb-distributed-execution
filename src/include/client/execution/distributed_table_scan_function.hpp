@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -34,7 +35,7 @@ private:
 	static BindInfo GetBindInfo(optional_ptr<FunctionData> bind_data);
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<string> &names);
+	                                     vector<LogicalType> &return_types, vector<Identifier> &names);
 
 	static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context, TableFunctionInitInput &input);
 

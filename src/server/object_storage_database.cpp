@@ -7,15 +7,16 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/secret/secret.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "server/startup_sql.hpp"
+#include <string_view>
 
 namespace duckdb {
 
 namespace {
 
-constexpr const char *OBJECT_STORAGE_CATALOG = "object_db";
-constexpr const char *DEFAULT_DATABASE_URI = "duckdb_objfs://__duckherder_internal_default__";
+constexpr std::string_view OBJECT_STORAGE_CATALOG = "object_db";
+constexpr std::string_view DEFAULT_DATABASE_URI = "duckdb_objfs://__duckherder_internal_default__";
 
 arrow::Status Execute(Connection &conn, const string &sql) {
 	auto result = conn.Query(sql);
@@ -94,15 +95,15 @@ arrow::Status ConfigureObjectStorage(Connection &conn, const distributed::Storag
 		return Execute(conn, "SET GLOBAL duckdb_objfs_backend = 'memory'");
 	case distributed::StorageConfig::kLocal:
 		ARROW_RETURN_NOT_OK(Execute(conn, "SET GLOBAL duckdb_objfs_backend = 'local'"));
-		return Execute(conn, StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s",
-		                                        KeywordHelper::WriteQuoted(config.local().root())));
+		return Execute(
+		    conn, StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s", SQLString::ToString(config.local().root())));
 	case distributed::StorageConfig::kS3:
 		ARROW_RETURN_NOT_OK(RegisterS3Secret(conn, config.s3()));
 		ARROW_RETURN_NOT_OK(Execute(conn, "SET GLOBAL duckdb_objfs_backend = 's3'"));
 		ARROW_RETURN_NOT_OK(Execute(conn, StringUtil::Format("SET GLOBAL duckdb_objfs_bucket = %s",
-		                                                     KeywordHelper::WriteQuoted(config.s3().bucket()))));
-		return Execute(conn, StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s",
-		                                        KeywordHelper::WriteQuoted(config.s3().root())));
+		                                                     SQLString::ToString(config.s3().bucket()))));
+		return Execute(
+		    conn, StringUtil::Format("SET GLOBAL duckdb_objfs_root = %s", SQLString::ToString(config.s3().root())));
 	default:
 		return arrow::Status::Invalid("Object storage configuration must specify a storage type");
 	}
@@ -115,7 +116,7 @@ distributed::StorageConfig ObjectStorageDatabase::ResolveConfig(const distribute
 		return config;
 	}
 	distributed::StorageConfig result;
-	result.set_database_uri(DEFAULT_DATABASE_URI);
+	result.set_database_uri(string(DEFAULT_DATABASE_URI));
 	result.mutable_in_memory();
 	return result;
 }
@@ -150,8 +151,8 @@ arrow::Result<unique_ptr<ObjectStorageDatabase>> ObjectStorageDatabase::Create(c
 		ARROW_RETURN_NOT_OK(ConfigureObjectStorage(conn, config));
 		ARROW_RETURN_NOT_OK(RunStartupSQL(*instance));
 		ARROW_RETURN_NOT_OK(
-		    Execute(conn, StringUtil::Format("ATTACH %s AS %s%s", KeywordHelper::WriteQuoted(config.database_uri()),
-		                                     OBJECT_STORAGE_CATALOG,
+		    Execute(conn, StringUtil::Format("ATTACH %s AS %s%s", SQLString::ToString(config.database_uri()),
+		                                     string(OBJECT_STORAGE_CATALOG),
 		                                     access_mode == AccessMode::READ_ONLY ? " (READ_ONLY)" : "")));
 		return unique_ptr<ObjectStorageDatabase>(new ObjectStorageDatabase(std::move(instance)));
 	} catch (const std::exception &ex) {
@@ -162,7 +163,7 @@ arrow::Result<unique_ptr<ObjectStorageDatabase>> ObjectStorageDatabase::Create(c
 arrow::Result<unique_ptr<Connection>> ObjectStorageDatabase::Connect() const {
 	try {
 		auto conn = make_uniq<Connection>(*instance);
-		ARROW_RETURN_NOT_OK(Execute(*conn, StringUtil::Format("USE %s", OBJECT_STORAGE_CATALOG)));
+		ARROW_RETURN_NOT_OK(Execute(*conn, StringUtil::Format("USE %s", string(OBJECT_STORAGE_CATALOG))));
 		return std::move(conn);
 	} catch (const std::exception &ex) {
 		return arrow::Status::IOError(ErrorData(ex).Message());

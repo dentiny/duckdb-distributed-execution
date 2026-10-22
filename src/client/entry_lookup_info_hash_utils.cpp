@@ -5,12 +5,12 @@
 namespace duckdb {
 
 bool EntryLookupInfoEqual::operator()(const EntryLookupInfoKey &lhs, const EntryLookupInfoKey &rhs) const {
-	return lhs.type == rhs.type && StringUtil::CIEquals(lhs.name, rhs.name);
+	return lhs.type == rhs.type && lhs.name == rhs.name;
 }
 
 std::size_t EntryLookupInfoHash::operator()(const EntryLookupInfoKey &key) const {
 	const std::size_t h1 = std::hash<int>()(static_cast<int>(key.type));
-	const std::size_t h2 = StringUtil::CIHash(key.name);
+	const std::size_t h2 = key.name.Hash();
 	return h1 ^ (h2 << 1);
 }
 

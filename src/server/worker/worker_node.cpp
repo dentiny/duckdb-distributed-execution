@@ -83,7 +83,7 @@ arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitio
 	} catch (const std::exception &ex) {
 		return arrow::Status::Invalid("Plan fragment deserialization failed: ", ErrorData(ex).Message());
 	}
-	result = task_conn.SendQuery(make_uniq<LogicalPlanStatement>(std::move(plan)));
+	result = task_conn.Submit(make_uniq<LogicalPlanStatement>(std::move(plan)));
 	if (result->HasError()) {
 		return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", result->GetError()));
 	}

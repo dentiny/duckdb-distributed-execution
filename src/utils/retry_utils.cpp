@@ -13,7 +13,7 @@ namespace duckdb {
 
 namespace {
 
-Value GetRetrySetting(DatabaseInstance &db, const string &name) {
+Value GetRetrySetting(DatabaseInstance &db, const Identifier &name) {
 	Value value;
 	if (!db.TryGetCurrentSetting(name, value)) {
 		throw InternalException("Duckherder retry setting %s is not registered", name);
@@ -28,10 +28,10 @@ bool IsRetryableTransportError(const arrow::Status &status) {
 } // namespace
 
 RetryConfig GetRetryConfig(DatabaseInstance &db) {
-	auto max_attempts = GetRetrySetting(db, RETRY_MAX_ATTEMPTS_SETTING).GetValue<idx_t>();
-	auto initial_backoff_ms = GetRetrySetting(db, RETRY_INITIAL_BACKOFF_MS_SETTING).GetValue<int64_t>();
-	auto max_backoff_ms = GetRetrySetting(db, RETRY_MAX_BACKOFF_MS_SETTING).GetValue<int64_t>();
-	auto jitter_ratio = GetRetrySetting(db, RETRY_JITTER_RATIO_SETTING).GetValue<double>();
+	auto max_attempts = GetRetrySetting(db, Identifier(RETRY_MAX_ATTEMPTS_SETTING)).GetValue<idx_t>();
+	auto initial_backoff_ms = GetRetrySetting(db, Identifier(RETRY_INITIAL_BACKOFF_MS_SETTING)).GetValue<int64_t>();
+	auto max_backoff_ms = GetRetrySetting(db, Identifier(RETRY_MAX_BACKOFF_MS_SETTING)).GetValue<int64_t>();
+	auto jitter_ratio = GetRetrySetting(db, Identifier(RETRY_JITTER_RATIO_SETTING)).GetValue<double>();
 	return RetryConfig {max_attempts, std::chrono::milliseconds(initial_backoff_ms),
 	                    std::chrono::milliseconds(max_backoff_ms), jitter_ratio};
 }

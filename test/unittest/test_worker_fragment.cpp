@@ -152,7 +152,7 @@ TEST_CASE("Task plans read contiguous whole row groups up to the end of the tabl
 		REQUIRE(task_plans.size() == 3);
 		REQUIRE(single_plan.size() == 1);
 
-		auto expected = reader.Query("SELECT count(*) FROM object_db.t WHERE id % 3 = 0")->GetValue(0, 0);
+		auto expected = reader.Query("SELECT count(*) FROM object_db.t WHERE id % 3 = 0")->Collection().GetValue(0, 0);
 		idx_t next_rowid = 0;
 		idx_t rows = 0;
 		for (idx_t task_idx = 0; task_idx < task_plans.size(); ++task_idx) {
@@ -287,8 +287,8 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		REQUIRE_FALSE(client->Query("CREATE TEMP MACRO sum(x) AS max(x)")->HasError());
 		auto macro_result = client->Query("SELECT sum(f.amount), count(*) FROM fact f JOIN dim d ON f.k = d.k");
 		REQUIRE_FALSE(macro_result->HasError());
-		REQUIRE(macro_result->GetValue(0, 0) == Value::BIGINT(10));
-		REQUIRE(macro_result->GetValue(1, 0) == Value::BIGINT(300000));
+		REQUIRE(macro_result->Collection().GetValue(0, 0) == Value::BIGINT(10));
+		REQUIRE(macro_result->Collection().GetValue(1, 0) == Value::BIGINT(300000));
 		REQUIRE(state->TakeExecutions().size() == 1);
 		REQUIRE_FALSE(client->Query("DROP MACRO temp.sum")->HasError());
 
@@ -339,7 +339,7 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		state->TakeExecutions();
 		auto temp_scan_result = client->Query("SELECT sum(amount), count(*) FROM temp_fact");
 		REQUIRE_FALSE(temp_scan_result->HasError());
-		REQUIRE(temp_scan_result->GetValue(1, 0) == Value::BIGINT(300000));
+		REQUIRE(temp_scan_result->Collection().GetValue(1, 0) == Value::BIGINT(300000));
 		REQUIRE(state->TakeExecutions().empty());
 
 		REQUIRE_FALSE(client->Query("BEGIN TRANSACTION")->HasError());
@@ -355,7 +355,7 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 		auto default_result = executor_connection->Query(schema_sql);
 		REQUIRE_FALSE(schema_expected->HasError());
 		REQUIRE_FALSE(default_result->HasError());
-		REQUIRE(schema_expected->GetValue(0, 0) != default_result->GetValue(0, 0));
+		REQUIRE(schema_expected->Collection().GetValue(0, 0) != default_result->Collection().GetValue(0, 0));
 		auto schema_actual = client->Query(schema_sql);
 		REQUIRE_FALSE(schema_actual->HasError());
 		REQUIRE(schema_actual->Equals(*schema_expected));
@@ -476,7 +476,7 @@ TEST_CASE("Worker fragments only read tables of the served catalog", "[worker_fr
 		REQUIRE_FALSE(client->Query("USE \"other catalog\"")->HasError());
 		auto foreign_default = client->Query("SELECT sum(f.amount * d.multiplier) FROM fact f JOIN dim d ON f.k = d.k");
 		REQUIRE_FALSE(foreign_default->HasError());
-		REQUIRE(foreign_default->GetValue(0, 0).GetValue<int64_t>() == 6300000);
+		REQUIRE(foreign_default->Collection().GetValue(0, 0).GetValue<int64_t>() == 6300000);
 		REQUIRE(state->TakeExecutions().empty());
 
 		// Fully qualified served tables still produce partitioned tasks after USE.

@@ -46,7 +46,7 @@ void ApplyS3Secret(const SecretEntry &entry, distributed::S3Storage &config) {
 	if (!secret) {
 		throw InvalidInputException("Duckherder S3 storage requires a key-value S3 secret");
 	}
-	auto copy_string = [&](const string &key, auto setter) {
+	auto copy_string = [&](const Identifier &key, auto setter) {
 		Value value;
 		if (secret->TryGetValue(key, value) && !value.IsNull()) {
 			setter(value.ToString());

@@ -7,12 +7,13 @@
 #include "server/object_storage_database.hpp"
 #include "storage_config.pb.h"
 #include "transaction.pb.h"
+#include <string_view>
 
 namespace duckdb {
 
 namespace {
 
-constexpr const char *OBJFS_SCHEME = "duckdb_objfs://";
+constexpr std::string_view OBJFS_SCHEME = "duckdb_objfs://";
 
 } // namespace
 
@@ -37,8 +38,8 @@ arrow::Status ValidateRequest(const distributed::StorageConfig &config) {
 		}
 		return arrow::Status::OK();
 	}
-	if (!StringUtil::StartsWith(config.database_uri(), OBJFS_SCHEME) ||
-	    config.database_uri().size() == string(OBJFS_SCHEME).size()) {
+	if (std::string_view(config.database_uri()).substr(0, OBJFS_SCHEME.size()) != OBJFS_SCHEME ||
+	    config.database_uri().size() == OBJFS_SCHEME.size()) {
 		return arrow::Status::Invalid("Object storage database must be a named duckdb_objfs:// URI");
 	}
 	if (ObjectStorageDatabase::IsDefaultURI(config.database_uri())) {

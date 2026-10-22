@@ -34,8 +34,9 @@ public:
 
 PhysicalRemoteCreateIndexOperator::PhysicalRemoteCreateIndexOperator(PhysicalPlan &physical_plan,
                                                                      unique_ptr<CreateIndexInfo> info_p,
-                                                                     string catalog_name_p, string schema_name_p,
-                                                                     string table_name_p, idx_t estimated_cardinality)
+                                                                     Identifier catalog_name_p,
+                                                                     Identifier schema_name_p, Identifier table_name_p,
+                                                                     idx_t estimated_cardinality)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, {LogicalType {LogicalTypeId::BIGINT}},
                        estimated_cardinality),
       info(std::move(info_p)), catalog_name(std::move(catalog_name_p)), schema_name(std::move(schema_name_p)),
@@ -60,7 +61,8 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	// Get the schema and table to create the catalog entry.
 	auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
 	auto &schema = catalog.GetSchema(context.client, schema_name);
-	auto &entry = catalog.GetEntry(context.client, CatalogType::TABLE_ENTRY, schema_name, table_name);
+	auto &entry = Catalog::GetEntry(context.client, CatalogType::TABLE_ENTRY,
+	                                QualifiedName(catalog.GetName(), schema_name, table_name));
 	auto &table = entry.Cast<TableCatalogEntry>();
 
 	// The server strips catalog qualifiers by token, preserving literals in index expressions.
@@ -77,7 +79,7 @@ SourceResultType PhysicalRemoteCreateIndexOperator::GetDataInternal(ExecutionCon
 	auto transaction = catalog.GetCatalogTransaction(context.client);
 	auto index_entry = schema.CreateIndex(transaction, *info, table);
 	if (index_entry == nullptr) {
-		throw CatalogException("Failed to create catalog entry for index %s", info->index_name);
+		throw CatalogException("Failed to create catalog entry for index %s", info->GetIndexName());
 	}
 
 	gstate.executed = true;

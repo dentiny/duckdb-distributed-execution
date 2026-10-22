@@ -1,3 +1,14 @@
+## 0.1.0
+
+### Changed
+
+- Upgrade DuckDB to `v2.0.0`, extension-ci-tools to the latest commit, and the embedded object-storage extension to its v2-compatible `0.2.0` release.
+- Require C++17 and use constexpr string views for fixed configuration, cache, and protocol names.
+- Adapt catalog, DDL, query planning, result schemas, and serialization to DuckDB's Identifier and QualifiedName APIs.
+- Use v2 QueryResult, retained collections, and QueryResultStream for Arrow output and worker streaming.
+- Reuse DuckDB's annotated mutex/lock types and SQL/ALTER rendering instead of local implementations.
+- Update static registration, CI workflow pins, and extension release metadata.
+
 ## 0.0.10
 
 ### Added

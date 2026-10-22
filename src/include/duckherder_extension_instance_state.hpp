@@ -8,6 +8,7 @@
 #include "duckdb/storage/object_cache.hpp"
 #include "base_query_recorder.hpp"
 #include "utils/mutex.hpp"
+#include <string_view>
 
 namespace duckdb {
 
@@ -20,8 +21,8 @@ class DatabaseInstance;
 // Inherits from ObjectCacheEntry for automatic cleanup when DatabaseInstance is destroyed
 //===--------------------------------------------------------------------===//
 struct DuckherderInstanceState : public ObjectCacheEntry {
-	static constexpr const char *OBJECT_TYPE = "DuckherderInstanceState";
-	static constexpr const char *CACHE_KEY = "duckherder_instance_state";
+	static constexpr std::string_view OBJECT_TYPE = "DuckherderInstanceState";
+	static constexpr std::string_view CACHE_KEY = "duckherder_instance_state";
 
 	DuckherderInstanceState();
 
@@ -30,7 +31,7 @@ struct DuckherderInstanceState : public ObjectCacheEntry {
 
 	// ObjectCacheEntry interface
 	string GetObjectType() override {
-		return OBJECT_TYPE;
+		return string(OBJECT_TYPE);
 	}
 
 	optional_idx GetEstimatedCacheMemory() const override {
@@ -38,7 +39,7 @@ struct DuckherderInstanceState : public ObjectCacheEntry {
 	}
 
 	static string ObjectType() {
-		return OBJECT_TYPE;
+		return string(OBJECT_TYPE);
 	}
 
 private:

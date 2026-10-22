@@ -18,7 +18,7 @@ struct GetQueryHistoryData : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> GetQueryHistoryTableFuncBind(ClientContext &context, TableFunctionBindInput &input,
-                                                      vector<LogicalType> &return_types, vector<string> &names) {
+                                                      vector<LogicalType> &return_types, vector<Identifier> &names) {
 	D_ASSERT(return_types.empty());
 	D_ASSERT(names.empty());
 

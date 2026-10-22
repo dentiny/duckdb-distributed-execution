@@ -3,13 +3,13 @@
 #include <tuple>
 
 #include "duckdb/catalog/entry_lookup_info.hpp"
-#include "duckdb/common/string.hpp"
+#include "duckdb/common/identifier.hpp"
 
 namespace duckdb {
 
 struct EntryLookupInfoKey {
 	CatalogType type;
-	string name;
+	Identifier name;
 };
 
 struct EntryLookupInfoEqual {

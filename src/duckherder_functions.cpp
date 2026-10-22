@@ -16,17 +16,17 @@ namespace {
 
 constexpr bool SUCCESS = true;
 
-void AddDescription(CreateFunctionInfo &info, vector<string> parameter_names, string description,
+void AddDescription(CreateFunctionInfo &info, vector<Identifier> parameter_names, string description,
                     vector<string> examples, vector<string> categories) {
 	FunctionDescription function_description;
-	function_description.parameter_names = std::move(parameter_names);
+	function_description.parameter_names = IdentifiersToStrings(parameter_names);
 	function_description.description = std::move(description);
 	function_description.examples = std::move(examples);
 	function_description.categories = std::move(categories);
 	info.descriptions.push_back(std::move(function_description));
 }
 
-void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, vector<string> parameter_names,
+void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, vector<Identifier> parameter_names,
                             string description, vector<string> examples, vector<string> categories) {
 	CreateScalarFunctionInfo info(std::move(function));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -35,7 +35,7 @@ void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, ve
 	loader.RegisterFunction(std::move(info));
 }
 
-void RegisterTableFunction(ExtensionLoader &loader, TableFunction function, vector<string> parameter_names,
+void RegisterTableFunction(ExtensionLoader &loader, TableFunction function, vector<Identifier> parameter_names,
                            string description, vector<string> examples, vector<string> categories) {
 	CreateTableFunctionInfo info(std::move(function));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;

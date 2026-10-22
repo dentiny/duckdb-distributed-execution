@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
 #include "client/duckherder_client_sessions.hpp"
 #include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"
@@ -68,7 +69,7 @@ public:
 	DistributedClient &GetClient(ClientContext &context);
 
 	// Returns the remote row count captured when the catalog was loaded, if known.
-	optional_idx GetEstimatedCardinality(const string &schema_name, const string &table_name) const;
+	optional_idx GetEstimatedCardinality(const Identifier &schema_name, const Identifier &table_name) const;
 
 private:
 	friend class DuckherderCatalogLoader;
@@ -79,7 +80,7 @@ private:
 	string GetServerUrl() const;
 
 	optional_ptr<CatalogEntry> CreateSchemaLocal(CatalogTransaction transaction, CreateSchemaInfo &info);
-	void SetEstimatedCardinality(const string &schema_name, const string &table_name, idx_t cardinality);
+	void SetEstimatedCardinality(const Identifier &schema_name, const Identifier &table_name, idx_t cardinality);
 
 	DatabaseInstance &db_instance;
 

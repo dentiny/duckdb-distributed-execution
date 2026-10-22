@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/identifier.hpp"
 
 namespace duckdb {
 
@@ -15,9 +16,6 @@ class DistributedClient;
 // actual DML statement, so unwrap it before storing SQL in a remote operator.
 string GetRemoteStatementSQL(ClientContext &context);
 
-// Generate SQL statement to alter table.
-string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name);
-
 // Get the DistributedClient from a TableCatalogEntry's parent catalog.
 DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntry &table);
 
@@ -25,6 +23,6 @@ DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntr
 DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog);
 
 // Return the quoted `schema.entry` name of a catalog entry on the control node.
-string QualifiedRemoteName(const string &schema_name, const string &entry_name);
+string QualifiedRemoteName(const Identifier &schema_name, const Identifier &entry_name);
 
 } // namespace duckdb

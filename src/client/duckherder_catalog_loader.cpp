@@ -48,7 +48,7 @@ void ForEachRow(DistributedClient &client, const string &sql, const vector<Logic
 	}
 }
 
-vector<PhysicalIndex> GetKeyIndexes(const ColumnList &columns, const vector<string> &names) {
+vector<PhysicalIndex> GetKeyIndexes(const ColumnList &columns, const vector<Identifier> &names) {
 	vector<PhysicalIndex> indexes;
 	indexes.reserve(names.size());
 	for (auto &name : names) {
@@ -83,13 +83,13 @@ void DuckherderCatalogLoader::Load() {
 	            LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BIGINT},
 	           [&](DataChunk &chunk, idx_t row_idx) {
 		           auto entry_order = chunk.GetValue(0, row_idx).GetValue<int32_t>();
-		           auto schema_name = chunk.GetValue(1, row_idx).GetValue<string>();
+		           auto schema_name = Identifier(chunk.GetValue(1, row_idx).GetValue<string>());
 		           if (entry_order == 0) {
 			           LoadSchema(schema_name);
 			           return;
 		           }
 
-		           auto entry_name = chunk.GetValue(2, row_idx).GetValue<string>();
+		           auto entry_name = Identifier(chunk.GetValue(2, row_idx).GetValue<string>());
 		           if (entry_order == 1) {
 			           auto &schema = catalog.GetSchema(transaction, schema_name).Cast<DuckherderSchemaCatalogEntry>();
 			           LoadEnumType(schema, entry_name, chunk.GetValue(4, row_idx));
@@ -111,14 +111,14 @@ void DuckherderCatalogLoader::Load() {
 	}
 }
 
-void DuckherderCatalogLoader::LoadSchema(const string &schema_name) {
+void DuckherderCatalogLoader::LoadSchema(const Identifier &schema_name) {
 	CreateSchemaInfo info;
-	info.schema = schema_name;
+	info.SetSchema(schema_name);
 	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.CreateSchemaLocal(transaction, info);
 }
 
-void DuckherderCatalogLoader::LoadEnumType(DuckherderSchemaCatalogEntry &schema, const string &type_name,
+void DuckherderCatalogLoader::LoadEnumType(DuckherderSchemaCatalogEntry &schema, const Identifier &type_name,
                                            const Value &labels) {
 	vector<string> label_literals;
 	for (auto &label : ListValue::GetChildren(labels)) {
@@ -132,7 +132,8 @@ void DuckherderCatalogLoader::LoadEnumType(DuckherderSchemaCatalogEntry &schema,
 	schema.CreateTypeLocal(transaction, type_info);
 }
 
-void DuckherderCatalogLoader::LoadTable(const string &schema_name, const string &table_name, PendingTable &table) {
+void DuckherderCatalogLoader::LoadTable(const Identifier &schema_name, const Identifier &table_name,
+                                        PendingTable &table) {
 	if (table.loaded) {
 		return;
 	}
@@ -150,9 +151,9 @@ void DuckherderCatalogLoader::LoadTable(const string &schema_name, const string 
 		if (fk.info.type != ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
 			continue;
 		}
-		fk.info.schema = schema.name;
+		fk.info.SetSchema(schema.name);
 		fk.info.fk_keys = GetKeyIndexes(info.columns, fk.fk_columns);
-		if (StringUtil::CIEquals(fk.info.table, info.table)) {
+		if (fk.info.table == info.GetTableName()) {
 			fk.info.type = ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE;
 			fk.info.pk_keys = GetKeyIndexes(info.columns, fk.pk_columns);
 			continue;
@@ -169,7 +170,7 @@ void DuckherderCatalogLoader::LoadTable(const string &schema_name, const string 
 		fk.info.pk_keys = GetKeyIndexes(referenced.GetColumns(), fk.pk_columns);
 	}
 
-	info.schema = schema.name;
+	info.SetSchema(schema.name);
 	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	auto binder = Binder::CreateBinder(context);
 	auto bound_info = binder->BindCreateTableInfo(std::move(table.info), schema);
