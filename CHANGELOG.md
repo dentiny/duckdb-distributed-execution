@@ -1,5 +1,9 @@
 ## 0.1.0
 
+### Fixed
+
+- Build only the Thrift runtime needed by Arrow Flight, avoiding IDL compiler flags unsupported by the community Linux Bison version.
+
 ### Changed
 
 - Upgrade DuckDB to `v2.0.0`, extension-ci-tools to the latest commit, and the embedded object-storage extension to its v2-compatible `0.2.0` release.
