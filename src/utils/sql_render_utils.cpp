@@ -56,8 +56,7 @@ bool RenderChildren(const RemoteScope &scope, const vector<unique_ptr<Expression
 	return true;
 }
 
-// Renders `expr` as SQL on the remote table, or returns an empty string if it cannot be translated with identical
-// semantics.
+// Renders a function call, which includes casts, comparisons and BETWEEN, like RenderExpression.
 string RenderFunction(const RemoteScope &scope, const BoundFunctionExpression &function) {
 	auto &type = function.GetReturnType();
 	if (BoundCastExpression::IsCast(function)) {
@@ -212,7 +211,7 @@ bool TryRenderFilter(const RemoteScope &scope, const Expression &expr, string &s
 	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONJUNCTION) {
 		const bool is_and = expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND;
 		vector<string> predicates;
-		for (auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
+		for (const auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
 			string predicate;
 			if (!TryRenderFilter(scope, *child, predicate)) {
 				return false;
@@ -368,7 +367,7 @@ namespace {
 bool RenderScanFilters(const LogicalGet &get, const TableCatalogEntry &table, vector<string> &predicates) {
 	// Logical table filters are keyed by the position of their column in the scan.
 	auto &column_ids = get.GetColumnIds();
-	for (auto &entry : get.table_filters) {
+	for (const auto &entry : get.table_filters) {
 		LogicalType type;
 		auto column = GetColumnSQL(table, column_ids[entry.GetIndex()].GetPrimaryIndex(), type);
 		string predicate;

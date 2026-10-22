@@ -101,7 +101,7 @@ bool ReadsOnlyRemoteTables(LogicalOperator &op, optional_ptr<LogicalGet> &scan) 
 		}
 		// Filters pushed into the scan no longer appear as expressions. They are keyed by the position of their column
 		// in the scan.
-		for (auto &entry : get.table_filters) {
+		for (const auto &entry : get.table_filters) {
 			LogicalType type;
 			GetColumnSQL(bind_data.table, get.GetColumnIds()[entry.GetIndex()].GetPrimaryIndex(), type);
 			if (DependsOnTimeZone(type)) {

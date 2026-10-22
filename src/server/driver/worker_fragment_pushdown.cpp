@@ -471,7 +471,8 @@ unique_ptr<Expression> BindAverage(const LogicalType &input_type, unique_ptr<Exp
 	const bool decimal = input_type.id() == LogicalTypeId::DECIMAL;
 	const bool int64_sum = input_type.InternalType() == PhysicalType::INT16;
 	const double scale = decimal ? Hugeint::Cast<double>(Hugeint::POWERS_OF_TEN[DecimalType::GetScale(input_type)]) : 1;
-	ScalarFunction function("duckherder_merge_avg", {sum->GetReturnType(), count->GetReturnType()}, LogicalType::DOUBLE,
+	ScalarFunction function("duckherder_merge_avg", {sum->GetReturnType(), count->GetReturnType()},
+	                        LogicalType {LogicalTypeId::DOUBLE},
 	                        [decimal, int64_sum, scale](DataChunk &args, ExpressionState &state, Vector &result) {
 		                        BinaryExecutor::Execute<hugeint_t, hugeint_t, double>(
 		                            args.data[0], args.data[1], result, args.size(),

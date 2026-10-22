@@ -35,7 +35,7 @@ struct RowGroupRangeScanLocalState : public LocalTableFunctionState {
 
 optional_ptr<const TableFilter> GetRowIdFilter(const TableFilterSet &filters,
                                                const vector<ColumnIndex> &column_indexes) {
-	for (auto &entry : filters) {
+	for (const auto &entry : filters) {
 		if (column_indexes[entry.GetIndex()].IsRowIdColumn()) {
 			return &entry.Filter();
 		}

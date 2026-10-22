@@ -137,7 +137,7 @@ SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, D
 	// DELETE ... RETURNING also outputs the table's virtual columns, e.g. rowid, which the server does not return and
 	// RETURNING cannot reference.
 	const auto table_column_count = table.GetTypes().size();
-	const auto remote_column_count = types.size() > table_column_count ? table_column_count : types.size();
+	const auto remote_column_count = MinValue(types.size(), table_column_count);
 	if (!state.executed) {
 		state.executed = true;
 		auto executable_sql = BuildRemotePreparedDMLSQL(context.client, ReturnCompleteRows(sql));

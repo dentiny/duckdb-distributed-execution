@@ -96,7 +96,7 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 	}
 	vector<string> predicates;
 	if (filters != nullptr) {
-		for (auto &entry : *filters) {
+		for (const auto &entry : *filters) {
 			LogicalType type;
 			auto column = GetColumnSQL(bind_data.table, filter_column_ids[entry.GetIndex()], type);
 			// Only join filters reach here for unsupported types; the join re-checks those rows anyway.

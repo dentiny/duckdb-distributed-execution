@@ -49,21 +49,21 @@ LogicalGet &FindScan(LogicalOperator &plan) {
 // Returns the bounds of get's rowid range filter: its start, then its end if it has one.
 vector<idx_t> RowIdRange(LogicalGet &get) {
 	auto &column_ids = get.GetColumnIds();
-	for (auto &entry : get.table_filters) {
+	for (const auto &entry : get.table_filters) {
 		if (!column_ids[entry.GetIndex()].IsRowIdColumn()) {
 			continue;
 		}
 		auto &expr = *entry.Filter().Cast<ExpressionFilter>().expr;
 		vector<reference<const Expression>> comparisons;
 		if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONJUNCTION) {
-			for (auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
+			for (const auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
 				comparisons.emplace_back(*child);
 			}
 		} else {
 			comparisons.emplace_back(expr);
 		}
 		vector<idx_t> bounds;
-		for (auto &comparison : comparisons) {
+		for (const auto &comparison : comparisons) {
 			auto &bound = BoundComparisonExpression::Right(comparison.get().Cast<BoundFunctionExpression>());
 			bounds.emplace_back(bound.Cast<BoundConstantExpression>().GetValue().GetValue<idx_t>());
 		}
