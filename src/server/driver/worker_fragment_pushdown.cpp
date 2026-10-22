@@ -29,6 +29,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -264,14 +265,14 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 			vector<unique_ptr<AsyncTask>> tasks;
 			tasks.emplace_back(std::move(task));
 			data.async_result = AsyncResult(std::move(tasks));
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 		task->Execute();
 	}
 	global.ThrowIfError();
 	if (!local.HasRows()) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 	if (local.batch) {
@@ -283,7 +284,7 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
 		output.data[col_idx].Slice(chunk.data[col_idx], local.offset, local.offset + count);
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 	local.offset += count;
 }
 
@@ -313,7 +314,7 @@ unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
 		names.emplace_back(StringUtil::Format("col%llu", idx));
 	}
 	auto bind_data = make_uniq<WorkerFragmentBindData>(std::move(fragment));
-	auto result = make_uniq<LogicalGet>(binder.GenerateTableIndex(), std::move(function), std::move(bind_data),
+	auto result = make_uniq<LogicalGet>(binder.GenerateTableIndex(), BoundTableFunction(function), std::move(bind_data),
 	                                    std::move(types), std::move(names));
 	vector<ColumnIndex> column_ids;
 	for (idx_t idx = 0; idx < result->returned_types.size(); ++idx) {
@@ -330,7 +331,7 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
-		if (get.function.name != "seq_scan" || !GetPartitionedTable(get, state)) {
+		if (get.function.GetName() != "seq_scan" || !GetPartitionedTable(get, state)) {
 			return false;
 		}
 		scans.emplace_back(get);
@@ -363,7 +364,7 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 	return true;
 }
 
-optional_ptr<LogicalGet> FindScan(LogicalOperator &op, idx_t table_index) {
+optional_ptr<LogicalGet> FindScan(LogicalOperator &op, TableIndex table_index) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET && op.Cast<LogicalGet>().table_index == table_index) {
 		return op.Cast<LogicalGet>();
 	}
@@ -379,28 +380,32 @@ optional_ptr<LogicalGet> FindScan(LogicalOperator &op, idx_t table_index) {
 // Restricts get to rowids [start, end), or from start on if end is invalid, which the worker's row group range
 // scan turns into whole row groups.
 void AddRowIdRange(LogicalGet &get, idx_t start, optional_idx end) {
-	auto &column_ids = get.GetMutableColumnIds();
-	bool has_row_id = false;
-	for (const auto &column : column_ids) {
-		has_row_id = has_row_id || column.IsRowIdColumn();
+	// Logical table filters are keyed by the position of their column in the scan.
+	optional_idx row_id;
+	const auto &column_ids = get.GetColumnIds();
+	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
+		if (column_ids[idx].IsRowIdColumn()) {
+			row_id = idx;
+		}
 	}
-	if (!has_row_id) {
+	if (!row_id.IsValid()) {
 		// Keep the scan's output columns, and so the bindings above it, unchanged.
 		if (get.projection_ids.empty()) {
 			for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
 				get.projection_ids.emplace_back(idx);
 			}
 		}
-		column_ids.emplace_back(COLUMN_IDENTIFIER_ROW_ID);
+		row_id = idx_t(get.AddColumnId(COLUMN_IDENTIFIER_ROW_ID));
 	}
-	auto filter = make_uniq<ConjunctionAndFilter>();
-	filter->child_filters.emplace_back(make_uniq<ConstantFilter>(ExpressionType::COMPARE_GREATERTHANOREQUALTO,
-	                                                             Value::BIGINT(NumericCast<int64_t>(start))));
+	const ProjectionIndex row_id_column(row_id.GetIndex());
+	get.table_filters.PushFilter(row_id_column,
+	                             ExpressionFilter::CreateComparisonFilter(ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+	                                                                      Value::BIGINT(NumericCast<int64_t>(start))));
 	if (end.IsValid()) {
-		filter->child_filters.emplace_back(make_uniq<ConstantFilter>(
-		    ExpressionType::COMPARE_LESSTHAN, Value::BIGINT(NumericCast<int64_t>(end.GetIndex()))));
+		get.table_filters.PushFilter(
+		    row_id_column, ExpressionFilter::CreateComparisonFilter(
+		                       ExpressionType::COMPARE_LESSTHAN, Value::BIGINT(NumericCast<int64_t>(end.GetIndex()))));
 	}
-	get.table_filters.PushFilter(ColumnIndex(COLUMN_IDENTIFIER_ROW_ID), std::move(filter));
 }
 
 // Returns the input of a Join in op that reads scan through filters and projections, or nullptr, and sets equi_join to
@@ -425,7 +430,8 @@ optional_ptr<LogicalOperator> FindJoinInput(LogicalOperator &op, LogicalGet &sca
 			if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
 			    op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 				for (const auto &condition : op.Cast<LogicalComparisonJoin>().conditions) {
-					equi_join = equi_join || IsKeyComparison(condition.comparison);
+					equi_join =
+					    equi_join || (condition.IsComparison() && IsKeyComparison(condition.GetComparisonType()));
 				}
 			}
 			return child.get();
@@ -465,15 +471,15 @@ unique_ptr<Expression> BindAverage(const LogicalType &input_type, unique_ptr<Exp
 	const bool decimal = input_type.id() == LogicalTypeId::DECIMAL;
 	const bool int64_sum = input_type.InternalType() == PhysicalType::INT16;
 	const double scale = decimal ? Hugeint::Cast<double>(Hugeint::POWERS_OF_TEN[DecimalType::GetScale(input_type)]) : 1;
-	ScalarFunction function("duckherder_merge_avg", {sum->return_type, count->return_type}, LogicalType::DOUBLE,
+	ScalarFunction function("duckherder_merge_avg", {sum->GetReturnType(), count->GetReturnType()},
+	                        LogicalType {LogicalTypeId::DOUBLE},
 	                        [decimal, int64_sum, scale](DataChunk &args, ExpressionState &state, Vector &result) {
-		                        BinaryExecutor::ExecuteWithNulls<hugeint_t, hugeint_t, double>(
+		                        BinaryExecutor::Execute<hugeint_t, hugeint_t, double>(
 		                            args.data[0], args.data[1], result, args.size(),
-		                            [&](hugeint_t total, hugeint_t rows, ValidityMask &mask, idx_t idx) {
+		                            [&](hugeint_t total, hugeint_t rows) -> optional<double> {
 			                            const auto row_count = Hugeint::Cast<uint64_t>(rows);
 			                            if (row_count == 0) {
-				                            mask.SetInvalid(idx);
-				                            return 0.0;
+				                            return nullopt;
 			                            }
 			                            if (int64_sum) {
 				                            auto divisor = static_cast<double>(row_count);
@@ -492,7 +498,7 @@ unique_ptr<Expression> BindAverage(const LogicalType &input_type, unique_ptr<Exp
 	vector<unique_ptr<Expression>> children;
 	children.emplace_back(std::move(sum));
 	children.emplace_back(std::move(count));
-	return make_uniq<BoundFunctionExpression>(LogicalType::DOUBLE, std::move(function), std::move(children), nullptr);
+	return make_uniq<BoundFunctionExpression>(BoundScalarFunction(function), std::move(children), nullptr);
 }
 
 // Binds the aggregate name over child, or returns nullptr if it has no overload for the child's type.
@@ -503,7 +509,7 @@ unique_ptr<Expression> BindAggregate(ClientContext &context, const Identifier &n
 	                  .Cast<AggregateFunctionCatalogEntry>();
 	FunctionBinder binder(context);
 	ErrorData error;
-	auto function_idx = binder.BindFunction(name, entry.functions, {child->return_type}, error);
+	auto function_idx = binder.BindFunction(name, entry.functions, {child->GetReturnType()}, error);
 	if (!function_idx.IsValid()) {
 		return nullptr;
 	}
@@ -513,8 +519,8 @@ unique_ptr<Expression> BindAggregate(ClientContext &context, const Identifier &n
 	                                    std::move(children));
 }
 
-unique_ptr<Expression> ColumnRef(const LogicalType &type, idx_t table_index, idx_t column_index) {
-	return make_uniq<BoundColumnRefExpression>(type, ColumnBinding(table_index, column_index));
+unique_ptr<Expression> ColumnRef(const LogicalType &type, TableIndex table_index, idx_t column_index) {
+	return make_uniq<BoundColumnRefExpression>(type, ColumnBinding(table_index, ProjectionIndex(column_index)));
 }
 
 string DescribeFragment(const string &head, const vector<reference<LogicalGet>> &scans, const vector<bool> &split) {
@@ -553,8 +559,7 @@ void UnflipDelimJoins(LogicalOperator &op) {
 		std::swap(join.children[0], join.children[1]);
 		join.join_type = InverseJoinType(join.join_type);
 		for (auto &condition : join.conditions) {
-			std::swap(condition.left, condition.right);
-			condition.comparison = FlipComparisonExpression(condition.comparison);
+			condition.Swap();
 		}
 		std::swap(join.left_projection_map, join.right_projection_map);
 		join.delim_flipped = false;
@@ -613,7 +618,7 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
 			break;
 		}
 		key_ranges = KeyRangePartition();
-		if (IsSplit(AnalyzeSplit(input, key_ranges, candidate.table_index))) {
+		if (IsSplit(AnalyzeSplit(input, key_ranges, candidate.table_index.index))) {
 			partitioned_idx = idx;
 			break;
 		}
@@ -695,9 +700,10 @@ bool IsDistinctOnly(const LogicalAggregate &aggregate) {
 		// Tasks return only the argument's values, so an aggregate with a FILTER or ORDER BY, which reads other
 		// columns, or with another argument cannot use them. Except for count, the result over inexact values, e.g. a
 		// sum of doubles, depends on the order in which the driver receives them.
-		if (!bound.IsDistinct() || bound.filter || bound.order_bys || bound.children.size() != 1 ||
-		    !bound.children[0]->Equals(*aggregate.expressions[0]->Cast<BoundAggregateExpression>().children[0]) ||
-		    (bound.function.name != "count" && !IsExactAverageInput(bound.children[0]->return_type))) {
+		if (!bound.IsDistinct() || bound.GetFilter() || bound.GetOrderBys() || bound.GetChildren().size() != 1 ||
+		    !bound.GetChildren()[0]->Equals(
+		        *aggregate.expressions[0]->Cast<BoundAggregateExpression>().GetChildren()[0]) ||
+		    (bound.Function().GetName() != "count" && !IsExactAverageInput(bound.GetChildren()[0]->GetReturnType()))) {
 			return false;
 		}
 	}
@@ -710,7 +716,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
                                                       WorkerFragmentState &state, LogicalAggregate &aggregate,
                                                       const vector<reference<LogicalGet>> &scans) {
 	const auto group_count = aggregate.groups.size();
-	auto &argument = *aggregate.expressions[0]->Cast<BoundAggregateExpression>().children[0];
+	auto &argument = *aggregate.expressions[0]->Cast<BoundAggregateExpression>().GetChildren()[0];
 	WorkerFragment fragment;
 	vector<bool> split;
 	try {
@@ -719,7 +725,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
 		worker.groups.emplace_back(argument.Copy());
 		worker.expressions.clear();
 		for (auto &grouping_set : worker.grouping_sets) {
-			grouping_set.insert(group_count);
+			grouping_set.insert(ProjectionIndex(group_count));
 		}
 		worker_plan = ProjectColumns(binder, std::move(worker_plan));
 		if (!PlanTasks(context, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
@@ -739,7 +745,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
 	merges.reserve(aggregate.expressions.size());
 	for (const auto &expr : aggregate.expressions) {
 		auto merge = expr->Copy();
-		merge->Cast<BoundAggregateExpression>().children[0] =
+		merge->Cast<BoundAggregateExpression>().GetChildrenMutable()[0] =
 		    ColumnRef(types[group_count], get->table_index, group_count);
 		merges.emplace_back(std::move(merge));
 	}
@@ -780,12 +786,12 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 			return nullptr;
 		}
 		auto &partial = expr->Cast<BoundAggregateExpression>();
-		auto name = partial.function.name;
-		if (partial.IsDistinct() || partial.filter || partial.order_bys) {
+		auto name = partial.Function().GetName();
+		if (partial.IsDistinct() || partial.GetFilter() || partial.GetOrderBys()) {
 			return nullptr;
 		}
 		// The top-N variants max(x, n) and min(x, n) return lists that the same function cannot merge.
-		if (partial.children.size() != (name == "count_star" ? 0 : 1)) {
+		if (partial.GetChildren().size() != (name == "count_star" ? 0 : 1)) {
 			return nullptr;
 		}
 		if (name == "sum" || name == "sum_no_overflow" || name == "min" || name == "max") {
@@ -794,7 +800,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		} else if (name == "count" || name == "count_star") {
 			kinds.emplace_back(MergeKind::COUNT);
 			merge_names.emplace_back("sum");
-		} else if (name == "avg" && IsExactAverageInput(partial.children[0]->return_type)) {
+		} else if (name == "avg" && IsExactAverageInput(partial.GetChildren()[0]->GetReturnType())) {
 			kinds.emplace_back(MergeKind::AVG);
 			merge_names.emplace_back("sum");
 		} else {
@@ -814,7 +820,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 			if (kinds[idx] != MergeKind::AVG) {
 				continue;
 			}
-			auto &input = worker.expressions[idx]->Cast<BoundAggregateExpression>().children[0];
+			auto &input = worker.expressions[idx]->Cast<BoundAggregateExpression>().GetChildren()[0];
 			auto sum = BindAggregate(context, "sum", input->Copy());
 			auto count = BindAggregate(context, "count", input->Copy());
 			if (!sum || !count) {
@@ -848,7 +854,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 		    BindAggregate(context, merge_names[idx], ColumnRef(partial_types[column], get->table_index, column));
 		// A partial aggregate merged with the same function must keep its type, e.g. sum over DECIMAL(38, 2).
 		if (!merge || (idx < kinds.size() && kinds[idx] == MergeKind::SAME &&
-		               merge->return_type != aggregate.expressions[idx]->return_type)) {
+		               merge->GetReturnType() != aggregate.expressions[idx]->GetReturnType())) {
 			return nullptr;
 		}
 		merges.emplace_back(std::move(merge));
@@ -864,20 +870,21 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	merge->grouping_sets = aggregate.grouping_sets;
 	for (idx_t idx = 0; idx < kinds.size(); ++idx) {
 		auto &merged = *merge->expressions[idx];
-		auto output = ColumnRef(merged.return_type, merge->aggregate_index, idx);
+		auto output = ColumnRef(merged.GetReturnType(), merge->aggregate_index, idx);
 		if (kinds[idx] == MergeKind::COUNT) {
 			// Every task returns a count, also for empty input, so the merged sum is never NULL.
 			output = BoundCastExpression::AddCastToType(context, std::move(output), LogicalType::BIGINT);
 		} else if (kinds[idx] == MergeKind::AVG) {
 			auto &count = *merge->expressions[count_columns[idx]];
 			// BindAverage reads both merged sums as hugeints.
-			if (merged.return_type.InternalType() != PhysicalType::INT128 ||
-			    count.return_type.InternalType() != PhysicalType::INT128) {
+			if (merged.GetReturnType().InternalType() != PhysicalType::INT128 ||
+			    count.GetReturnType().InternalType() != PhysicalType::INT128) {
 				return nullptr;
 			}
-			auto &input_type = aggregate.expressions[idx]->Cast<BoundAggregateExpression>().children[0]->return_type;
+			auto &input_type =
+			    aggregate.expressions[idx]->Cast<BoundAggregateExpression>().GetChildren()[0]->GetReturnType();
 			output = BindAverage(input_type, std::move(output),
-			                     ColumnRef(count.return_type, merge->aggregate_index, count_columns[idx]));
+			                     ColumnRef(count.GetReturnType(), merge->aggregate_index, count_columns[idx]));
 		}
 		outputs.emplace_back(std::move(output));
 	}
@@ -913,7 +920,7 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 	auto bindings = get.GetColumnBindings();
 	auto result = CreateFragment(binder, std::move(fragment));
 	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
-		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, idx));
+		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, ProjectionIndex(idx)));
 	}
 	return std::move(result);
 }
@@ -942,7 +949,7 @@ unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder
 	auto bindings = join.GetColumnBindings();
 	auto result = CreateFragment(binder, std::move(fragment));
 	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
-		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, idx));
+		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, ProjectionIndex(idx)));
 	}
 	return std::move(result);
 }

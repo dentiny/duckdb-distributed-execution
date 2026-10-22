@@ -62,7 +62,8 @@ string StripClientCatalog(const string &sql, const string &client_catalog) {
 
 		auto dot_end = TokenEnd(sql, tokens, index + 1);
 		auto next_token = sql.substr(tokens[index + 1].start, dot_end - tokens[index + 1].start);
-		if (tokens[index + 1].type != SimplifiedTokenType::SIMPLIFIED_TOKEN_OPERATOR || next_token != ".") {
+		// DuckDB tokenizes the dot of a qualified name as an operator or, since v2, as a numeric constant.
+		if (next_token != ".") {
 			continue;
 		}
 

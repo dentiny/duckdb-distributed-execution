@@ -70,12 +70,12 @@ void GetQueryHistoryTableFunc(ClientContext &context, TableFunctionInput &data_p
 			               return Value::TIME(dtime_t {latency_microsec});
 		               });
 
-		output.SetValue(col++, count, entry.query);
-		output.SetValue(col++, count, Value::ARRAY(LogicalTypeId::TIME, std::move(latencies)));
+		output.data[col++].SetValue(count, entry.query);
+		output.data[col++].SetValue(count, Value::ARRAY(LogicalTypeId::TIME, std::move(latencies)));
 
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 }
 
 } // namespace

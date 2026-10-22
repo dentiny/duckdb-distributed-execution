@@ -198,7 +198,8 @@ arrow::Status ClientRequestHandler::TableExists(const distributed::TableExistsRe
 		return arrow::Status::OK();
 	}
 
-	resp.mutable_table_exists()->set_exists(result->GetValue(0, 0).GetValue<int64_t>() > 0);
+	auto chunk = result->Fetch();
+	resp.mutable_table_exists()->set_exists(chunk->GetValue(0, 0).GetValue<int64_t>() > 0);
 	resp.set_success(true);
 	return arrow::Status::OK();
 }
@@ -226,7 +227,7 @@ arrow::Status ClientRequestHandler::RunQuery(const distributed::QueryRequest &re
 
 	// The optimizer routes eligible scan and Join fragments through worker_fragment.
 	vector<Value> parameters;
-	auto result = prepared->Execute(parameters, /*allow_stream_result=*/false);
+	auto result = prepared->Execute(parameters);
 
 	// Calculate total query duration (using steady_clock for accurate elapsed time)
 	auto query_end = std::chrono::steady_clock::now();
@@ -255,7 +256,7 @@ void ClientRequestHandler::InsertData(const string &table_name,
                                       ClientRegistration &registration, distributed::DistributedResponse &resp) {
 	try {
 		// Parse only the target name; batch values stay typed throughout ingestion.
-		Parser parser;
+		auto parser = Parser::GetBuiltinParser();
 		parser.ParseQuery(StringUtil::Format("INSERT INTO %s DEFAULT VALUES", table_name));
 		if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::INSERT_STATEMENT) {
 			throw InvalidInputException("DoPut requires a single table name");

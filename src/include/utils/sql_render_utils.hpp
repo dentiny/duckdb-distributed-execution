@@ -4,6 +4,7 @@
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/table_index.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
@@ -51,7 +52,7 @@ unique_ptr<RemoteAggregateQuery> RenderAggregateQuery(LogicalAggregate &aggregat
 
 // Redirects the group and aggregate bindings of `aggregate` to the columns of the scan `table_index` returning
 // the result of `RenderAggregateQuery`.
-void ReplaceAggregateBindings(const LogicalAggregate &aggregate, idx_t table_index,
+void ReplaceAggregateBindings(const LogicalAggregate &aggregate, TableIndex table_index,
                               vector<ReplacementBinding> &replacements);
 
 } // namespace duckdb

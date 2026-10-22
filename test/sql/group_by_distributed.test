@@ -125,7 +125,7 @@ WHERE sql = 'aggregate count_star(), sum_no_overflow(value) group by (id % 3) ov
 ----
 2
 
-# Workers return the sum and count of each avg input, which the driver divides after merging.
+# DuckDB rewrites avg into a sum divided by a count, so workers return the sums and the count.
 query IIRR
 SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k ORDER BY k;
 ----
@@ -135,6 +135,6 @@ SELECT id % 3 AS k, count(*), avg(id), avg(value) FROM group_by_table GROUP BY k
 
 query I
 SELECT num_tasks_generated FROM duckherder_get_query_execution_stats()
-WHERE sql LIKE 'aggregate count_star(), avg(id), avg(value) group by %';
+WHERE sql LIKE 'aggregate count_star(), sum_no_overflow(id), sum_no_overflow(value) group by %';
 ----
 2

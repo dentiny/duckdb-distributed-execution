@@ -4,6 +4,7 @@
 #include "client/duckherder_catalog.hpp"
 #include "client/execution/distributed_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/atomic.hpp"
@@ -16,6 +17,7 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/planner/table_filter.hpp"
+#include "duckdb/planner/table_filter_set.hpp"
 #include "utils/catalog_utils.hpp"
 #include "utils/sql_render_utils.hpp"
 
@@ -24,7 +26,7 @@ namespace duckdb {
 namespace {
 
 void SerializeDistributedTableScan(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
-                                   const TableFunction &function) {
+                                   const BoundTableFunction &function) {
 	auto &data = bind_data->Cast<DistributedTableScanBindData>();
 	serializer.WriteProperty(100, "catalog", data.table.schema.catalog.GetName());
 	serializer.WriteProperty(101, "schema", data.table.schema.name);
@@ -34,7 +36,7 @@ void SerializeDistributedTableScan(Serializer &serializer, const optional_ptr<Fu
 	serializer.WritePropertyWithDefault(105, "pushed_types", data.pushed_types);
 }
 
-unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deserializer, TableFunction &function) {
+unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deserializer, BoundTableFunction &function) {
 	auto catalog = deserializer.ReadProperty<Identifier>(100, "catalog");
 	auto schema = deserializer.ReadProperty<Identifier>(101, "schema");
 	auto table = deserializer.ReadProperty<Identifier>(102, "table");
@@ -94,14 +96,14 @@ string BuildScanSQL(const DistributedTableScanBindData &bind_data, const vector<
 	}
 	vector<string> predicates;
 	if (filters != nullptr) {
-		for (auto &entry : filters->filters) {
+		for (const auto &entry : *filters) {
 			LogicalType type;
-			auto column = GetColumnSQL(bind_data.table, filter_column_ids[entry.first], type);
+			auto column = GetColumnSQL(bind_data.table, filter_column_ids[entry.GetIndex()], type);
 			// Only join filters reach here for unsupported types; the join re-checks those rows anyway.
 			if (!SupportsRemoteFilterPushdown(type)) {
 				continue;
 			}
-			auto predicate = RemoteFilterToSQL(*entry.second, column);
+			auto predicate = RemoteFilterToSQL(entry.Filter(), column);
 			if (!predicate.empty()) {
 				predicates.emplace_back(std::move(predicate));
 			}
@@ -163,7 +165,7 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	function.filter_prune = true;
 	function.supports_pushdown_type = DistributedTableScanSupportsPushdownType;
 	function.cardinality = DistributedTableScanCardinality;
-	function.get_bind_info = GetBindInfo;
+	function.get_table_entry = GetTableEntry;
 	function.serialize = SerializeDistributedTableScan;
 	function.deserialize = DeserializeDistributedTableScan;
 	function.get_virtual_columns = GetDistributedTableScanVirtualColumns;
@@ -171,8 +173,9 @@ TableFunction DistributedTableScanFunction::GetFunction() {
 	return function;
 }
 
-BindInfo DistributedTableScanFunction::GetBindInfo(optional_ptr<FunctionData> bind_data) {
-	return BindInfo(bind_data->Cast<DistributedTableScanBindData>().table);
+optional_ptr<TableCatalogEntry>
+DistributedTableScanFunction::GetTableEntry(optional_ptr<const FunctionData> bind_data) {
+	return &bind_data->Cast<DistributedTableScanBindData>().table;
 }
 
 unique_ptr<FunctionData> DistributedTableScanFunction::Bind(ClientContext &context, TableFunctionBindInput &input,
@@ -230,7 +233,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	while (!local_state.batch || !local_state.batch->HasNext()) {
 		auto batch_idx = global_state.next_batch++;
 		if (batch_idx >= global_state.batches.size()) {
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 		// Only this thread claims the batch, so it releases the Arrow data once the batch is converted.
@@ -244,7 +247,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	}
 	local_state.batch->Next(local_state.chunk);
 	// The remote query already returns the projected columns in output order.
-	output.SetCardinality(local_state.chunk.size());
+	output.SetChildCardinality(local_state.chunk.size());
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
 		if (global_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
 			continue;

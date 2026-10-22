@@ -63,7 +63,12 @@ bool ArrowRecordBatchConverter::Next(DataChunk &out) {
 	const auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, row_count - offset);
 	auto &inferred_types = arrow_table.GetTypes();
 	auto &arrow_types = arrow_table.GetColumns();
+	// Each vector holds its own row count, which the conversion expects to be set beforehand.
+	out.SetChildCardinality(count);
 	inferred.Reset();
+	if (inferred.ColumnCount() > 0) {
+		inferred.SetChildCardinality(count);
+	}
 	for (idx_t column_idx = 0; column_idx < types.size(); column_idx++) {
 		const bool cast = inferred_types[column_idx] != types[column_idx];
 		auto &target = cast ? inferred.data[column_idx] : out.data[column_idx];
@@ -91,7 +96,6 @@ bool ArrowRecordBatchConverter::Next(DataChunk &out) {
 			VectorOperations::Cast(context, target, out.data[column_idx], count);
 		}
 	}
-	out.SetCardinality(count);
 	offset += count;
 	return true;
 }

@@ -16,7 +16,7 @@ namespace {
 unique_ptr<LogicalOperator> TryPushdownAggregate(Binder &binder, LogicalAggregate &aggregate,
                                                  vector<ReplacementBinding> &replacements) {
 	auto get = GetAggregateScan(aggregate);
-	if (!get || get->function.name != "distributed_scan" || get->extra_info.sample_options) {
+	if (!get || get->function.GetName() != "distributed_scan" || get->extra_info.sample_options) {
 		return nullptr;
 	}
 	auto &bind_data = get->bind_data->Cast<DistributedTableScanBindData>();

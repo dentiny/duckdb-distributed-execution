@@ -3,6 +3,7 @@
 #include "arrow_utils.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 
 #include <arrow/builder.h>
 
@@ -45,8 +46,8 @@ TEST_CASE("Arrow STRUCT conversion", "[arrow][struct]") {
 	                               Value::STRUCT({{"id", Value::INTEGER(3)}, {"name", Value(LogicalType::VARCHAR)}})));
 
 	auto &entries = StructVector::GetEntries(result);
-	REQUIRE(!FlatVector::Validity(*entries[0]).RowIsValid(1));
-	REQUIRE(!FlatVector::Validity(*entries[1]).RowIsValid(1));
+	REQUIRE(!FlatVector::Validity(entries[0]).RowIsValid(1));
+	REQUIRE(!FlatVector::Validity(entries[1]).RowIsValid(1));
 }
 
 TEST_CASE("Arrow nested STRUCT conversion", "[arrow][struct]") {

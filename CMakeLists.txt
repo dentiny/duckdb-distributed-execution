@@ -83,7 +83,6 @@ set(CLIENT_SOURCES
     src/client/duckherder_storage.cpp
     src/client/duckherder_schema_catalog_entry.cpp
     src/client/duckherder_table_catalog_entry.cpp
-    src/client/duckherder_transaction.cpp
     src/client/duckherder_transaction_manager.cpp
     src/client/entry_lookup_info_hash_utils.cpp
     src/client/remote_index_registry.cpp)

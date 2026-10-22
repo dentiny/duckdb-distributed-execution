@@ -5,12 +5,15 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/common/sql_identifier.hpp"
-#include "duckdb/parser/parser.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/copy_statement.hpp"
+#include "duckdb/parser/statement/execute_statement.hpp"
 #include "duckdb/parser/statement/prepare_statement.hpp"
 #include "duckdb/planner/binder.hpp"
 
@@ -19,11 +22,20 @@ namespace duckdb {
 string GetRemoteStatementSQL(ClientContext &context) {
 	const auto &current_query = context.GetCurrentQuery();
 
-	Parser parser;
+	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(current_query);
 	if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::PREPARE_STATEMENT) {
 		auto &prepare = parser.statements[0]->Cast<PrepareStatement>();
 		return prepare.statement->ToString();
+	}
+	// DuckDB may plan a prepared statement again when it is executed.
+	if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::EXECUTE_STATEMENT) {
+		auto &execute = parser.statements[0]->Cast<ExecuteStatement>();
+		auto &prepared_statements = ClientData::Get(context).prepared_statements;
+		auto entry = prepared_statements.find(execute.name);
+		if (entry != prepared_statements.end() && entry->second->unbound_statement) {
+			return entry->second->unbound_statement->ToString();
+		}
 	}
 	if (parser.statements.size() == 1 && parser.statements[0]->type == StatementType::COPY_STATEMENT) {
 		auto &copy = parser.statements[0]->Cast<CopyStatement>();
