@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/vector.hpp"
@@ -40,9 +41,11 @@ public:
 
 private:
 	// Sends requests[i] to the i-th available worker and stores the stream of its result in streams. Returns false if
-	// there are fewer workers than requests or a task cannot start. Sets locations to the workers' locations.
-	bool Dispatch(vector<distributed::ExecutePartitionRequest> &requests,
-	              vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams, vector<string> &locations);
+	// there are fewer workers than requests or a task cannot start. Sets locations, if given, to the workers' locations
+	// before sending any request.
+	bool Dispatch(const vector<distributed::ExecutePartitionRequest> &requests,
+	              vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
+	              optional_ptr<vector<string>> locations = nullptr);
 	distributed::ExecutePartitionRequest MakeRequest(const string &plan) const;
 
 	WorkerManager &worker_manager;

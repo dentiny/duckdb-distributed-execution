@@ -46,8 +46,7 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans, const vector
 			*requests.back().add_exchange_sources() = source;
 		}
 	}
-	vector<string> locations;
-	return Dispatch(requests, streams, locations);
+	return Dispatch(requests, streams);
 }
 
 bool DistributedExecutor::ExecuteProducers(const vector<string> &plans, idx_t bucket_count,
@@ -62,11 +61,17 @@ bool DistributedExecutor::ExecuteProducers(const vector<string> &plans, idx_t bu
 		write.set_bucket_count(NumericCast<uint32_t>(bucket_count));
 	}
 	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> streams;
-	vector<string> locations;
-	const auto started = Dispatch(requests, streams, locations);
-	for (const auto &location : locations) {
-		source.add_producers(location);
+	// A producer that fails after it starts keeps an unsealed buffer, so every worker sent one is a producer, also if
+	// the dispatch throws.
+	vector<string> producers;
+	bool started;
+	try {
+		started = Dispatch(requests, streams, producers);
+	} catch (...) {
+		*source.mutable_producers() = {producers.begin(), producers.end()};
+		throw;
 	}
+	*source.mutable_producers() = {producers.begin(), producers.end()};
 	if (!started) {
 		return false;
 	}
@@ -98,9 +103,9 @@ void DistributedExecutor::ReleaseExchange(const distributed::ExchangeSource &sou
 	}
 }
 
-bool DistributedExecutor::Dispatch(vector<distributed::ExecutePartitionRequest> &requests,
+bool DistributedExecutor::Dispatch(const vector<distributed::ExecutePartitionRequest> &requests,
                                    vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
-                                   vector<string> &locations) {
+                                   optional_ptr<vector<string>> locations) {
 	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
@@ -117,10 +122,11 @@ bool DistributedExecutor::Dispatch(vector<distributed::ExecutePartitionRequest> 
 		                                                 requests.size(), workers.size()));
 		return false;
 	}
-	locations.clear();
-	locations.reserve(requests.size());
-	for (idx_t task_idx = 0; task_idx < requests.size(); ++task_idx) {
-		locations.emplace_back(workers[task_idx]->location);
+	if (locations) {
+		locations->clear();
+		for (idx_t task_idx = 0; task_idx < requests.size(); ++task_idx) {
+			locations->emplace_back(workers[task_idx]->location);
+		}
 	}
 	streams.clear();
 	streams.resize(requests.size());

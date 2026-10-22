@@ -64,14 +64,6 @@ struct WorkerFragmentBindData : public TableFunctionData {
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<WorkerFragmentBindData>().fragment;
-		if (other.exchanges.size() != fragment.exchanges.size()) {
-			return false;
-		}
-		for (idx_t idx = 0; idx < fragment.exchanges.size(); ++idx) {
-			if (other.exchanges[idx].producer_plans != fragment.exchanges[idx].producer_plans) {
-				return false;
-			}
-		}
 		return other.plan == fragment.plan && other.task_plans == fragment.task_plans && other.types == fragment.types;
 	}
 
@@ -125,7 +117,14 @@ public:
 		info.sql = fragment.description;
 		vector<std::unique_ptr<arrow::flight::FlightStreamReader>> task_streams;
 		vector<distributed::ExchangeSource> task_exchanges;
-		if (fragment_state->StartTasks(fragment, task_streams, task_exchanges)) {
+		bool distributed;
+		try {
+			distributed = fragment_state->StartTasks(fragment, task_streams, task_exchanges);
+		} catch (...) {
+			fragment_state->ReleaseExchanges(task_exchanges);
+			throw;
+		}
+		if (distributed) {
 			info.execution_mode =
 			    task_streams.size() == 1 ? QueryExecutionMode::DELEGATED : QueryExecutionMode::ROW_GROUP_PARTITION;
 			info.merge_strategy = fragment.merge_strategy;
@@ -709,6 +708,7 @@ bool PlanTasks(ClientContext &context, Binder &binder, WorkerFragmentState &stat
 		fragment.exchanges.clear();
 		if (!key_ranges.scans.empty()) {
 			fragment.task_plans = SerializeKeyRangeTaskPlans(context, binder, worker_plan, key_ranges);
+			// In the order of the shuffled scans in key_ranges, which numbers the task plans' exchange reads.
 			for (const auto &scan : key_ranges.scans) {
 				if (!scan.shuffled) {
 					continue;

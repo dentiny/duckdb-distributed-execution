@@ -349,6 +349,7 @@ void ReadShuffledScans(ClientContext &context, Binder &binder, unique_ptr<Logica
                        const KeyRangePartition &partition, idx_t task, ColumnBindingReplacer &replacer) {
 	if (op->type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op->Cast<LogicalGet>();
+		// The fragment lists the exchanges in this order too.
 		idx_t exchange = 0;
 		for (const auto &scan : partition.scans) {
 			if (!scan.shuffled) {
