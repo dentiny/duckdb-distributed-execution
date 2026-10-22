@@ -75,7 +75,7 @@ void GetQueryHistoryTableFunc(ClientContext &context, TableFunctionInput &data_p
 
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 }
 
 } // namespace

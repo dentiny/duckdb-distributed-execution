@@ -1,6 +1,8 @@
 #include "duckherder_functions.hpp"
 
 #include "client/execution/distributed_table_scan_function.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
@@ -16,6 +18,15 @@ namespace {
 
 constexpr bool SUCCESS = true;
 
+// duckdb_functions() lists the parameter names of the function's signature.
+template <class FUNCTION>
+void NameParameters(FUNCTION &function, const vector<Identifier> &parameter_names) {
+	auto &signature = function.GetSignature();
+	for (idx_t idx = 0; idx < signature.GetParameterCount() && idx < parameter_names.size(); ++idx) {
+		signature.GetParameter(idx).SetName(parameter_names[idx]);
+	}
+}
+
 void AddDescription(CreateFunctionInfo &info, vector<Identifier> parameter_names, string description,
                     vector<string> examples, vector<string> categories) {
 	FunctionDescription function_description;
@@ -28,6 +39,7 @@ void AddDescription(CreateFunctionInfo &info, vector<Identifier> parameter_names
 
 void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, vector<Identifier> parameter_names,
                             string description, vector<string> examples, vector<string> categories) {
+	NameParameters(function, parameter_names);
 	CreateScalarFunctionInfo info(std::move(function));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	AddDescription(info, std::move(parameter_names), std::move(description), std::move(examples),
@@ -37,6 +49,7 @@ void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, ve
 
 void RegisterTableFunction(ExtensionLoader &loader, TableFunction function, vector<Identifier> parameter_names,
                            string description, vector<string> examples, vector<string> categories) {
+	NameParameters(function, parameter_names);
 	CreateTableFunctionInfo info(std::move(function));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	AddDescription(info, std::move(parameter_names), std::move(description), std::move(examples),
@@ -54,7 +67,7 @@ void ClearQueryRecorderStats(const DataChunk &args, ExpressionState &state, Vect
 	auto &duckdb_instance = GetDatabaseInstance(state);
 	auto &instance_state = GetDuckherderInstanceStateOrThrow(duckdb_instance);
 	instance_state.GetQueryRecorder()->ClearQueryRecords();
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 ScalarFunction GetClearQueryRecorderStatsFunction() {

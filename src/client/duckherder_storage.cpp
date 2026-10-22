@@ -7,6 +7,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/secret/secret.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
+#include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckherder_catalog.hpp"
 #include "duckherder_remote_endpoint.hpp"
 #include "duckherder_transaction_manager.hpp"

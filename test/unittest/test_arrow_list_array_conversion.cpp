@@ -3,6 +3,8 @@
 #include "arrow_utils.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/types/vector.hpp"
+#include "duckdb/common/vector/array_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
 
 #include <arrow/builder.h>
 
@@ -38,12 +40,12 @@ TEST_CASE("Arrow nested LIST conversion", "[arrow][list]") {
 	REQUIRE(outer_entries[0].length == 2);
 	REQUIRE(!FlatVector::Validity(result).RowIsValid(1));
 
-	auto &inner_vector = ListVector::GetEntry(result);
+	auto &inner_vector = ListVector::GetChild(result);
 	auto inner_entries = FlatVector::GetData<list_entry_t>(inner_vector);
 	REQUIRE(inner_entries[0].length == 2);
 	REQUIRE(inner_entries[1].length == 2);
 
-	auto &values_vector = ListVector::GetEntry(inner_vector);
+	auto &values_vector = ListVector::GetChild(inner_vector);
 	auto values = FlatVector::GetData<int32_t>(values_vector);
 	REQUIRE(values[0] == 1);
 	REQUIRE(values[1] == 2);
@@ -77,7 +79,7 @@ TEST_CASE("Arrow fixed-size LIST to DuckDB ARRAY conversion", "[arrow][array]") 
 	Vector result(type, 2);
 	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 2);
 
-	auto &child_vector = ArrayVector::GetEntry(result);
+	auto &child_vector = ArrayVector::GetChild(result);
 	auto values = FlatVector::GetData<int32_t>(child_vector);
 	REQUIRE(values[0] == 1);
 	REQUIRE(values[1] == 2);
@@ -113,8 +115,8 @@ TEST_CASE("Arrow nested fixed-size LIST to DuckDB nested ARRAY conversion", "[ar
 	Vector result(type, 1);
 	ConvertArrowArrayToDuckDBVector(context, arrow_array, result, type, 1);
 
-	auto &inner_vector = ArrayVector::GetEntry(result);
-	auto &values_vector = ArrayVector::GetEntry(inner_vector);
+	auto &inner_vector = ArrayVector::GetChild(result);
+	auto &values_vector = ArrayVector::GetChild(inner_vector);
 	auto values = FlatVector::GetData<int32_t>(values_vector);
 	REQUIRE(values[0] == 1);
 	REQUIRE(values[1] == 2);

@@ -24,17 +24,13 @@ TEST_CASE("Row group range scans start at the first row group of the range", "[r
 	REQUIRE(op->type == LogicalOperatorType::LOGICAL_GET);
 	auto &get = op->Cast<LogicalGet>();
 	auto &column_ids = get.GetColumnIds();
-	// The scan's filters are keyed by position in its columns.
-	TableFilterSet filters;
-	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
-		if (column_ids[idx].IsRowIdColumn()) {
-			filters.PushFilter(ColumnIndex(idx), get.table_filters.filters.at(COLUMN_IDENTIFIER_ROW_ID)->Copy());
-		}
-	}
-	REQUIRE(filters.filters.size() == 1);
+	// The scan's filters are keyed by position in its columns, in the logical plan as in the physical one.
+	auto filters = get.table_filters.Copy();
+	REQUIRE(filters->FilterCount() == 1);
 
 	con.context->RunFunctionInTransaction([&]() {
-		TableFunctionInitInput input(get.bind_data.get(), column_ids, get.projection_ids, &filters);
+		vector<idx_t> projection_ids(get.projection_ids.begin(), get.projection_ids.end());
+		TableFunctionInitInput input(get.bind_data.get(), column_ids, projection_ids, filters.get());
 		auto state = get.function.init_global(*con.context, input);
 		// One thread per row group: the row group before the range, whose last rowid is 245759, is not read.
 		REQUIRE(state->MaxThreads() == 2);

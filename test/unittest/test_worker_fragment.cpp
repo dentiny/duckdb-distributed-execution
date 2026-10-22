@@ -7,8 +7,10 @@
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
-#include "duckdb/planner/filter/conjunction_filter.hpp"
-#include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/planner.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -42,6 +44,32 @@ LogicalGet &FindScan(LogicalOperator &plan) {
 	}
 	REQUIRE(op->type == LogicalOperatorType::LOGICAL_GET);
 	return op->Cast<LogicalGet>();
+}
+
+// Returns the bounds of get's rowid range filter: its start, then its end if it has one.
+vector<idx_t> RowIdRange(LogicalGet &get) {
+	auto &column_ids = get.GetColumnIds();
+	for (auto &entry : get.table_filters) {
+		if (!column_ids[entry.GetIndex()].IsRowIdColumn()) {
+			continue;
+		}
+		auto &expr = *entry.Filter().Cast<ExpressionFilter>().expr;
+		vector<reference<const Expression>> comparisons;
+		if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONJUNCTION) {
+			for (auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
+				comparisons.emplace_back(*child);
+			}
+		} else {
+			comparisons.emplace_back(expr);
+		}
+		vector<idx_t> bounds;
+		for (auto &comparison : comparisons) {
+			auto &bound = BoundComparisonExpression::Right(comparison.get().Cast<BoundFunctionExpression>());
+			bounds.emplace_back(bound.Cast<BoundConstantExpression>().GetValue().GetValue<idx_t>());
+		}
+		return bounds;
+	}
+	return {};
 }
 
 // Returns the optimized plan of `sql`, as optimizer extensions see it. Unlike `Connection::ExtractPlan`, its column
@@ -84,7 +112,7 @@ struct FragmentFixture {
 		executor_connection = std::move(executor_result).ValueOrDie();
 		executor = make_uniq<DistributedExecutor>(*manager, *executor_connection, config);
 		state = make_shared_ptr<WorkerFragmentState>(*executor, *executor_connection);
-		client->context->registered_state->Insert(WorkerFragmentState::NAME, state);
+		client->context->registered_state->Insert(string(WorkerFragmentState::NAME), state);
 	}
 
 	// Runs sql on the client and requires the result to equal local execution on the executor's connection.
@@ -158,15 +186,12 @@ TEST_CASE("Task plans read contiguous whole row groups up to the end of the tabl
 		for (idx_t task_idx = 0; task_idx < task_plans.size(); ++task_idx) {
 			auto task = PlanSerializer::DeserializeLogicalPlan(*reader.context, task_plans[task_idx]);
 			// Each task starts where the previous one ends, at a row group start; the last one has no end.
-			auto &filters = FindScan(*task).table_filters.filters;
-			auto entry = filters.find(COLUMN_IDENTIFIER_ROW_ID);
-			REQUIRE(entry != filters.end());
-			auto &range = entry->second->Cast<ConjunctionAndFilter>().child_filters;
+			auto range = RowIdRange(FindScan(*task));
 			const bool last = task_idx + 1 == task_plans.size();
 			REQUIRE(range.size() == (last ? 1 : 2));
-			REQUIRE(range[0]->Cast<ConstantFilter>().constant.GetValue<idx_t>() == next_rowid);
+			REQUIRE(range[0] == next_rowid);
 			if (!last) {
-				next_rowid = range[1]->Cast<ConstantFilter>().constant.GetValue<idx_t>();
+				next_rowid = range[1];
 				REQUIRE(std::find(row_group_starts.begin(), row_group_starts.end(), next_rowid) !=
 				        row_group_starts.end());
 			}
@@ -178,7 +203,7 @@ TEST_CASE("Task plans read contiguous whole row groups up to the end of the tabl
 		REQUIRE(Value::UBIGINT(rows) == expected.DefaultCastAs(LogicalType::UBIGINT));
 
 		auto whole = PlanSerializer::DeserializeLogicalPlan(*reader.context, single_plan[0]);
-		REQUIRE(FindScan(*whole).table_filters.filters.count(COLUMN_IDENTIFIER_ROW_ID) == 0);
+		REQUIRE(RowIdRange(FindScan(*whole)).empty());
 	}
 	std::filesystem::remove_all(root);
 }
@@ -243,15 +268,24 @@ TEST_CASE("Optimizer sends a two-table Join aggregate through a worker fragment"
 			REQUIRE(shape_executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
 			REQUIRE(shape_executions[0].num_tasks_generated == 2);
 		}
-		// Shapes whose partial results cannot be merged run locally.
-		for (const auto &fallback_sql :
+		// DuckDB rewrites these DISTINCT aggregates into a grouped aggregate, or into a CTE whose definition is the
+		// Join, and workers run that part.
+		for (const auto &distinct_sql :
 		     {"SELECT count(DISTINCT f.amount), count(*) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT count(DISTINCT f.amount), count(DISTINCT f.g) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT count(DISTINCT f.amount) FILTER (WHERE d.k > 3) FROM fact f JOIN dim d ON f.k = d.k",
-		      "SELECT avg(DISTINCT CAST(f.amount AS DOUBLE)) FROM fact f JOIN dim d ON f.k = d.k",
-		      "SELECT median(f.amount) FROM fact f JOIN dim d ON f.k = d.k",
+		      "SELECT avg(DISTINCT CAST(f.amount AS DOUBLE)) FROM fact f JOIN dim d ON f.k = d.k"}) {
+			INFO(distinct_sql);
+			auto distinct_executions = fixture.RequireLocalResult(distinct_sql);
+			REQUIRE(distinct_executions.size() == 1);
+			REQUIRE(StringUtil::Contains(distinct_executions[0].sql, "fact (partitioned)"));
+		}
+		// Shapes whose partial results cannot be merged run locally.
+		for (const auto &fallback_sql :
+		     {"SELECT median(f.amount) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT sum(f.amount) FILTER (WHERE d.k > 3) FROM fact f JOIN dim d ON f.k = d.k",
 		      "SELECT f.g, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k GROUP BY ROLLUP (f.g) ORDER BY ALL"}) {
+			INFO(fallback_sql);
 			REQUIRE(fixture.RequireLocalResult(fallback_sql).empty());
 		}
 		// A window may see its rows in another order in each task, and the cost model only covers equi-Joins.
@@ -528,10 +562,14 @@ TEST_CASE("Driver merges partial aggregates exactly", "[worker_fragment]") {
 			REQUIRE(executions[0].num_tasks_generated == 3);
 			REQUIRE(StringUtil::StartsWith(executions[0].sql, "aggregate "));
 		}
-		// avg over DOUBLE runs on the driver because floating-point sums depend on row order. So do aggregates
-		// without a merge, such as median and the top-N max(x, n). Workers only scan for them.
-		for (const auto &sql : {"SELECT avg(f) FROM agg", "SELECT g, median(n) FROM agg GROUP BY g ORDER BY g",
-		                        "SELECT max(n, 3), min(s, 2) FROM agg"}) {
+		// DuckDB rewrites avg over DOUBLE into sum / count, which workers compute like any sum.
+		auto avg_executions = fixture.RequireLocalResult("SELECT avg(f) FROM agg");
+		REQUIRE(avg_executions.size() == 1);
+		REQUIRE(StringUtil::StartsWith(avg_executions[0].sql, "aggregate sum(f), count_star()"));
+		// Aggregates without a merge, such as median and the top-N max(x, n), run on the driver. Workers only scan for
+		// them.
+		for (const auto &sql :
+		     {"SELECT g, median(n) FROM agg GROUP BY g ORDER BY g", "SELECT max(n, 3), min(s, 2) FROM agg"}) {
 			auto executions = fixture.RequireLocalResult(sql);
 			REQUIRE(executions.size() == 1);
 			INFO(executions[0].sql);
@@ -642,7 +680,7 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		auto expected = executor_connection->Query(StringUtil::Format(join_sql, "ord"));
 		REQUIRE_FALSE(expected->HasError());
 		vector<Value> parameters;
-		auto actual = prepared->Execute(parameters, /*allow_stream_result=*/false);
+		auto actual = prepared->Execute(parameters);
 		REQUIRE_FALSE(actual->HasError());
 		REQUIRE(actual->Equals(*expected));
 		auto executions = fixture.state->TakeExecutions();
@@ -688,16 +726,19 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 			REQUIRE(StringUtil::Contains(executions[0].sql, "ord (partitioned)"));
 		}
 		// Correlated subqueries become DELIM_JOINs. Split by the correlated key, each task holds whole subquery groups.
-		for (const auto &sql :
-		     {"SELECT count(*), sum(amount) FROM item i WHERE i.amount > (SELECT avg(i2.amount) FROM item i2 WHERE "
-		      "i2.i_key = i.i_key)",
-		      "SELECT count(*), sum(o.flag) FROM ord o WHERE NOT EXISTS (SELECT 1 FROM item i WHERE i.i_key = o.o_key "
-		      "AND i.amount > o.flag + 7)"}) {
-			executions = fixture.RequireLocalResult(sql);
-			REQUIRE(executions.size() == 1);
-			INFO(executions[0].sql);
-			REQUIRE(executions[0].sql.find("(partitioned)") != executions[0].sql.rfind("(partitioned)"));
-		}
+		executions = fixture.RequireLocalResult("SELECT count(*), sum(amount) FROM item i WHERE i.amount > (SELECT "
+		                                        "avg(i2.amount) FROM item i2 WHERE i2.i_key = i.i_key)");
+		REQUIRE(executions.size() == 1);
+		INFO(executions[0].sql);
+		REQUIRE(executions[0].sql.find("(partitioned)") != executions[0].sql.rfind("(partitioned)"));
+		// DuckDB decorrelates this one into a CTE over ord and a MARK Join instead of a DELIM_JOIN. Only the CTE's scan
+		// of ord runs on workers.
+		// TODO: Split the MARK Join over the CTE by the correlated key, as DELIM_JOINs are.
+		executions =
+		    fixture.RequireLocalResult("SELECT count(*), sum(o.flag) FROM ord o WHERE NOT EXISTS (SELECT 1 FROM "
+		                               "item i WHERE i.i_key = o.o_key AND i.amount > o.flag + 7)");
+		REQUIRE(executions.size() == 1);
+		REQUIRE(StringUtil::StartsWith(executions[0].sql, "scan over object_db.main.ord"));
 		// Items without a key make NOT IN unknown for every order without a match, so item is never split there. The
 		// cost model keeps the replicated item local, so it is bypassed.
 		REQUIRE_FALSE(fixture.client->Query("SET duckherder_join_partitioning = 'always'")->HasError());
@@ -894,7 +935,7 @@ TEST_CASE("Prepared fragments read rows appended before they execute", "[worker_
 			auto expected = executor_connection->Query(queries[idx]);
 			REQUIRE_FALSE(expected->HasError());
 			vector<Value> parameters;
-			auto actual = prepared[idx]->Execute(parameters, /*allow_stream_result=*/false);
+			auto actual = prepared[idx]->Execute(parameters);
 			REQUIRE_FALSE(actual->HasError());
 			REQUIRE(actual->Equals(*expected));
 			auto executions = fixture.state->TakeExecutions();

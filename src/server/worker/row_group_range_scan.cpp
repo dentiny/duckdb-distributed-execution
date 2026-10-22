@@ -33,10 +33,11 @@ struct RowGroupRangeScanLocalState : public LocalTableFunctionState {
 	DataChunk all_columns;
 };
 
-optional_ptr<TableFilter> GetRowIdFilter(const TableFilterSet &filters, const vector<ColumnIndex> &column_indexes) {
-	for (auto &entry : filters.filters) {
-		if (column_indexes[entry.first].IsRowIdColumn()) {
-			return entry.second.get();
+optional_ptr<const TableFilter> GetRowIdFilter(const TableFilterSet &filters,
+                                               const vector<ColumnIndex> &column_indexes) {
+	for (auto &entry : filters) {
+		if (column_indexes[entry.GetIndex()].IsRowIdColumn()) {
+			return &entry.Filter();
 		}
 	}
 	return nullptr;
@@ -125,7 +126,7 @@ void RowGroupRangeScan(ClientContext &context, TableFunctionInput &data, DataChu
 		if (output.size() > 0) {
 			return;
 		}
-	} while (storage.NextParallelScan(context, state.state, local_state.scan_state) > 0);
+	} while (storage.NextParallelScan(context, state.state, local_state.scan_state).IsValid());
 }
 
 OperatorPartitionData RowGroupRangeScanGetPartitionData(ClientContext &context, TableFunctionGetPartitionInput &input) {
@@ -142,9 +143,8 @@ void ReplaceRowIdRangeScans(LogicalOperator &op) {
 	}
 	auto &get = op.Cast<LogicalGet>();
 	// Row group ordering, as used for top-N, is only implemented by the table scan.
-	// Unlike in the physical plan, logical table filters are keyed by table column.
-	if (get.function.name != "seq_scan" || get.bind_data->Cast<TableScanBindData>().order_options ||
-	    get.table_filters.filters.find(COLUMN_IDENTIFIER_ROW_ID) == get.table_filters.filters.end()) {
+	if (get.function.GetName() != "seq_scan" || get.bind_data->Cast<TableScanBindData>().order_options ||
+	    !GetRowIdFilter(get.table_filters, get.GetColumnIds())) {
 		return;
 	}
 	get.function.function = RowGroupRangeScan;

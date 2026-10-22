@@ -65,8 +65,6 @@ private:
 	vector<unique_ptr<WorkerNode>> local_workers DUCKDB_GUARDED_BY(mu);
 	// Used to track next worker ID for local workers.
 	idx_t next_local_worker_id DUCKDB_GUARDED_BY(mu) = 0;
-	// Used to track next available port for local workers.
-	int next_local_worker_port DUCKDB_GUARDED_BY(mu) = 9000;
 };
 
 } // namespace duckdb

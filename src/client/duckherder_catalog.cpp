@@ -35,7 +35,6 @@
 #include "client/execution/logical_remote_create_index.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "duckherder_schema_catalog_entry.hpp"
-#include "duckherder_transaction.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -166,7 +165,7 @@ PhysicalOperator &DuckherderCatalog::PlanUpdate(ClientContext &context, Physical
 PhysicalOperator &DuckherderCatalog::PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner,
                                                    LogicalMergeInto &op, PhysicalOperator &plan) {
 	auto sql = GetRemoteStatementSQL(context);
-	Parser parser;
+	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(sql);
 	if (parser.statements.size() != 1) {
 		return DuckCatalog::PlanMergeInto(context, planner, op, plan);

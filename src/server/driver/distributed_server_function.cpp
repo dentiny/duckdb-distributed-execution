@@ -99,12 +99,12 @@ void StartLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	// TODO(hjiang): Should use readiness probe to wait until ready.
 	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void StopLocalServer(DataChunk &args, ExpressionState &state, Vector &result) {
 	ShutdownLocalServer(GetTestServerState());
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void GetWorkerCount(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -140,7 +140,7 @@ void RegisterWorker(DataChunk &args, ExpressionState &state, Vector &result) {
 	if (!status.ok()) {
 		throw IOException(StringUtil::Format("Failed to register worker: %s", status.ToString()));
 	}
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -195,16 +195,18 @@ void StartStandaloneWorker(DataChunk &args, ExpressionState &state, Vector &resu
 	// TODO(hjiang): Use readiness probe to validate worker node up.
 	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-	result.Reference(Value(SUCCESS));
+	result.Reference(Value(SUCCESS), count_t(args.size()));
 }
 
 } // namespace
 
 ScalarFunction GetStartLocalServerFunction() {
-	auto start_func = ScalarFunction("duckherder_start_local_server",
-	                                 /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
-	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer);
-	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
+	auto start_func =
+	    ScalarFunction("duckherder_start_local_server",
+	                   /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
+	                   /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartLocalServer, /*bind=*/nullptr,
+	                   /*statistics=*/nullptr, /*init_local_state=*/nullptr,
+	                   /*varargs=*/LogicalType {LogicalTypeId::INTEGER});
 	start_func.SetVolatile();
 	return start_func;
 }
@@ -235,10 +237,12 @@ ScalarFunction GetRegisterWorkerFunction() {
 }
 
 ScalarFunction GetStartStandaloneWorkerFunction() {
-	auto start_func = ScalarFunction("duckherder_start_standalone_worker",
-	                                 /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
-	                                 /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartStandaloneWorker);
-	start_func.varargs = LogicalType {LogicalTypeId::INTEGER};
+	auto start_func =
+	    ScalarFunction("duckherder_start_standalone_worker",
+	                   /*arguments=*/ {LogicalType {LogicalTypeId::INTEGER}},
+	                   /*return_type=*/LogicalType {LogicalTypeId::BOOLEAN}, StartStandaloneWorker, /*bind=*/nullptr,
+	                   /*statistics=*/nullptr, /*init_local_state=*/nullptr,
+	                   /*varargs=*/LogicalType {LogicalTypeId::INTEGER});
 	start_func.SetVolatile();
 	return start_func;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/table_index.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -13,7 +14,7 @@ class LogicalOperator;
 
 // A scan split by ranges of one of its columns.
 struct KeyRangeScan {
-	idx_t table_index;
+	TableIndex table_index;
 	column_t column;
 };
 

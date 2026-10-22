@@ -17,7 +17,7 @@ CREATE TABLE dh.orders (id INTEGER, customer_id INTEGER, amount INTEGER, ts TIME
 
 statement ok
 INSERT INTO dh.orders
-SELECT i, i % 10, i, (TIMESTAMP '2024-01-01' + INTERVAL (i) HOUR)::TIMESTAMPTZ FROM range(100) t(i);
+SELECT i, i % 10, i, to_timestamp(1704067200 + i * 3600) FROM range(100) t(i);
 
 statement ok
 CREATE TABLE dh.customers (id INTEGER, name VARCHAR);

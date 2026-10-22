@@ -166,7 +166,7 @@ true
 
 # Inside a join, the remote scan still carries its own filter.
 query I
-SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT%FROM%dims% WHERE "label" != CAST(''four'' AS VARCHAR)';
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE 'SELECT%FROM%dims% WHERE ("label" != CAST(''four'' AS VARCHAR))';
 ----
 1
 

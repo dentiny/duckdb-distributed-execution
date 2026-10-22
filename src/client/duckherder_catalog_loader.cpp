@@ -23,7 +23,7 @@ namespace duckdb {
 namespace {
 
 unique_ptr<CreateInfo> ParseCreateInfo(const string &sql) {
-	Parser parser;
+	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(sql);
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::CREATE_STATEMENT) {
 		throw CatalogException("Expected a single CREATE statement in remote catalog metadata: %s", sql);
@@ -151,7 +151,7 @@ void DuckherderCatalogLoader::LoadTable(const Identifier &schema_name, const Ide
 		if (fk.info.type != ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
 			continue;
 		}
-		fk.info.SetSchema(schema.name);
+		fk.info.schema = schema.name;
 		fk.info.fk_keys = GetKeyIndexes(info.columns, fk.fk_columns);
 		if (fk.info.table == info.GetTableName()) {
 			fk.info.type = ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE;

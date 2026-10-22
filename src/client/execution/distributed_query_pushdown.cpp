@@ -30,7 +30,7 @@ namespace duckdb {
 namespace {
 
 bool DependsOnTimeZone(const Expression &expr) {
-	if (DependsOnTimeZone(expr.return_type)) {
+	if (DependsOnTimeZone(expr.GetReturnType())) {
 		return true;
 	}
 	bool depends = false;
@@ -72,10 +72,6 @@ bool HasDefaultQuerySettings(ClientContext &context) {
 	    StringUtil::Equals(OrderByNonIntegerLiteralSetting::DefaultValue, "true")) {
 		return false;
 	}
-	if (Settings::Get<DeprecatedUsingKeySyntaxSetting>(context) !=
-	    EnumUtil::FromString<DeprecatedUsingKeySyntax>(DeprecatedUsingKeySyntaxSetting::DefaultValue)) {
-		return false;
-	}
 	return true;
 }
 
@@ -95,7 +91,7 @@ bool ReadsSessionState(const Identifier &function_name) {
 bool ReadsOnlyRemoteTables(LogicalOperator &op, optional_ptr<LogicalGet> &scan) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
-		if (get.function.name != "distributed_scan") {
+		if (get.function.GetName() != "distributed_scan") {
 			return false;
 		}
 		auto &bind_data = get.bind_data->Cast<DistributedTableScanBindData>();
@@ -103,10 +99,11 @@ bool ReadsOnlyRemoteTables(LogicalOperator &op, optional_ptr<LogicalGet> &scan) 
 		                &bind_data.table.ParentCatalog()) {
 			return false;
 		}
-		// Filters pushed into the scan no longer appear as expressions.
-		for (auto &entry : get.table_filters.filters) {
+		// Filters pushed into the scan no longer appear as expressions. They are keyed by the position of their column
+		// in the scan.
+		for (auto &entry : get.table_filters) {
 			LogicalType type;
-			GetColumnSQL(bind_data.table, entry.first, type);
+			GetColumnSQL(bind_data.table, get.GetColumnIds()[entry.GetIndex()].GetPrimaryIndex(), type);
 			if (DependsOnTimeZone(type)) {
 				return false;
 			}
@@ -148,13 +145,9 @@ private:
 
 	void VisitExpression(ParsedExpression &expr) {
 		switch (expr.GetExpressionClass()) {
-		case ExpressionClass::CAST: {
-			auto &type = expr.Cast<CastExpression>().cast_type;
-			if (type.IsUnbound()) {
-				VisitExpression(*UnboundType::GetTypeExpression(type));
-			}
+		case ExpressionClass::CAST:
+			VisitExpression(expr.Cast<CastExpression>().TargetTypeMutable());
 			break;
-		}
 		case ExpressionClass::TYPE: {
 			// Client-side types are unknown to the server.
 			auto &type = expr.Cast<TypeExpression>();
@@ -164,7 +157,7 @@ private:
 		}
 		case ExpressionClass::COLUMN_REF: {
 			// Table names are rewritten without the client's catalog, so columns qualified with it no longer resolve.
-			auto &column_names = expr.Cast<ColumnRefExpression>().column_names;
+			auto &column_names = expr.Cast<ColumnRefExpression>().ColumnNames();
 			pushable = pushable && !(column_names.size() > 2 && column_names[0] == catalog.GetName());
 			break;
 		}
@@ -178,7 +171,7 @@ private:
 			break;
 		}
 		case ExpressionClass::SUBQUERY:
-			VisitNode(*expr.Cast<SubqueryExpression>().subquery->node);
+			VisitNode(*expr.Cast<SubqueryExpression>().SubqueryMutable()->node);
 			break;
 		default:
 			break;
@@ -247,7 +240,7 @@ void OptimizeDistributedQuery(OptimizerExtensionInput &input, unique_ptr<Logical
 		return;
 	}
 
-	Parser parser(context.GetParserOptions());
+	Parser parser(context);
 	parser.ParseQuery(context.GetCurrentQuery());
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
 		return;

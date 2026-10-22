@@ -7,6 +7,7 @@
 #include "duckdb/common/vector.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "duckherder_catalog.hpp"
 
 namespace duckdb {
@@ -126,7 +127,7 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 
 		++count;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 }
 
 } // namespace

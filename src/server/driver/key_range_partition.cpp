@@ -9,11 +9,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
-#include "duckdb/planner/filter/conjunction_filter.hpp"
-#include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
-#include "duckdb/planner/filter/null_filter.hpp"
-#include "duckdb/planner/filter/optional_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_delim_get.hpp"
@@ -52,7 +48,7 @@ bool ContainsColumn(const vector<KeyRangeScan> &columns, const KeyRangeScan &col
 // A DELIM_GET and the DELIM_JOIN whose duplicate-eliminated columns it reads, with how its rows are spread over tasks.
 // join is null if several DELIM_JOINs have the DELIM_GET below them, so its source is unclear.
 struct DelimSource {
-	idx_t table_index;
+	TableIndex table_index;
 	optional_ptr<LogicalComparisonJoin> join;
 	SplitKind kind;
 };
@@ -92,7 +88,7 @@ void CollectDelimSources(LogicalOperator &op, vector<DelimSource> &sources) {
 	}
 }
 
-optional_ptr<DelimSource> FindDelimSource(vector<DelimSource> &sources, idx_t table_index) {
+optional_ptr<DelimSource> FindDelimSource(vector<DelimSource> &sources, TableIndex table_index) {
 	for (auto &source : sources) {
 		if (source.table_index == table_index) {
 			return source;
@@ -124,7 +120,7 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 		if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 			return nullptr;
 		}
-		return ResolveColumn(*op.children[0], expr.Cast<BoundColumnRefExpression>().binding, column, delims);
+		return ResolveColumn(*op.children[0], expr.Cast<BoundColumnRefExpression>().Binding(), column, delims);
 	}
 	if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY &&
 	    op.Cast<LogicalAggregate>().group_index == binding.table_index) {
@@ -135,7 +131,7 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 			return nullptr;
 		}
 		return ResolveColumn(*op.children[0],
-		                     aggregate.groups[binding.column_index]->Cast<BoundColumnRefExpression>().binding, column,
+		                     aggregate.groups[binding.column_index]->Cast<BoundColumnRefExpression>().Binding(), column,
 		                     delims);
 	}
 	if (op.type == LogicalOperatorType::LOGICAL_DELIM_GET &&
@@ -149,7 +145,7 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 			return nullptr;
 		}
 		return ResolveColumn(*source->join->children[DelimInputIndex(*source->join)],
-		                     expr.Cast<BoundColumnRefExpression>().binding, column, delims);
+		                     expr.Cast<BoundColumnRefExpression>().Binding(), column, delims);
 	}
 	for (idx_t idx = 0; idx < op.children.size(); ++idx) {
 		// A key an outer Join pads with NULL is NULL in every task, not only the first.
@@ -172,14 +168,14 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 // Resolves the scan columns that condition of join compares as keys. Returns false if it compares anything else.
 bool ResolveKeyPair(LogicalComparisonJoin &join, const JoinCondition &condition, KeyPair &pair,
                     vector<DelimSource> &delims) {
-	if (!IsKeyComparison(condition.comparison) ||
-	    condition.left->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
-	    condition.right->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+	if (!condition.IsComparison() || !IsKeyComparison(condition.GetComparisonType()) ||
+	    condition.GetLHS().GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF ||
+	    condition.GetRHS().GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 		return false;
 	}
-	auto left = ResolveColumn(*join.children[0], condition.left->Cast<BoundColumnRefExpression>().binding,
+	auto left = ResolveColumn(*join.children[0], condition.GetLHS().Cast<BoundColumnRefExpression>().Binding(),
 	                          pair.left.column, delims);
-	auto right = ResolveColumn(*join.children[1], condition.right->Cast<BoundColumnRefExpression>().binding,
+	auto right = ResolveColumn(*join.children[1], condition.GetRHS().Cast<BoundColumnRefExpression>().Binding(),
 	                           pair.right.column, delims);
 	if (!left || !right) {
 		return false;
@@ -299,21 +295,32 @@ bool HasNotNullConstraint(TableCatalogEntry &table, column_t column) {
 	return false;
 }
 
-// Keeps the keys below cut and the NULL keys. A ConjunctionOrFilter selects rows in time quadratic in the rows passing,
-// so it only prunes row groups and an expression filter selects the rows.
-void PushBelowOrNull(LogicalGet &get, column_t column, const Value &cut) {
-	auto or_null = make_uniq<ConjunctionOrFilter>();
-	or_null->child_filters.emplace_back(make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, cut));
-	or_null->child_filters.emplace_back(make_uniq<IsNullFilter>());
-	get.table_filters.PushFilter(ColumnIndex(column), make_uniq<OptionalFilter>(std::move(or_null)));
+// Returns the position in get's columns of column, which logical table filters are keyed by, adding the column if get
+// does not read it yet.
+ProjectionIndex GetFilterColumn(LogicalGet &get, column_t column) {
+	const auto &column_ids = get.GetColumnIds();
+	for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
+		if (column_ids[idx].GetPrimaryIndex() == column && !column_ids[idx].HasChildren()) {
+			return ProjectionIndex(idx);
+		}
+	}
+	// A column read only for the filter must not change the scan's output.
+	if (get.projection_ids.empty()) {
+		for (idx_t idx = 0; idx < column_ids.size(); ++idx) {
+			get.projection_ids.emplace_back(idx);
+		}
+	}
+	return get.AddColumnId(column);
+}
 
+// Keeps the keys below cut and the NULL keys.
+void PushBelowOrNull(LogicalGet &get, column_t column, const Value &cut) {
 	const auto &type = get.GetTable()->GetColumn(LogicalIndex(column)).Type();
-	auto key = make_uniq<BoundReferenceExpression>(type, 0ULL);
-	auto below = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN, key->Copy(),
-	                                                  make_uniq<BoundConstantExpression>(cut));
-	auto is_null = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NULL, LogicalType::BOOLEAN);
-	is_null->children.emplace_back(std::move(key));
-	get.table_filters.PushFilter(ColumnIndex(column),
+	auto key = make_uniq<BoundReferenceExpression>(type, storage_t(0));
+	auto below = BoundComparisonExpression::Create(ExpressionType::COMPARE_LESSTHAN, key->Copy(),
+	                                               make_uniq<BoundConstantExpression>(cut));
+	auto is_null = ExpressionFilter::CreateNullCheckExpression(std::move(key), ExpressionType::OPERATOR_IS_NULL);
+	get.table_filters.PushFilter(GetFilterColumn(get, column),
 	                             make_uniq<ExpressionFilter>(make_uniq<BoundConjunctionExpression>(
 	                                 ExpressionType::CONJUNCTION_OR, std::move(below), std::move(is_null))));
 }
@@ -329,8 +336,9 @@ void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t
 			}
 			if (task > 0) {
 				get.table_filters.PushFilter(
-				    ColumnIndex(scan.column),
-				    make_uniq<ConstantFilter>(ExpressionType::COMPARE_GREATERTHANOREQUALTO, partition.cuts[task - 1]));
+				    GetFilterColumn(get, scan.column),
+				    ExpressionFilter::CreateComparisonFilter(ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+				                                             partition.cuts[task - 1]));
 			}
 			if (task == partition.cuts.size()) {
 				continue;
@@ -339,8 +347,9 @@ void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t
 			if (task == 0 && !HasNotNullConstraint(*get.GetTable(), scan.column)) {
 				PushBelowOrNull(get, scan.column, cut);
 			} else {
-				get.table_filters.PushFilter(ColumnIndex(scan.column),
-				                             make_uniq<ConstantFilter>(ExpressionType::COMPARE_LESSTHAN, cut));
+				get.table_filters.PushFilter(
+				    GetFilterColumn(get, scan.column),
+				    ExpressionFilter::CreateComparisonFilter(ExpressionType::COMPARE_LESSTHAN, cut));
 			}
 		}
 	}
@@ -462,7 +471,7 @@ bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &g
 			continue;
 		}
 		KeyRangeScan column;
-		auto scan = ResolveColumn(input, group->Cast<BoundColumnRefExpression>().binding, column.column, delims);
+		auto scan = ResolveColumn(input, group->Cast<BoundColumnRefExpression>().Binding(), column.column, delims);
 		if (scan) {
 			column.table_index = scan->table_index;
 			if (ContainsColumn(partition.scans, column)) {
@@ -515,7 +524,7 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 	}
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
-		if (rowid_scan.IsValid() && get.table_index == rowid_scan.GetIndex()) {
+		if (rowid_scan.IsValid() && get.table_index == TableIndex(rowid_scan.GetIndex())) {
 			return SplitKind::SPLIT;
 		}
 		for (const auto &scan : partition.scans) {

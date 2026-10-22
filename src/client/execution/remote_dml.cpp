@@ -1,8 +1,10 @@
 #include "client/execution/remote_dml.hpp"
 
 #include "client/execution/distributed_client.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -46,7 +48,7 @@ StatementType GetDMLStatementType(PhysicalOperatorType type) {
 }
 
 string ReturnCompleteRows(const string &sql) {
-	Parser parser;
+	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(sql);
 	if (parser.statements.size() != 1) {
 		return sql;
@@ -79,7 +81,7 @@ string ReturnCompleteRows(const string &sql) {
 }
 
 string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
-	Parser parser;
+	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(context.GetCurrentQuery());
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::EXECUTE_STATEMENT) {
 		return sql;
@@ -132,12 +134,17 @@ unique_ptr<GlobalSourceState> PhysicalRemoteDML::GetGlobalSourceState(ClientCont
 SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                     OperatorSourceInput &input) const {
 	auto &state = input.global_state.Cast<RemoteDMLSourceState>();
+	// DELETE ... RETURNING also outputs the table's virtual columns, e.g. rowid, which the server does not return and
+	// RETURNING cannot reference.
+	const auto table_column_count = table.GetTypes().size();
+	const auto remote_column_count = types.size() > table_column_count ? table_column_count : types.size();
 	if (!state.executed) {
 		state.executed = true;
 		auto executable_sql = BuildRemotePreparedDMLSQL(context.client, ReturnCompleteRows(sql));
+		vector<LogicalType> remote_types(types.begin(), types.begin() + NumericCast<int64_t>(remote_column_count));
 		state.result =
 		    GetDistributedClient(context.client, table)
-		        .ExecuteStatement(executable_sql, GetDMLStatementType(type), table.catalog.GetName(), &types);
+		        .ExecuteStatement(executable_sql, GetDMLStatementType(type), table.catalog.GetName(), &remote_types);
 		if (state.result->HasError()) {
 			auto &error = state.result->GetErrorObject();
 			if (error.Type() == ExceptionType::INVALID) {
@@ -151,7 +158,17 @@ SourceResultType PhysicalRemoteDML::GetDataInternal(ExecutionContext &context, D
 	if (!result_chunk || result_chunk->size() == 0) {
 		return SourceResultType::FINISHED;
 	}
-	chunk.Move(*result_chunk);
+	if (remote_column_count == types.size()) {
+		chunk.Move(*result_chunk);
+		return SourceResultType::HAVE_MORE_OUTPUT;
+	}
+	for (idx_t column_idx = 0; column_idx < remote_column_count; ++column_idx) {
+		chunk.data[column_idx].Reference(result_chunk->data[column_idx]);
+	}
+	for (idx_t column_idx = remote_column_count; column_idx < types.size(); ++column_idx) {
+		chunk.data[column_idx].Reference(Value(types[column_idx]), count_t(result_chunk->size()));
+	}
+	chunk.SetChildCardinality(result_chunk->size());
 	return SourceResultType::HAVE_MORE_OUTPUT;
 }
 

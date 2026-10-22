@@ -6,7 +6,6 @@
 #include "duckdb/main/database.hpp"
 #include "server/driver/worker_node_client.hpp"
 #include "server/worker/worker_node.hpp"
-#include "utils/network_utils.hpp"
 
 #include <arrow/util/thread_pool.h>
 
@@ -73,13 +72,9 @@ arrow::Status WorkerManager::StartLocalWorkers(idx_t num_workers) {
 	DUCKDB_LOG_DEBUG(db_instance, "Starting %llu local worker nodes", num_workers);
 
 	for (idx_t idx = 0; idx < num_workers; ++idx) {
-		int port = GetAvailablePort(next_local_worker_port);
-		if (port < 0) {
-			return arrow::Status::IOError("Failed to find available port for workers");
-		}
-
+		// The OS picks the port, so concurrent processes starting workers cannot pick the same one.
 		string worker_id = StringUtil::Format("worker_%llu", next_local_worker_id++);
-		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", port);
+		auto worker = make_uniq<WorkerNode>(worker_id, "localhost", /*port_p=*/0);
 
 		auto status = worker->Start();
 		if (!status.ok()) {
@@ -97,9 +92,6 @@ arrow::Status WorkerManager::StartLocalWorkers(idx_t num_workers) {
 
 		local_workers.emplace_back(std::move(worker));
 		DUCKDB_LOG_DEBUG(db_instance, "Started local worker '%s' at '%s'", worker_id, location);
-
-		// Update port for next iteration
-		next_local_worker_port = port + 1;
 	}
 
 	DUCKDB_LOG_DEBUG(db_instance, "Successfully started %llu local workers (total workers: %llu)", num_workers,

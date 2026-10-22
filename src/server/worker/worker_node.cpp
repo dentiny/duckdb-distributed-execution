@@ -31,6 +31,8 @@ arrow::Status WorkerNode::Start() {
 
 	arrow::flight::FlightServerOptions options(location);
 	ARROW_RETURN_NOT_OK(Init(options));
+	// Port 0 lets the OS pick a free port, which GetLocation then reports.
+	port = FlightServerBase::port();
 
 	auto &db_instance = *db->instance.get();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Worker %s started on %s:%d", worker_id, host, port));
