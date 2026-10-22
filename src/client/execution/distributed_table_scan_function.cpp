@@ -233,7 +233,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	while (!local_state.batch || !local_state.batch->HasNext()) {
 		auto batch_idx = global_state.next_batch++;
 		if (batch_idx >= global_state.batches.size()) {
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 		// Only this thread claims the batch, so it releases the Arrow data once the batch is converted.
@@ -247,7 +247,7 @@ void DistributedTableScanFunction::Execute(ClientContext &context, TableFunction
 	}
 	local_state.batch->Next(local_state.chunk);
 	// The remote query already returns the projected columns in output order.
-	output.SetCardinality(local_state.chunk.size());
+	output.SetChildCardinality(local_state.chunk.size());
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
 		if (global_state.column_ids[col_idx] == COLUMN_IDENTIFIER_EMPTY) {
 			continue;

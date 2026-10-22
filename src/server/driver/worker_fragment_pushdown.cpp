@@ -265,14 +265,14 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 			vector<unique_ptr<AsyncTask>> tasks;
 			tasks.emplace_back(std::move(task));
 			data.async_result = AsyncResult(std::move(tasks));
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 		task->Execute();
 	}
 	global.ThrowIfError();
 	if (!local.HasRows()) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 	if (local.batch) {
@@ -284,7 +284,7 @@ void WorkerFragmentExecute(ClientContext &context, TableFunctionInput &data, Dat
 	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); ++col_idx) {
 		output.data[col_idx].Slice(chunk.data[col_idx], local.offset, local.offset + count);
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 	local.offset += count;
 }
 

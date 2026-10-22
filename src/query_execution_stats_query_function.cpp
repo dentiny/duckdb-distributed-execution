@@ -104,26 +104,26 @@ void QueryExecutionStatsTableFunc(ClientContext &context, TableFunctionInput &da
 		idx_t col = 0;
 
 		// SQL query
-		output.SetValue(col++, count, Value(entry.sql));
+		output.data[col++].SetValue(count, Value(entry.sql));
 
 		// Execution mode (partitioning strategy)
-		output.SetValue(col++, count, Value(entry.execution_mode));
+		output.data[col++].SetValue(count, Value(entry.execution_mode));
 
 		// Merge strategy
-		output.SetValue(col++, count, Value(entry.merge_strategy));
+		output.data[col++].SetValue(count, Value(entry.merge_strategy));
 
 		// Query duration in milliseconds
-		output.SetValue(col++, count, Value::BIGINT(entry.query_duration_ms));
+		output.data[col++].SetValue(count, Value::BIGINT(entry.query_duration_ms));
 
 		// Number of workers used
-		output.SetValue(col++, count, Value::BIGINT(entry.num_workers_used));
+		output.data[col++].SetValue(count, Value::BIGINT(entry.num_workers_used));
 
 		// Number of tasks generated
-		output.SetValue(col++, count, Value::BIGINT(entry.num_tasks_generated));
+		output.data[col++].SetValue(count, Value::BIGINT(entry.num_tasks_generated));
 
 		// Execution start time as timestamp (convert from milliseconds to microseconds)
 		auto microseconds_since_epoch = entry.execution_start_time_ms * 1000;
-		output.SetValue(col++, count, Value::TIMESTAMP(timestamp_t(microseconds_since_epoch)));
+		output.data[col++].SetValue(count, Value::TIMESTAMP(timestamp_t(microseconds_since_epoch)));
 
 		++count;
 	}
