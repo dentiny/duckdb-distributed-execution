@@ -857,6 +857,46 @@ TEST_CASE("Inner Joins without an aggregate become fragments that return their r
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Driver plans keep aggregates over Joins whole and cut Joins of prepared statements", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_driver_plans");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		REQUIRE_FALSE(executor_connection
+		                  ->Query("CREATE TABLE fact AS SELECT i AS id, i % 1000 AS k, i % 11 AS amount "
+		                          "FROM range(300000) t(i)")
+		                  ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, 'name' || i AS name FROM range(1000) t(i)")
+		        ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// DuckDB would aggregate fact below the Join and merge the partial states above it with combine_aggr.
+		auto executions =
+		    fixture.RequireLocalResult("SELECT d.k, d.name, sum(f.amount) FROM fact f JOIN dim d ON f.k = d.k "
+		                               "GROUP BY d.k, d.name ORDER BY d.k");
+		REQUIRE(executions.size() == 1);
+		INFO(executions[0].sql);
+		REQUIRE(StringUtil::StartsWith(executions[0].sql, "aggregate "));
+
+		// The driver runs client queries as prepared statements, whose plans start with PREPARE and EXECUTE.
+		const string join_sql =
+		    "SELECT d.name, f.id FROM fact f JOIN dim d ON f.k = d.k WHERE f.amount = 3 ORDER BY f.id";
+		auto expected = executor_connection->Query(join_sql);
+		REQUIRE_FALSE(expected->HasError());
+		auto prepared = fixture.client->Prepare(join_sql);
+		REQUIRE_FALSE(prepared->HasError());
+		vector<Value> parameters;
+		auto actual = prepared->Execute(parameters);
+		REQUIRE_FALSE(actual->HasError());
+		REQUIRE(actual->Equals(*expected));
+		executions = fixture.state->TakeExecutions();
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].sql == "join over object_db.main.fact (partitioned), object_db.main.dim");
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Workers reject plans of another build and the driver runs them locally", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_build_mismatch");
 	{

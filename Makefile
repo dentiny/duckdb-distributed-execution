@@ -15,6 +15,10 @@ endif
 EXT_NAME=duckherder
 EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
+# DuckDB v2 builds a -dev version unless given the release, and only releases have extensions to INSTALL. Use the
+# release tag the duckdb submodule is at, if any.
+OVERRIDE_GIT_DESCRIBE ?= $(shell git -C $(PROJ_DIR)duckdb describe --tags --exact-match 2>/dev/null)
+
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
