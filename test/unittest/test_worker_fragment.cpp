@@ -731,14 +731,15 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		REQUIRE(executions.size() == 1);
 		INFO(executions[0].sql);
 		REQUIRE(executions[0].sql.find("(partitioned)") != executions[0].sql.rfind("(partitioned)"));
-		// DuckDB decorrelates this one into a CTE over ord and a MARK Join instead of a DELIM_JOIN. Only the CTE's scan
-		// of ord runs on workers.
-		// TODO: Split the MARK Join over the CTE by the correlated key, as DELIM_JOINs are.
+		// DuckDB decorrelates this one into a CTE over ord and a MARK Join on IS NOT DISTINCT FROM instead of a
+		// DELIM_JOIN. Split by the correlated key, each task holds the CTE's rows and the subquery's for its keys.
 		executions =
 		    fixture.RequireLocalResult("SELECT count(*), sum(o.flag) FROM ord o WHERE NOT EXISTS (SELECT 1 FROM "
 		                               "item i WHERE i.i_key = o.o_key AND i.amount > o.flag + 7)");
 		REQUIRE(executions.size() == 1);
-		REQUIRE(StringUtil::StartsWith(executions[0].sql, "scan over object_db.main.ord"));
+		INFO(executions[0].sql);
+		REQUIRE(executions[0].sql == "aggregate count_star(), sum(flag) over object_db.main.ord (partitioned), "
+		                             "object_db.main.item (partitioned)");
 		// Items without a key make NOT IN unknown for every order without a match, so item is never split there. The
 		// cost model keeps the replicated item local, so it is bypassed.
 		REQUIRE_FALSE(fixture.client->Query("SET duckherder_join_partitioning = 'always'")->HasError());
@@ -927,6 +928,15 @@ TEST_CASE("Joins shuffle the input not ordered on the key to the tasks of its ke
 			REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.dim (partitioned)"));
 			REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.fact (shuffled)"));
 		}
+
+		// A correlated subquery becomes a CTE over dim and a MARK Join on the key, with fact shuffled to the tasks.
+		auto correlated = fixture.RequireLocalResult(
+		    "SELECT d.g, count(*) FROM dim d WHERE NOT EXISTS (SELECT 1 FROM fact f WHERE f.k = d.k AND f.amount > d.g "
+		    "+ 7) GROUP BY d.g ORDER BY d.g");
+		REQUIRE(correlated.size() == 1);
+		INFO(correlated[0].sql);
+		REQUIRE(StringUtil::Contains(correlated[0].sql, "object_db.main.dim (partitioned)"));
+		REQUIRE(StringUtil::Contains(correlated[0].sql, "object_db.main.fact (shuffled)"));
 
 		// A producer that cannot start makes the driver run the fragment itself.
 		REQUIRE(fixture.manager->RegisterWorker("unreachable", "grpc://localhost:1").ok());

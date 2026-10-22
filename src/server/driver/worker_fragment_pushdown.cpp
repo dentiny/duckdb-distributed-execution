@@ -35,7 +35,9 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
+#include "duckdb/planner/operator/logical_cteref.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_materialized_cte.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -343,7 +345,7 @@ unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
 // Collects the scans in op. Returns false if workers cannot read one, or if workers reading the same rows could
 // compute different results.
 bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<reference<LogicalGet>> &scans,
-                  bool in_delim_join = false) {
+                  bool in_delim_join = false, vector<TableIndex> ctes = {}) {
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
@@ -363,17 +365,24 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 			return false;
 		}
 		break;
+	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
+		ctes.push_back(op.Cast<LogicalMaterializedCTE>().table_index);
+		break;
+	case LogicalOperatorType::LOGICAL_CTE_REF:
+		// Workers only have the result of a CTE in the fragment too.
+		if (std::find(ctes.begin(), ctes.end(), op.Cast<LogicalCTERef>().cte_index) == ctes.end()) {
+			return false;
+		}
+		break;
 	case LogicalOperatorType::LOGICAL_LIMIT:
 	case LogicalOperatorType::LOGICAL_TOP_N:
 	case LogicalOperatorType::LOGICAL_SAMPLE:
-	// It reads a result computed elsewhere in the client's plan, which workers do not have.
-	case LogicalOperatorType::LOGICAL_CTE_REF:
 		return false;
 	default:
 		break;
 	}
 	for (auto &child : op.children) {
-		if (!CollectScans(*child, state, scans, in_delim_join)) {
+		if (!CollectScans(*child, state, scans, in_delim_join, ctes)) {
 			return false;
 		}
 	}

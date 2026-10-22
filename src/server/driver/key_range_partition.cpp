@@ -15,9 +15,11 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
+#include "duckdb/planner/operator/logical_cteref.hpp"
 #include "duckdb/planner/operator/logical_delim_get.hpp"
 #include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_materialized_cte.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
@@ -49,12 +51,14 @@ bool ContainsColumn(const vector<KeyRangeScan> &columns, const KeyRangeScan &col
 	return false;
 }
 
-// A DELIM_GET and the DELIM_JOIN whose duplicate-eliminated columns it reads, with how its rows are spread over tasks.
-// join is null if several DELIM_JOINs have the DELIM_GET below them, so its source is unclear.
+// A DELIM_GET and the DELIM_JOIN whose duplicate-eliminated columns it reads, or a materialized CTE that CTE_REFs read,
+// with how its rows are spread over tasks. join is null if several DELIM_JOINs have the DELIM_GET below them, so its
+// source is unclear.
 struct DelimSource {
 	TableIndex table_index;
 	optional_ptr<LogicalComparisonJoin> join;
 	SplitKind kind;
+	optional_ptr<LogicalMaterializedCTE> cte = nullptr;
 };
 
 // The index of the input of join whose duplicate-eliminated columns its DELIM_GETs, below the other input, read.
@@ -81,11 +85,15 @@ void CollectDelimGets(LogicalOperator &op, LogicalComparisonJoin &join, vector<D
 	}
 }
 
-// Collects the DELIM_GETs below each DELIM_JOIN in op.
+// Collects the DELIM_GETs below each DELIM_JOIN in op, and the materialized CTEs in op.
 void CollectDelimSources(LogicalOperator &op, vector<DelimSource> &sources) {
 	if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
 		auto &join = op.Cast<LogicalComparisonJoin>();
 		CollectDelimGets(*join.children[1 - DelimInputIndex(join)], join, sources);
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+		auto &cte = op.Cast<LogicalMaterializedCTE>();
+		sources.push_back({cte.table_index, nullptr, SplitKind::REPLICATED, cte});
 	}
 	for (auto &child : op.children) {
 		CollectDelimSources(*child, sources);
@@ -102,7 +110,7 @@ optional_ptr<DelimSource> FindDelimSource(vector<DelimSource> &sources, TableInd
 }
 
 // Returns the scan in op whose table column binding reads, following plain column references through projections,
-// aggregate groups and DELIM_GETs, and sets column to it. Returns nullptr for computed and virtual columns.
+// aggregate groups, DELIM_GETs and CTE_REFs, and sets column to it. Returns nullptr for computed and virtual columns.
 optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding &binding, column_t &column,
                                        vector<DelimSource> &delims) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
@@ -150,6 +158,20 @@ optional_ptr<LogicalGet> ResolveColumn(LogicalOperator &op, const ColumnBinding 
 		}
 		return ResolveColumn(*source->join->children[DelimInputIndex(*source->join)],
 		                     expr.Cast<BoundColumnRefExpression>().Binding(), column, delims);
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF &&
+	    op.Cast<LogicalCTERef>().table_index == binding.table_index) {
+		auto source = FindDelimSource(delims, op.Cast<LogicalCTERef>().cte_index);
+		if (!source || !source->cte) {
+			return nullptr;
+		}
+		// A CTE_REF returns the columns of the CTE's definition in order.
+		auto &definition = *source->cte->children[0];
+		auto bindings = definition.GetColumnBindings();
+		if (binding.column_index >= bindings.size()) {
+			return nullptr;
+		}
+		return ResolveColumn(definition, bindings[binding.column_index], column, delims);
 	}
 	for (idx_t idx = 0; idx < op.children.size(); ++idx) {
 		// A key an outer Join pads with NULL is NULL in every task, not only the first.
@@ -556,6 +578,16 @@ bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &g
 	return false;
 }
 
+// Whether every condition of join is IS NOT DISTINCT FROM.
+bool ComparesNotDistinct(const LogicalComparisonJoin &join) {
+	for (const auto &condition : join.conditions) {
+		if (!condition.IsComparison() || condition.GetComparisonType() != ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+			return false;
+		}
+	}
+	return !join.conditions.empty();
+}
+
 SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan,
                   vector<DelimSource> &delims) {
 	vector<SplitKind> children(op.children.size(), SplitKind::REPLICATED);
@@ -569,6 +601,10 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 		children[idx] = Analyze(*op.children[idx], partition, rowid_scan, delims);
 		if (children[idx] == SplitKind::INVALID) {
 			return SplitKind::INVALID;
+		}
+		// A CTE_REF holds the rows of its CTE's definition in each task.
+		if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE && step == 0) {
+			FindDelimSource(delims, op.Cast<LogicalMaterializedCTE>().table_index)->kind = children[idx];
 		}
 		if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN && step == 0) {
 			// When that input is split by one of the duplicate-eliminated columns, each task's DELIM_GETs hold only its
@@ -596,6 +632,13 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 		auto source = FindDelimSource(delims, op.Cast<LogicalDelimGet>().table_index);
 		return source && source->join ? source->kind : SplitKind::INVALID;
 	}
+	case LogicalOperatorType::LOGICAL_CTE_REF: {
+		// A CTE outside op is computed elsewhere, which workers do not have.
+		auto source = FindDelimSource(delims, op.Cast<LogicalCTERef>().cte_index);
+		return source && source->cte ? source->kind : SplitKind::INVALID;
+	}
+	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
+		return children[1];
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
 		if (rowid_scan.IsValid() && get.table_index == TableIndex(rowid_scan.GetIndex())) {
@@ -665,7 +708,11 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 			}
 			return IsSplit(right) ? SplitKind::INVALID : left;
 		case JoinType::MARK:
-			// A NULL anywhere in the right input decides the mark of every left row without a match.
+			// A NULL anywhere in the right input decides the mark of every left row without a match, unless every
+			// condition is IS NOT DISTINCT FROM, which never compares to NULL.
+			if (co_split && ComparesNotDistinct(op.Cast<LogicalComparisonJoin>())) {
+				return SplitKind::SPLIT_BY_KEY;
+			}
 			return IsSplit(right) ? SplitKind::INVALID : left;
 		case JoinType::RIGHT:
 		case JoinType::RIGHT_SEMI:
