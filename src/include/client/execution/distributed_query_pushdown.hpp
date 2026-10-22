@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/optimizer/optimizer_extension.hpp"
-
 #include <string_view>
 
 namespace duckdb {

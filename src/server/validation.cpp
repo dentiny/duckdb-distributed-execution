@@ -7,7 +7,6 @@
 #include "server/object_storage_database.hpp"
 #include "storage_config.pb.h"
 #include "transaction.pb.h"
-
 #include <string_view>
 
 namespace duckdb {

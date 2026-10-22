@@ -5,7 +5,6 @@
 
 #include <arrow/status.h>
 #include <functional>
-
 #include <string_view>
 
 namespace duckdb {

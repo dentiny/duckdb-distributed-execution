@@ -8,7 +8,6 @@
 #include "duckdb/storage/object_cache.hpp"
 #include "base_query_recorder.hpp"
 #include "utils/mutex.hpp"
-
 #include <string_view>
 
 namespace duckdb {

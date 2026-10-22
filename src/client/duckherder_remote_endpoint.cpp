@@ -5,7 +5,6 @@
 
 #include <charconv>
 #include <utility>
-
 #include <string_view>
 
 namespace duckdb {

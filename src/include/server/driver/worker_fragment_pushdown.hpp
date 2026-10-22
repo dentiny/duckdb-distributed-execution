@@ -7,14 +7,13 @@
 #include "utils/mutex.hpp"
 
 #include <memory>
+#include <string_view>
 
 namespace arrow {
 namespace flight {
 class FlightStreamReader;
 } // namespace flight
 } // namespace arrow
-
-#include <string_view>
 
 namespace duckdb {
 

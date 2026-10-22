@@ -9,7 +9,6 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "server/startup_sql.hpp"
-
 #include <string_view>
 
 namespace duckdb {

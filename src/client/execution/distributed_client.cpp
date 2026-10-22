@@ -7,7 +7,6 @@
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/query_result.hpp"
-#include "duckdb/main/query_result.hpp"
 #include "utils/remote_error.hpp"
 
 #include <arrow/array.h>

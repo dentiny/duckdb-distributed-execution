@@ -6,7 +6,6 @@
 #include "server/driver/worker_fragment_pushdown.hpp"
 
 #include <cstdlib>
-
 #include <string_view>
 
 namespace duckdb {

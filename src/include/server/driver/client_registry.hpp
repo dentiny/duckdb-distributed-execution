@@ -11,7 +11,6 @@
 #include "utils/mutex.hpp"
 
 #include <arrow/status.h>
-
 #include <string_view>
 
 namespace duckdb {
