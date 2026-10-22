@@ -8,6 +8,7 @@
 
 namespace duckdb {
 
+class Binder;
 class ClientContext;
 class LogicalGet;
 class LogicalOperator;
@@ -16,6 +17,8 @@ class LogicalOperator;
 struct KeyRangeScan {
 	TableIndex table_index;
 	column_t column;
+	// Not ordered on column, so tasks read its rows of their key range from an exchange.
+	bool shuffled = false;
 };
 
 // Scans split by the same ranges of a Join key, so rows with equal keys go to the same task.
@@ -26,10 +29,12 @@ struct KeyRangePartition {
 };
 
 // Finds the scans that equi-Joins in input tie to a key of partitioned and whose row groups are ordered on it,
-// so they can be split with partitioned by key ranges. Picks the key whose scans read the most. Returns false if no
-// scan qualifies or the key gives fewer than two ranges.
+// so they can be split with partitioned by key ranges. With shuffle, tied scans not ordered on the key are shuffled
+// instead, and at least one must be. Picks the key whose scans read the most. Returns false if no scan qualifies or
+// the key gives fewer than two ranges.
 bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, const vector<reference<LogicalGet>> &scans,
-                           const vector<JoinInputCost> &costs, idx_t max_tasks, KeyRangePartition &result);
+                           const vector<JoinInputCost> &costs, idx_t max_tasks, bool shuffle,
+                           KeyRangePartition &result);
 
 // Whether a Join comparing two key columns with comparison only matches equal keys, which key ranges put in one task.
 // NULL keys all go to the first task, so IS NOT DISTINCT FROM qualifies too.
@@ -53,8 +58,9 @@ bool IsSplit(SplitKind kind);
 // scan with table index rowid_scan, if valid, by rowid ranges.
 SplitKind AnalyzeSplit(LogicalOperator &op, const KeyRangePartition &partition, optional_idx rowid_scan);
 
-// Serializes plan once per task, restricting each scan of partition to the task's key range.
-vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, LogicalOperator &plan,
+// Serializes plan once per task, restricting each scan of partition to the task's key range. Each shuffled scan reads
+// the task's bucket of an exchange instead, numbered by the order of the shuffled scans in partition.
+vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, Binder &binder, LogicalOperator &plan,
                                           const KeyRangePartition &partition);
 
 } // namespace duckdb

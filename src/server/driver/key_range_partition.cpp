@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -9,6 +10,8 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/optimizer/column_binding_replacer.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
@@ -21,6 +24,7 @@
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/row_group_segment_tree.hpp"
 #include "server/driver/plan_serializer.hpp"
+#include "server/worker/exchange_read.hpp"
 
 namespace duckdb {
 
@@ -325,13 +329,62 @@ void PushBelowOrNull(LogicalGet &get, column_t column, const Value &cut) {
 	                                 ExpressionType::CONJUNCTION_OR, std::move(below), std::move(is_null))));
 }
 
+// Whether producer tasks can scan get's table and return the same columns.
+bool CanShuffle(LogicalGet &get) {
+	const auto &column_ids = get.GetColumnIds();
+	if (column_ids.empty()) {
+		return false;
+	}
+	for (const auto &column : column_ids) {
+		if (column.HasChildren() || column.GetPrimaryIndex() == COLUMN_IDENTIFIER_EMPTY) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Replaces each shuffled scan of partition in op with a read of bucket task of its exchange, and adds to replacer the
+// scan's bindings mapped to the read's.
+void ReadShuffledScans(ClientContext &context, Binder &binder, unique_ptr<LogicalOperator> &op,
+                       const KeyRangePartition &partition, idx_t task, ColumnBindingReplacer &replacer) {
+	if (op->type == LogicalOperatorType::LOGICAL_GET) {
+		auto &get = op->Cast<LogicalGet>();
+		// The fragment lists the exchanges in this order too.
+		idx_t exchange = 0;
+		for (const auto &scan : partition.scans) {
+			if (!scan.shuffled) {
+				continue;
+			}
+			if (scan.table_index == get.table_index) {
+				get.ResolveOperatorTypes();
+				auto bindings = get.GetColumnBindings();
+				const auto table_index = binder.GenerateTableIndex();
+				vector<string> names;
+				for (idx_t idx = 0; idx < bindings.size(); ++idx) {
+					names.emplace_back(StringUtil::Format("c%llu", idx));
+					replacer.replacement_bindings.emplace_back(bindings[idx],
+					                                           ColumnBinding(table_index, ProjectionIndex(idx)));
+				}
+				const auto num_tasks = partition.cuts.size() + 1;
+				const auto cardinality = get.EstimateCardinality(context) / num_tasks;
+				op = MakeExchangeRead(table_index.index, exchange, task, get.types, std::move(names), cardinality);
+				return;
+			}
+			++exchange;
+		}
+	}
+	for (auto &child : op->children) {
+		ReadShuffledScans(context, binder, child, partition, task, replacer);
+	}
+}
+
 // Restricts the scans of partition in op to the task's key range. The first range is open below and holds NULL keys,
 // so rows without a key are read once; the last range is open above.
 void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t task) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		auto &get = op.Cast<LogicalGet>();
 		for (const auto &scan : partition.scans) {
-			if (scan.table_index != get.table_index) {
+			if (scan.table_index != get.table_index || scan.shuffled) {
 				continue;
 			}
 			if (task > 0) {
@@ -361,7 +414,8 @@ void AddKeyRanges(LogicalOperator &op, const KeyRangePartition &partition, idx_t
 } // namespace
 
 bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, const vector<reference<LogicalGet>> &scans,
-                           const vector<JoinInputCost> &costs, idx_t max_tasks, KeyRangePartition &result) {
+                           const vector<JoinInputCost> &costs, idx_t max_tasks, bool shuffle,
+                           KeyRangePartition &result) {
 	vector<DelimSource> delims;
 	CollectDelimSources(input, delims);
 	vector<KeyPair> pairs;
@@ -401,22 +455,39 @@ bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, cons
 			KeyRangePartition candidate;
 			candidate.scans.emplace_back(key);
 			double bytes = 0;
+			bool has_shuffled = false;
 			for (idx_t idx = 0; idx < scans.size(); ++idx) {
 				auto &scan = scans[idx].get();
 				if (&scan == &partitioned) {
 					continue;
 				}
+				// A column of scan equal to the key that it is ordered on, else one to shuffle it by.
+				optional_idx ordered_column;
+				optional_idx shuffled_column;
 				for (const auto &column : equal_columns) {
-					if (column.table_index == scan.table_index &&
-					    scan.GetTable()->GetColumn(LogicalIndex(column.column)).Type() == key_type &&
-					    is_ordered(scan, column.column)) {
-						candidate.scans.emplace_back(column);
-						bytes += costs[idx].scan_bytes;
+					if (column.table_index != scan.table_index ||
+					    scan.GetTable()->GetColumn(LogicalIndex(column.column)).Type() != key_type) {
+						continue;
+					}
+					if (is_ordered(scan, column.column)) {
+						ordered_column = column.column;
 						break;
 					}
+					if (shuffle && !shuffled_column.IsValid() && CanShuffle(scan)) {
+						shuffled_column = column.column;
+					}
 				}
+				if (ordered_column.IsValid()) {
+					candidate.scans.push_back({scan.table_index, ordered_column.GetIndex()});
+				} else if (shuffled_column.IsValid()) {
+					candidate.scans.push_back({scan.table_index, shuffled_column.GetIndex(), true});
+					has_shuffled = true;
+				} else {
+					continue;
+				}
+				bytes += costs[idx].scan_bytes;
 			}
-			if (candidate.scans.size() < 2 || bytes <= best_bytes) {
+			if (candidate.scans.size() < 2 || bytes <= best_bytes || has_shuffled != shuffle) {
 				continue;
 			}
 			candidate.cuts = CutKeyRanges(minimums, max_tasks);
@@ -429,13 +500,16 @@ bool FindKeyRangePartition(LogicalOperator &input, LogicalGet &partitioned, cons
 	return best_bytes > 0;
 }
 
-vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, LogicalOperator &plan,
+vector<string> SerializeKeyRangeTaskPlans(ClientContext &context, Binder &binder, LogicalOperator &plan,
                                           const KeyRangePartition &partition) {
 	vector<string> plans;
 	plans.reserve(partition.cuts.size() + 1);
 	for (idx_t task = 0; task <= partition.cuts.size(); ++task) {
 		auto copy = plan.Copy(context);
 		AddKeyRanges(*copy, partition, task);
+		ColumnBindingReplacer replacer;
+		ReadShuffledScans(context, binder, copy, partition, task, replacer);
+		replacer.VisitOperator(*copy);
 		plans.emplace_back(PlanSerializer::SerializeLogicalPlan(*copy));
 	}
 	return plans;

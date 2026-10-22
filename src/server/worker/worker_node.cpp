@@ -10,6 +10,7 @@
 #include "server/object_storage_database.hpp"
 #include "server/startup_sql.hpp"
 #include "server/validation.hpp"
+#include "server/worker/exchange_read.hpp"
 #include "server/worker/row_group_range_scan.hpp"
 #include "server/worker/worker_node.hpp"
 
@@ -112,6 +113,11 @@ arrow::Status WorkerNode::ExecutePlanFragment(const distributed::ExecutePartitio
 		plan = PlanSerializer::DeserializeLogicalPlan(*task_conn.context, req.serialized_plan());
 	} catch (const std::exception &ex) {
 		return arrow::Status::Invalid("Plan fragment deserialization failed: ", ErrorData(ex).Message());
+	}
+	if (req.exchange_sources_size() > 0) {
+		vector<distributed::ExchangeSource> sources(req.exchange_sources().begin(), req.exchange_sources().end());
+		task_conn.context->registered_state->Insert(string(ExchangeSources::NAME),
+		                                            make_shared_ptr<ExchangeSources>(std::move(sources)));
 	}
 	result = task_conn.Submit(make_uniq<LogicalPlanStatement>(std::move(plan)));
 	if (result->HasError()) {

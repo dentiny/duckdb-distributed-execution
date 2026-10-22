@@ -2,8 +2,10 @@
 
 #include "arrow_record_batch_converter.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -17,16 +19,17 @@ namespace duckdb {
 namespace {
 
 struct ExchangeReadBindData : public TableFunctionData {
-	string exchange_id;
+	// Index of the task's exchange source to read.
+	idx_t exchange = 0;
 	idx_t bucket = 0;
-	vector<string> producers;
 	vector<LogicalType> types;
 	idx_t estimated_cardinality = 0;
 };
 
 // Each thread reads the bucket from one producer at a time.
 struct ExchangeReadGlobalState : public GlobalTableFunctionState {
-	explicit ExchangeReadGlobalState(idx_t producer_count_p) : producer_count(producer_count_p) {
+	explicit ExchangeReadGlobalState(distributed::ExchangeSource source_p)
+	    : source(std::move(source_p)), producer_count(NumericCast<idx_t>(source.producers_size())) {
 	}
 
 	idx_t MaxThreads() const override {
@@ -42,6 +45,7 @@ struct ExchangeReadGlobalState : public GlobalTableFunctionState {
 		return next_producer++;
 	}
 
+	const distributed::ExchangeSource source;
 	const idx_t producer_count;
 	concurrency::mutex mu;
 	idx_t next_producer DUCKDB_GUARDED_BY(mu) = 0;
@@ -66,9 +70,13 @@ unique_ptr<FunctionData> ExchangeReadBind(ClientContext &, TableFunctionBindInpu
 	throw BinderException("%s is only used in plans the driver sends to workers", EXCHANGE_READ_FUNCTION);
 }
 
-unique_ptr<GlobalTableFunctionState> ExchangeReadInitGlobal(ClientContext &, TableFunctionInitInput &input) {
+unique_ptr<GlobalTableFunctionState> ExchangeReadInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->Cast<ExchangeReadBindData>();
-	return make_uniq<ExchangeReadGlobalState>(bind_data.producers.size());
+	auto sources = context.registered_state->Get<ExchangeSources>(string(ExchangeSources::NAME));
+	if (!sources || bind_data.exchange >= sources->sources.size()) {
+		throw InvalidInputException("Task has no exchange source %llu", bind_data.exchange);
+	}
+	return make_uniq<ExchangeReadGlobalState>(sources->sources[bind_data.exchange]);
 }
 
 unique_ptr<LocalTableFunctionState> ExchangeReadInitLocal(ExecutionContext &, TableFunctionInitInput &,
@@ -89,7 +97,7 @@ void ExchangeReadFunction(ClientContext &context, TableFunctionInput &input, Dat
 			auto next = local.stream->Next();
 			if (!next.ok()) {
 				throw IOException("Reading bucket %llu of exchange %s failed: %s", bind_data.bucket,
-				                  bind_data.exchange_id, next.status().ToString());
+				                  global.source.exchange_id(), next.status().ToString());
 			}
 			if (next->data) {
 				local.batch = make_uniq<ArrowRecordBatchConverter>(context, *next->data, &bind_data.types);
@@ -103,16 +111,16 @@ void ExchangeReadFunction(ClientContext &context, TableFunctionInput &input, Dat
 			output.SetCardinality(0);
 			return;
 		}
-		auto &location = bind_data.producers[producer.GetIndex()];
+		const auto &location = global.source.producers(NumericCast<int>(producer.GetIndex()));
 		local.client = make_uniq<WorkerNodeClient>(location);
 		auto status = local.client->Connect();
 		if (!status.ok()) {
 			throw IOException("Connecting to exchange producer %s failed: %s", location, status.ToString());
 		}
-		auto stream = local.client->ReadExchange(bind_data.exchange_id, bind_data.bucket);
+		auto stream = local.client->ReadExchange(global.source.exchange_id(), bind_data.bucket);
 		if (!stream.ok()) {
 			throw IOException("Reading bucket %llu of exchange %s from %s failed: %s", bind_data.bucket,
-			                  bind_data.exchange_id, location, stream.status().ToString());
+			                  global.source.exchange_id(), location, stream.status().ToString());
 		}
 		local.stream = std::move(stream).ValueOrDie();
 	}
@@ -126,20 +134,18 @@ unique_ptr<NodeStatistics> ExchangeReadCardinality(ClientContext &, const Functi
 void ExchangeReadSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
                            const BoundTableFunction &) {
 	auto &bind_data = bind_data_p->Cast<ExchangeReadBindData>();
-	serializer.WriteProperty(100, "exchange_id", bind_data.exchange_id);
+	serializer.WriteProperty(100, "exchange", bind_data.exchange);
 	serializer.WriteProperty(101, "bucket", bind_data.bucket);
-	serializer.WriteProperty(102, "producers", bind_data.producers);
-	serializer.WriteProperty(103, "types", bind_data.types);
-	serializer.WriteProperty(104, "estimated_cardinality", bind_data.estimated_cardinality);
+	serializer.WriteProperty(102, "types", bind_data.types);
+	serializer.WriteProperty(103, "estimated_cardinality", bind_data.estimated_cardinality);
 }
 
 unique_ptr<FunctionData> ExchangeReadDeserialize(Deserializer &deserializer, BoundTableFunction &) {
 	auto bind_data = make_uniq<ExchangeReadBindData>();
-	deserializer.ReadProperty(100, "exchange_id", bind_data->exchange_id);
+	deserializer.ReadProperty(100, "exchange", bind_data->exchange);
 	deserializer.ReadProperty(101, "bucket", bind_data->bucket);
-	deserializer.ReadProperty(102, "producers", bind_data->producers);
-	deserializer.ReadProperty(103, "types", bind_data->types);
-	deserializer.ReadProperty(104, "estimated_cardinality", bind_data->estimated_cardinality);
+	deserializer.ReadProperty(102, "types", bind_data->types);
+	deserializer.ReadProperty(103, "estimated_cardinality", bind_data->estimated_cardinality);
 	return std::move(bind_data);
 }
 
@@ -159,12 +165,11 @@ void RegisterExchangeRead(DatabaseInstance &db) {
 	loader.RegisterFunction(GetExchangeReadFunction());
 }
 
-unique_ptr<LogicalGet> MakeExchangeRead(idx_t table_index, string exchange_id, idx_t bucket, vector<string> producers,
-                                        vector<LogicalType> types, vector<string> names, idx_t estimated_cardinality) {
+unique_ptr<LogicalGet> MakeExchangeRead(idx_t table_index, idx_t exchange, idx_t bucket, vector<LogicalType> types,
+                                        vector<string> names, idx_t estimated_cardinality) {
 	auto bind_data = make_uniq<ExchangeReadBindData>();
-	bind_data->exchange_id = std::move(exchange_id);
+	bind_data->exchange = exchange;
 	bind_data->bucket = bucket;
-	bind_data->producers = std::move(producers);
 	bind_data->types = types;
 	bind_data->estimated_cardinality = estimated_cardinality;
 	vector<Identifier> column_names(names.begin(), names.end());

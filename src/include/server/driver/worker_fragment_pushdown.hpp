@@ -5,6 +5,7 @@
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "server/driver/query_history.hpp"
 #include "utils/mutex.hpp"
+#include "worker.pb.h"
 
 #include <memory>
 #include <string_view>
@@ -25,12 +26,21 @@ class LogicalGet;
 class LogicalOperator;
 class TableCatalogEntry;
 
+// An input of a fragment that tasks read from an exchange instead of scanning its table.
+struct WorkerExchange {
+	// Each scans part of the table and adds the task that reads each row as the last column.
+	vector<string> producer_plans;
+	idx_t bucket_count = 0;
+};
+
 // A part of a client's plan that workers run, serialized with PlanSerializer.
 struct WorkerFragment {
 	// The whole fragment, run on the driver if workers cannot run the tasks.
 	string plan;
 	// One plan per worker task, each reading a disjoint row group or key range of the split tables.
 	vector<string> task_plans;
+	// Run before the tasks, whose exchange reads scan them by index.
+	vector<WorkerExchange> exchanges;
 	vector<LogicalType> types;
 	// Recorded in the query execution stats.
 	string description;
@@ -45,10 +55,11 @@ public:
 
 	WorkerFragmentState(DistributedExecutor &executor_p, Connection &connection_p);
 
-	// Starts the fragment's tasks on workers and stores the stream of each task's result in streams. Returns false if
-	// a task cannot start on a worker.
-	bool StartTasks(const WorkerFragment &fragment,
-	                vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams);
+	// Fills the fragment's exchanges, then starts its tasks and stores each task's result stream in streams. Adds every
+	// exchange it creates to exchanges, for ReleaseExchanges. Returns false if a producer fails or a task cannot start.
+	bool StartTasks(const WorkerFragment &fragment, vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
+	                vector<distributed::ExchangeSource> &exchanges);
+	void ReleaseExchanges(const vector<distributed::ExchangeSource> &exchanges);
 	// Runs the whole fragment on the driver and returns its result as chunks of arbitrary size.
 	vector<unique_ptr<DataChunk>> ExecuteLocally(const WorkerFragment &fragment);
 	void RecordExecution(QueryExecutionInfo info);

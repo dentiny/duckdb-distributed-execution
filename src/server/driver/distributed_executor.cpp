@@ -1,6 +1,9 @@
 #include "server/driver/distributed_executor.hpp"
 
+#include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
@@ -25,8 +28,84 @@ idx_t DistributedExecutor::NumWorkers() {
 
 // Distributed execution mirrors DuckDB's parallel execution model: each worker task runs the plan fragment on its
 // rows like a thread fills its LocalSinkState, and the driver combines the task results like the GlobalSinkState.
-bool DistributedExecutor::ExecutePlans(const vector<string> &plans,
+distributed::ExecutePartitionRequest DistributedExecutor::MakeRequest(const string &plan) const {
+	distributed::ExecutePartitionRequest req;
+	req.set_serialized_plan(plan);
+	*req.mutable_storage_config() = storage_config;
+	req.set_build_id(PlanSerializer::BuildId());
+	return req;
+}
+
+bool DistributedExecutor::ExecutePlans(const vector<string> &plans, const vector<distributed::ExchangeSource> &sources,
                                        vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams) {
+	vector<distributed::ExecutePartitionRequest> requests;
+	requests.reserve(plans.size());
+	for (const auto &plan : plans) {
+		requests.emplace_back(MakeRequest(plan));
+		for (const auto &source : sources) {
+			*requests.back().add_exchange_sources() = source;
+		}
+	}
+	return Dispatch(requests, streams);
+}
+
+bool DistributedExecutor::ExecuteProducers(const vector<string> &plans, idx_t bucket_count,
+                                           distributed::ExchangeSource &source) {
+	source.set_exchange_id(UUID::ToString(UUID::GenerateRandomUUID()));
+	vector<distributed::ExecutePartitionRequest> requests;
+	requests.reserve(plans.size());
+	for (const auto &plan : plans) {
+		requests.emplace_back(MakeRequest(plan));
+		auto &write = *requests.back().mutable_exchange_write();
+		write.set_exchange_id(source.exchange_id());
+		write.set_bucket_count(NumericCast<uint32_t>(bucket_count));
+	}
+	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> streams;
+	// A producer that fails after it starts keeps an unsealed buffer, so every worker sent one is a producer, also if
+	// the dispatch throws.
+	vector<string> producers;
+	bool started;
+	try {
+		started = Dispatch(requests, streams, producers);
+	} catch (...) {
+		*source.mutable_producers() = {producers.begin(), producers.end()};
+		throw;
+	}
+	*source.mutable_producers() = {producers.begin(), producers.end()};
+	if (!started) {
+		return false;
+	}
+	// A producer returns its row counts once it has sealed its buckets.
+	for (auto &stream : streams) {
+		auto counts = stream->ToTable();
+		if (!counts.ok()) {
+			DUCKDB_LOG_WARNING(*conn.context->db,
+			                   StringUtil::Format("Exchange producer failed: %s", counts.status().ToString()));
+			return false;
+		}
+	}
+	return true;
+}
+
+void DistributedExecutor::ReleaseExchange(const distributed::ExchangeSource &source) {
+	// A producer that has left the workers took its buckets with it.
+	for (auto *worker : worker_manager.GetAvailableWorkers()) {
+		if (std::find(source.producers().begin(), source.producers().end(), worker->location) ==
+		    source.producers().end()) {
+			continue;
+		}
+		auto status = worker->client->ReleaseExchange(source.exchange_id());
+		if (!status.ok()) {
+			DUCKDB_LOG_WARNING(*conn.context->db,
+			                   StringUtil::Format("Releasing exchange %s on %s failed: %s", source.exchange_id(),
+			                                      worker->location, status.ToString()));
+		}
+	}
+}
+
+bool DistributedExecutor::Dispatch(const vector<distributed::ExecutePartitionRequest> &requests,
+                                   vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
+                                   optional_ptr<vector<string>> locations) {
 	auto &db_instance = *conn.context->db;
 	auto workers = worker_manager.GetAvailableWorkers();
 	if (workers.empty()) {
@@ -38,20 +117,19 @@ bool DistributedExecutor::ExecutePlans(const vector<string> &plans,
 		return false;
 	}
 	// Each task runs on its own worker. Tasks planned for workers that have since left run locally instead.
-	if (plans.size() > workers.size()) {
+	if (requests.size() > workers.size()) {
 		DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("%llu tasks but %llu workers, falling back to local execution",
-		                                                 plans.size(), workers.size()));
+		                                                 requests.size(), workers.size()));
 		return false;
 	}
-	vector<distributed::ExecutePartitionRequest> requests(plans.size());
-	for (idx_t task_idx = 0; task_idx < plans.size(); ++task_idx) {
-		auto &req = requests[task_idx];
-		req.set_serialized_plan(plans[task_idx]);
-		*req.mutable_storage_config() = storage_config;
-		req.set_build_id(PlanSerializer::BuildId());
+	if (locations) {
+		locations->clear();
+		for (idx_t task_idx = 0; task_idx < requests.size(); ++task_idx) {
+			locations->emplace_back(workers[task_idx]->location);
+		}
 	}
 	streams.clear();
-	streams.resize(plans.size());
+	streams.resize(requests.size());
 	Value thread_setting;
 	if (!db_instance.TryGetCurrentSetting("duckherder_async_threads", thread_setting)) {
 		throw InternalException("Duckherder async thread setting is not registered");

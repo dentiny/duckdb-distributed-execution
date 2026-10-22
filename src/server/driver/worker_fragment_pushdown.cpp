@@ -24,8 +24,11 @@
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_case_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
@@ -96,6 +99,7 @@ public:
 				stream->Cancel();
 			}
 		}
+		fragment_state->ReleaseExchanges(exchanges);
 	}
 
 	idx_t MaxThreads() const override {
@@ -112,7 +116,15 @@ public:
 		start_time = std::chrono::steady_clock::now();
 		info.sql = fragment.description;
 		vector<std::unique_ptr<arrow::flight::FlightStreamReader>> task_streams;
-		if (fragment_state->StartTasks(fragment, task_streams)) {
+		vector<distributed::ExchangeSource> task_exchanges;
+		bool distributed;
+		try {
+			distributed = fragment_state->StartTasks(fragment, task_streams, task_exchanges);
+		} catch (...) {
+			fragment_state->ReleaseExchanges(task_exchanges);
+			throw;
+		}
+		if (distributed) {
 			info.execution_mode =
 			    task_streams.size() == 1 ? QueryExecutionMode::DELEGATED : QueryExecutionMode::ROW_GROUP_PARTITION;
 			info.merge_strategy = fragment.merge_strategy;
@@ -120,8 +132,10 @@ public:
 			info.num_tasks_generated = task_streams.size();
 			const concurrency::lock_guard<concurrency::mutex> lock(mu);
 			streams = std::move(task_streams);
+			exchanges = std::move(task_exchanges);
 			return;
 		}
+		fragment_state->ReleaseExchanges(task_exchanges);
 		auto local_chunks = fragment_state->ExecuteLocally(fragment);
 		RecordExecution();
 		const concurrency::lock_guard<concurrency::mutex> lock(mu);
@@ -207,6 +221,8 @@ private:
 	QueryExecutionInfo info;
 	concurrency::mutex mu;
 	vector<std::unique_ptr<arrow::flight::FlightStreamReader>> streams DUCKDB_GUARDED_BY(mu);
+	// Released with this state, after the tasks have read them.
+	vector<distributed::ExchangeSource> exchanges DUCKDB_GUARDED_BY(mu);
 	idx_t next_stream DUCKDB_GUARDED_BY(mu) = 0;
 	idx_t finished_streams DUCKDB_GUARDED_BY(mu) = 0;
 	vector<unique_ptr<DataChunk>> chunks DUCKDB_GUARDED_BY(mu);
@@ -523,13 +539,25 @@ unique_ptr<Expression> ColumnRef(const LogicalType &type, TableIndex table_index
 	return make_uniq<BoundColumnRefExpression>(type, ColumnBinding(table_index, ProjectionIndex(column_index)));
 }
 
-string DescribeFragment(const string &head, const vector<reference<LogicalGet>> &scans, const vector<bool> &split) {
+// How the tasks of a fragment read a scan.
+enum class ScanSplit : uint8_t {
+	// Every task reads the whole table.
+	REPLICATED,
+	// Each task reads its part of the table.
+	PARTITIONED,
+	// Each task reads its part from an exchange that producer tasks fill from the table.
+	SHUFFLED
+};
+
+string DescribeFragment(const string &head, const vector<reference<LogicalGet>> &scans,
+                        const vector<ScanSplit> &split) {
 	vector<string> tables;
 	tables.reserve(scans.size());
 	for (idx_t idx = 0; idx < scans.size(); ++idx) {
 		tables.emplace_back(GetTableName(*scans[idx].get().GetTable()));
-		if (scans.size() > 1 && split[idx]) {
-			tables.back() = StringUtil::Format("%s (partitioned)", tables.back());
+		if (scans.size() > 1 && split[idx] != ScanSplit::REPLICATED) {
+			tables.back() = StringUtil::Format("%s (%s)", tables.back(),
+			                                   split[idx] == ScanSplit::SHUFFLED ? "shuffled" : "partitioned");
 		}
 	}
 	return StringUtil::Format("%s over %s", head, StringUtil::Join(tables, ", "));
@@ -569,13 +597,59 @@ void UnflipDelimJoins(LogicalOperator &op) {
 	}
 }
 
+// Returns the task whose key range holds key: 0 below cuts[0] and for NULL, i + 1 from cuts[i] on.
+unique_ptr<Expression> KeyRangeBucket(const Expression &key, const vector<Value> &cuts) {
+	auto bucket = make_uniq<BoundCaseExpression>(LogicalType {LogicalTypeId::INTEGER});
+	for (idx_t idx = cuts.size(); idx > 0; --idx) {
+		BoundCaseCheck check;
+		check.when_expr = BoundComparisonExpression::Create(ExpressionType::COMPARE_GREATERTHANOREQUALTO, key.Copy(),
+		                                                    make_uniq<BoundConstantExpression>(cuts[idx - 1]));
+		check.then_expr = make_uniq<BoundConstantExpression>(Value::INTEGER(NumericCast<int32_t>(idx)));
+		bucket->CaseChecksMutable().emplace_back(std::move(check));
+	}
+	bucket->ElseMutable() = make_uniq<BoundConstantExpression>(Value::INTEGER(0));
+	return std::move(bucket);
+}
+
+// Serializes the producer plans of the exchange that scan, shuffled by its column, is read from. Each producer scans
+// part of the table by rowid ranges and returns the scan's output columns, then the task of the row's key range.
+vector<string> SerializeProducerPlans(ClientContext &context, Binder &binder, LogicalGet &scan, column_t column,
+                                      const vector<Value> &cuts, idx_t max_tasks) {
+	auto copy = scan.Copy(context);
+	auto &get = copy->Cast<LogicalGet>();
+	get.ResolveOperatorTypes();
+	auto bindings = get.GetColumnBindings();
+	vector<unique_ptr<Expression>> columns;
+	columns.reserve(bindings.size() + 1);
+	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
+		columns.emplace_back(make_uniq<BoundColumnRefExpression>(get.types[idx], bindings[idx]));
+	}
+	// The Join reads the key, so the scan returns it.
+	optional_idx key;
+	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
+		const auto &column_id = get.GetColumnIds()[bindings[idx].column_index.GetIndex()];
+		if (column_id.GetPrimaryIndex() == column && !column_id.HasChildren()) {
+			key = idx;
+		}
+	}
+	if (!key.IsValid()) {
+		throw InternalException("Shuffled scan does not return its key");
+	}
+	columns.emplace_back(KeyRangeBucket(*columns[key.GetIndex()], cuts));
+	const auto table_index = get.table_index;
+	auto producer = make_uniq<LogicalProjection>(binder.GenerateTableIndex(), std::move(columns));
+	producer->children.emplace_back(std::move(copy));
+	return SerializeTaskPlans(context, *producer, *FindScan(*producer, table_index), max_tasks);
+}
+
 // Writes fragment's plan and task plans from worker_plan, the workers' copy of a plan over input, and marks in split
 // which of scans the tasks split. Tries the scans from the most read bytes down: by key ranges with the inputs
 // equi-joined to it on a key they are ordered on, else alone by rowid ranges; the others are replicated. Keeps the
-// first split AnalyzeSplit accepts. Returns false if there is none, or if a Join should stay local.
-bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperator &input,
+// first split AnalyzeSplit accepts. If there is none, or a Join should stay local, tries key ranges again with the
+// inputs not ordered on the key shuffled to the tasks through exchanges. Returns false if that fails too.
+bool PlanTasks(ClientContext &context, Binder &binder, WorkerFragmentState &state, LogicalOperator &input,
                const vector<reference<LogicalGet>> &scans, LogicalOperator &worker_plan, WorkerFragment &fragment,
-               vector<bool> &split) {
+               vector<ScanSplit> &split) {
 	Value setting;
 	context.TryGetCurrentSetting(Identifier(JOIN_PARTITIONING_SETTING), setting);
 	const auto join_partitioning = setting.IsNull() ? string("auto") : StringUtil::Lower(setting.ToString());
@@ -608,70 +682,92 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
 	}
 	std::stable_sort(order.begin(), order.end(),
 	                 [&](idx_t a, idx_t b) { return costs[a].scan_bytes > costs[b].scan_bytes; });
-	optional_idx partitioned_idx;
-	KeyRangePartition key_ranges;
-	for (const auto idx : order) {
-		auto &candidate = scans[idx].get();
-		if (scans.size() > 1 && FindKeyRangePartition(input, candidate, scans, costs, state.NumWorkers(), key_ranges) &&
-		    IsSplit(AnalyzeSplit(input, key_ranges, optional_idx()))) {
-			partitioned_idx = idx;
-			break;
-		}
-		key_ranges = KeyRangePartition();
-		if (IsSplit(AnalyzeSplit(input, key_ranges, candidate.table_index.index))) {
-			partitioned_idx = idx;
-			break;
-		}
-	}
-	if (!partitioned_idx.IsValid()) {
-		return false;
-	}
-	auto &partitioned = scans[partitioned_idx.GetIndex()].get();
-	UnflipDelimJoins(worker_plan);
-	fragment.plan = PlanSerializer::SerializeLogicalPlan(worker_plan);
-	if (!key_ranges.scans.empty()) {
-		fragment.task_plans = SerializeKeyRangeTaskPlans(context, worker_plan, key_ranges);
-	} else {
-		fragment.task_plans = SerializeTaskPlans(context, worker_plan, *FindScan(worker_plan, partitioned.table_index),
-		                                         state.NumWorkers());
-	}
-	split.assign(scans.size(), false);
-	for (idx_t idx = 0; idx < scans.size(); ++idx) {
-		split[idx] = &scans[idx].get() == &partitioned;
-		for (const auto &scan : key_ranges.scans) {
-			split[idx] = split[idx] || scan.table_index == scans[idx].get().table_index;
-		}
-	}
-	// Repeating the other tables' scans in every task only pays off if a Join is split across workers.
-	if (scans.size() > 1) {
-		const auto num_tasks = fragment.task_plans.size();
-		if (num_tasks < 2) {
-			return false;
-		}
-		// Split inputs count as partitioned; the others are replicated. A replicated input joins the stream of the
-		// largest split input, so only that input's build is compared with it.
-		JoinInputCost partitioned_cost {0, costs[partitioned_idx.GetIndex()].build_bytes};
-		vector<JoinInputCost> replicated_costs;
-		for (idx_t idx = 0; idx < costs.size(); ++idx) {
-			if (split[idx]) {
-				partitioned_cost.scan_bytes += costs[idx].scan_bytes;
-			} else {
-				replicated_costs.push_back(costs[idx]);
+	auto try_split = [&](bool shuffle) {
+		optional_idx partitioned_idx;
+		KeyRangePartition key_ranges;
+		for (const auto idx : order) {
+			auto &candidate = scans[idx].get();
+			if (scans.size() > 1 &&
+			    FindKeyRangePartition(input, candidate, scans, costs, state.NumWorkers(), shuffle, key_ranges) &&
+			    IsSplit(AnalyzeSplit(input, key_ranges, optional_idx()))) {
+				partitioned_idx = idx;
+				break;
+			}
+			key_ranges = KeyRangePartition();
+			if (!shuffle && IsSplit(AnalyzeSplit(input, key_ranges, candidate.table_index.index))) {
+				partitioned_idx = idx;
+				break;
 			}
 		}
-		// Workers do not report their memory, so assume each has the driver's.
-		if (join_partitioning == "auto" &&
-		    !ShouldPartitionJoin(partitioned_cost, replicated_costs, num_tasks,
-		                         static_cast<double>(BufferManager::GetBufferManager(context).GetMaxMemory()))) {
+		if (!partitioned_idx.IsValid()) {
 			return false;
 		}
-	}
-	return true;
+		auto &partitioned = scans[partitioned_idx.GetIndex()].get();
+		UnflipDelimJoins(worker_plan);
+		fragment.plan = PlanSerializer::SerializeLogicalPlan(worker_plan);
+		fragment.exchanges.clear();
+		if (!key_ranges.scans.empty()) {
+			fragment.task_plans = SerializeKeyRangeTaskPlans(context, binder, worker_plan, key_ranges);
+			// In the order of the shuffled scans in key_ranges, which numbers the task plans' exchange reads.
+			for (const auto &scan : key_ranges.scans) {
+				if (!scan.shuffled) {
+					continue;
+				}
+				WorkerExchange exchange;
+				exchange.bucket_count = fragment.task_plans.size();
+				exchange.producer_plans =
+				    SerializeProducerPlans(context, binder, *FindScan(worker_plan, scan.table_index), scan.column,
+				                           key_ranges.cuts, state.NumWorkers());
+				fragment.exchanges.emplace_back(std::move(exchange));
+			}
+		} else {
+			fragment.task_plans = SerializeTaskPlans(
+			    context, worker_plan, *FindScan(worker_plan, partitioned.table_index), state.NumWorkers());
+		}
+		split.assign(scans.size(), ScanSplit::REPLICATED);
+		for (idx_t idx = 0; idx < scans.size(); ++idx) {
+			if (&scans[idx].get() == &partitioned) {
+				split[idx] = ScanSplit::PARTITIONED;
+			}
+			for (const auto &scan : key_ranges.scans) {
+				if (scan.table_index == scans[idx].get().table_index) {
+					split[idx] = scan.shuffled ? ScanSplit::SHUFFLED : ScanSplit::PARTITIONED;
+				}
+			}
+		}
+		// Repeating the other tables' scans in every task only pays off if a Join is split across workers.
+		if (scans.size() > 1) {
+			const auto num_tasks = fragment.task_plans.size();
+			if (num_tasks < 2) {
+				return false;
+			}
+			// Split inputs count as partitioned; the others are replicated. A replicated input joins the stream of the
+			// largest split input, so only that input's build is compared with it.
+			JoinInputCost partitioned_cost {0, costs[partitioned_idx.GetIndex()].build_bytes};
+			vector<JoinInputCost> replicated_costs;
+			for (idx_t idx = 0; idx < costs.size(); ++idx) {
+				if (split[idx] != ScanSplit::REPLICATED) {
+					partitioned_cost.scan_bytes += costs[idx].scan_bytes;
+				} else {
+					replicated_costs.push_back(costs[idx]);
+				}
+			}
+			// Workers do not report their memory, so assume each has the driver's. Shuffled inputs count as split; the
+			// model ignores sending them over the network.
+			if (join_partitioning == "auto" &&
+			    !ShouldPartitionJoin(partitioned_cost, replicated_costs, num_tasks,
+			                         static_cast<double>(BufferManager::GetBufferManager(context).GetMaxMemory()))) {
+				return false;
+			}
+		}
+		return true;
+	};
+	return try_split(false) || (scans.size() > 1 && try_split(true));
 }
 
 // Describes aggregate over scans, marking the split ones.
 string DescribeAggregate(const LogicalAggregate &aggregate, const vector<reference<LogicalGet>> &scans,
-                         const vector<bool> &split) {
+                         const vector<ScanSplit> &split) {
 	vector<string> exprs;
 	vector<string> groups;
 	exprs.reserve(aggregate.expressions.size());
@@ -718,7 +814,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
 	const auto group_count = aggregate.groups.size();
 	auto &argument = *aggregate.expressions[0]->Cast<BoundAggregateExpression>().GetChildren()[0];
 	WorkerFragment fragment;
-	vector<bool> split;
+	vector<ScanSplit> split;
 	try {
 		auto worker_plan = aggregate.Copy(context);
 		auto &worker = worker_plan->Cast<LogicalAggregate>();
@@ -728,7 +824,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
 			grouping_set.insert(ProjectionIndex(group_count));
 		}
 		worker_plan = ProjectColumns(binder, std::move(worker_plan));
-		if (!PlanTasks(context, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
+		if (!PlanTasks(context, binder, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
 			return nullptr;
 		}
 		fragment.types = worker_plan->types;
@@ -811,7 +907,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	vector<idx_t> count_columns(kinds.size());
 	unique_ptr<LogicalOperator> worker_plan;
 	WorkerFragment fragment;
-	vector<bool> split;
+	vector<ScanSplit> split;
 	try {
 		// Copy through the serializer, as the worker reads it, and leave the client's plan unchanged.
 		worker_plan = aggregate.Copy(context);
@@ -832,7 +928,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 			merge_names.emplace_back("sum");
 		}
 		worker_plan = ProjectColumns(binder, std::move(worker_plan));
-		if (!PlanTasks(context, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
+		if (!PlanTasks(context, binder, state, *aggregate.children[0], scans, *worker_plan, fragment, split)) {
 			return nullptr;
 		}
 	} catch (const std::exception &) {
@@ -935,10 +1031,10 @@ unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder
 		return nullptr;
 	}
 	WorkerFragment fragment;
-	vector<bool> split;
+	vector<ScanSplit> split;
 	try {
 		auto worker_plan = ProjectColumns(binder, join.Copy(context));
-		if (!PlanTasks(context, state, join, scans, *worker_plan, fragment, split)) {
+		if (!PlanTasks(context, binder, state, join, scans, *worker_plan, fragment, split)) {
 			return nullptr;
 		}
 		fragment.types = worker_plan->types;
@@ -1046,8 +1142,21 @@ WorkerFragmentState::WorkerFragmentState(DistributedExecutor &executor_p, Connec
 }
 
 bool WorkerFragmentState::StartTasks(const WorkerFragment &fragment,
-                                     vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams) {
-	return executor.ExecutePlans(fragment.task_plans, streams);
+                                     vector<std::unique_ptr<arrow::flight::FlightStreamReader>> &streams,
+                                     vector<distributed::ExchangeSource> &exchanges) {
+	for (const auto &exchange : fragment.exchanges) {
+		exchanges.emplace_back();
+		if (!executor.ExecuteProducers(exchange.producer_plans, exchange.bucket_count, exchanges.back())) {
+			return false;
+		}
+	}
+	return executor.ExecutePlans(fragment.task_plans, exchanges, streams);
+}
+
+void WorkerFragmentState::ReleaseExchanges(const vector<distributed::ExchangeSource> &exchanges) {
+	for (const auto &exchange : exchanges) {
+		executor.ReleaseExchange(exchange);
+	}
 }
 
 vector<unique_ptr<DataChunk>> WorkerFragmentState::ExecuteLocally(const WorkerFragment &fragment) {
