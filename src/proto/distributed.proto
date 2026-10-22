@@ -44,6 +44,10 @@ message DistributedRequest {
 
     // Transaction lifecycle.
     TransactionRequest transaction = 14;
+
+    // Worker-to-worker exchange.
+    ReadExchangeRequest read_exchange = 15;
+    ReleaseExchangeRequest release_exchange = 16;
   }
 }
 

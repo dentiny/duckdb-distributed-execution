@@ -6,6 +6,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/main/database.hpp"
 #include "server/object_storage_database.hpp"
+#include "server/worker/exchange_buffer.hpp"
 #include "utils/mutex.hpp"
 
 #include <arrow/flight/server.h>
@@ -32,6 +33,8 @@ public:
 
 	arrow::Status DoGet(const arrow::flight::ServerCallContext &context, const arrow::flight::Ticket &ticket,
 	                    std::unique_ptr<arrow::flight::FlightDataStream> *stream) override;
+	arrow::Status DoAction(const arrow::flight::ServerCallContext &context, const arrow::flight::Action &action,
+	                       std::unique_ptr<arrow::flight::ResultStream> *result) override;
 
 private:
 	arrow::Status HandleExecutePartition(const distributed::ExecutePartitionRequest &req,
@@ -39,6 +42,11 @@ private:
 	// Run the task's serialized plan fragment on task_conn, which must outlive the result.
 	arrow::Status ExecutePlanFragment(const distributed::ExecutePartitionRequest &req, Connection &task_conn,
 	                                  unique_ptr<QueryResult> &result);
+	// Adds the rows of result to the buckets of the request's exchange and returns the rows added per bucket.
+	arrow::Status WriteExchange(const distributed::ExecutePartitionRequest &req, ObjectStorageDatabase &database,
+	                            unique_ptr<QueryResult> result, std::shared_ptr<arrow::RecordBatchReader> &reader);
+	arrow::Status HandleReadExchange(const distributed::ReadExchangeRequest &req,
+	                                 std::shared_ptr<arrow::RecordBatchReader> &reader);
 
 	// Return this worker's read-only instance for the configuration, attaching it on first use.
 	// The instance is a snapshot from that first attach; later writes are not visible through it.
@@ -56,6 +64,11 @@ private:
 	// their read-only snapshots do not see later writes.
 	unordered_map<string, unique_ptr<ObjectStorageDatabase>>
 	    object_storage_databases DUCKDB_GUARDED_BY(object_storage_mutex);
+
+	concurrency::mutex exchange_mutex;
+	// Keyed by exchange ID. Declared after the databases, whose buffer managers hold the rows, so it is destroyed
+	// first.
+	unordered_map<string, shared_ptr<ExchangeBuffer>> exchanges DUCKDB_GUARDED_BY(exchange_mutex);
 };
 
 } // namespace duckdb
