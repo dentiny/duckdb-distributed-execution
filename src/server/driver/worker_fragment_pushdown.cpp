@@ -987,9 +987,11 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 			return;
 		}
 		// A Join fragment sends all its rows to the driver, a transfer the cost model ignores, so it is only cut when
-		// the operators above only project or sort them.
-		reduced = reduced || (op.type != LogicalOperatorType::LOGICAL_PROJECTION &&
-		                      op.type != LogicalOperatorType::LOGICAL_ORDER_BY);
+		// the operators above only project or sort them. PREPARE and EXECUTE wrap the driver's plans of client queries.
+		reduced =
+		    reduced ||
+		    (op.type != LogicalOperatorType::LOGICAL_PROJECTION && op.type != LogicalOperatorType::LOGICAL_ORDER_BY &&
+		     op.type != LogicalOperatorType::LOGICAL_PREPARE && op.type != LogicalOperatorType::LOGICAL_EXECUTE);
 		node = op.children[0];
 	}
 }
@@ -1099,6 +1101,9 @@ void RegisterJoinPartitioningSetting(DBConfig &config) {
 void RegisterWorkerFragments(DBConfig &config) {
 	// Compressed materialization bakes the driver's statistics into the plan, and workers may read newer data.
 	config.options.disabled_optimizers.insert(OptimizerType::COMPRESSED_MATERIALIZATION);
+	// These aggregate below a Join and merge the partial states above it with combine_aggr, which fragments cannot cut.
+	config.options.disabled_optimizers.insert(OptimizerType::PARTIAL_AGGREGATE_PUSHDOWN);
+	config.options.disabled_optimizers.insert(OptimizerType::AGGREGATE_REUSE);
 	OptimizerExtension extension;
 	extension.optimize_function = OptimizeWorkerFragments;
 	OptimizerExtension::Register(config, std::move(extension));
