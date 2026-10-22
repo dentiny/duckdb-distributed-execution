@@ -14,6 +14,8 @@ message ExecutePartitionRequest {
   string build_id = 3;
   // Set if the task's rows go into exchange buckets on the worker instead of being returned.
   ExchangeWrite exchange_write = 4;
+  // The exchanges the plan's exchange reads scan, indexed by their exchange argument.
+  repeated ExchangeSource exchange_sources = 5;
 }
 
 // Makes an ExecutePartition task an exchange producer: the plan's last column is the bucket of each row, 0 to
@@ -23,6 +25,13 @@ message ExchangeWrite {
   // Unique per exchange; each worker runs at most one producer task of an exchange.
   string exchange_id = 1;
   uint32 bucket_count = 2;
+}
+
+// An exchange whose producer tasks have finished.
+message ExchangeSource {
+  string exchange_id = 1;
+  // Flight locations of the workers that ran its producer tasks, which hold its buckets.
+  repeated string producers = 2;
 }
 
 // Streams the rows of one bucket of an exchange on the worker.

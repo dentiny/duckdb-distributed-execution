@@ -179,13 +179,18 @@ TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
 			}
 			vector<LogicalType> types {LogicalType {LogicalTypeId::BIGINT}, LogicalType {LogicalTypeId::BIGINT}};
 			slot =
-			    MakeExchangeRead(EXCHANGE_TABLE_INDEX, "x", bucket, locations, std::move(types), {"id", "k"}, 150000);
+			    MakeExchangeRead(EXCHANGE_TABLE_INDEX, /*exchange=*/0, bucket, std::move(types), {"id", "k"}, 150000);
 			replacer.VisitOperator(*consumer);
 
 			distributed::ExecutePartitionRequest request;
 			request.set_serialized_plan(PlanSerializer::SerializeLogicalPlan(*consumer));
 			*request.mutable_storage_config() = config;
 			request.set_build_id(PlanSerializer::BuildId());
+			auto &source = *request.add_exchange_sources();
+			source.set_exchange_id("x");
+			for (const auto &location : locations) {
+				source.add_producers(location);
+			}
 			// A bucket can be read more than once, as a plan scanning it twice does.
 			for (idx_t read = 0; read < 2; ++read) {
 				auto batches = ReadAll(clients[bucket]->ExecutePartition(request));

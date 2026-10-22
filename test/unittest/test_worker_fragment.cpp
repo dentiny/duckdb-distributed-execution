@@ -897,6 +897,47 @@ TEST_CASE("Driver plans keep aggregates over Joins whole and cut Joins of prepar
 	std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Joins shuffle the input not ordered on the key to the tasks of its key ranges", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_shuffle");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		// dim is stored in key order, fact is not, and some fact keys are NULL.
+		REQUIRE_FALSE(
+		    executor_connection->Query("CREATE TABLE dim AS SELECT i AS k, i % 5 AS g FROM range(300000) t(i)")
+		        ->HasError());
+		REQUIRE_FALSE(
+		    executor_connection
+		        ->Query("CREATE TABLE fact AS SELECT CASE WHEN i % 100 = 0 THEN NULL ELSE (i * 7919) % 300000 "
+		                "END AS k, i % 11 AS amount FROM range(900000) t(i)")
+		        ->HasError());
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// A full outer Join keeps every row of both inputs once, so neither can be replicated.
+		for (const auto &sql :
+		     {"SELECT d.g, count(*), count(d.k), count(f.k), sum(f.amount) FROM dim d FULL OUTER JOIN fact f "
+		      "ON d.k = f.k GROUP BY d.g ORDER BY d.g",
+		      "SELECT count(*), count(d.k), count(f.k), sum(f.amount) FROM dim d FULL OUTER JOIN fact f ON d.k = "
+		      "f.k"}) {
+			auto executions = fixture.RequireLocalResult(sql);
+			REQUIRE(executions.size() == 1);
+			INFO(executions[0].sql);
+			REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
+			REQUIRE(executions[0].num_tasks_generated == 2);
+			REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.dim (partitioned)"));
+			REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.fact (shuffled)"));
+		}
+
+		// A producer that cannot start makes the driver run the fragment itself.
+		REQUIRE(fixture.manager->RegisterWorker("unreachable", "grpc://localhost:1").ok());
+		auto executions = fixture.RequireLocalResult(
+		    "SELECT count(*), count(d.k), count(f.k), sum(f.amount) FROM dim d FULL OUTER JOIN fact f ON d.k = f.k");
+		REQUIRE(executions.size() == 1);
+		REQUIRE(executions[0].execution_mode == QueryExecutionMode::LOCAL);
+	}
+	std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Workers reject plans of another build and the driver runs them locally", "[worker_fragment]") {
 	auto root = CreateRoot("duckherder_build_mismatch");
 	{
