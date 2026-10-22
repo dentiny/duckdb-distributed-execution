@@ -100,7 +100,7 @@ void ExchangeReadFunction(ClientContext &context, TableFunctionInput &input, Dat
 		}
 		auto producer = global.ClaimProducer();
 		if (!producer.IsValid()) {
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 		auto &location = bind_data.producers[producer.GetIndex()];

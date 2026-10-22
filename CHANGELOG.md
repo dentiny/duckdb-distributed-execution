@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- Use current vector APIs for exchange batches and declare network/server scalar operations fallible on DuckDB v2.
 - Build only the Thrift runtime needed by Arrow Flight, avoiding IDL compiler flags unsupported by the community Linux Bison version.
 
 ### Changed
