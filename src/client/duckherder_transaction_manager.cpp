@@ -32,20 +32,26 @@ Transaction &DuckherderTransactionManager::StartTransaction(ClientContext &conte
 }
 
 ErrorData DuckherderTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction) {
-	DistributedClient *client;
+	optional_ptr<DistributedClient> client;
+	// Roll back outside the try, so a rollback that throws is not repeated.
+	ErrorData remote_error;
 	try {
 		client = &GetClient(context);
 		if (client->HasActiveRemoteTransaction()) {
 			auto result = client->CommitTransaction();
 			if (result->HasError()) {
-				DuckTransactionManager::RollbackTransaction(transaction);
-				client->ClearTransactionContext();
-				return result->GetErrorObject();
+				remote_error = result->GetErrorObject();
 			}
 		}
 	} catch (std::exception &ex) {
+		remote_error = ErrorData(ex);
+	}
+	if (remote_error.HasError()) {
 		DuckTransactionManager::RollbackTransaction(transaction);
-		return ErrorData(ex);
+		if (client) {
+			client->ClearTransactionContext();
+		}
+		return remote_error;
 	}
 	auto error = DuckTransactionManager::CommitTransaction(context, transaction);
 	client->ClearTransactionContext();

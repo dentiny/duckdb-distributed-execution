@@ -8,6 +8,8 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/main/database_manager.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -399,6 +401,15 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 }
 
 void DuckherderSchemaCatalogEntry::AlterLocal(CatalogTransaction transaction, AlterInfo &info) {
+	// The server builds the index of an added UNIQUE or PRIMARY KEY constraint, but rolling back the ALTER removes the
+	// index recorded on the constraint, so record one that no index uses.
+	if (info.type == AlterType::ALTER_TABLE &&
+	    info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::ADD_CONSTRAINT) {
+		auto &constraint = *info.Cast<AddConstraintInfo>().constraint;
+		if (constraint.type == ConstraintType::UNIQUE) {
+			constraint.SetBackingIndexOid(DatabaseManager::Get(catalog.GetDatabase()).NextOid());
+		}
+	}
 	DuckSchemaEntry::Alter(std::move(transaction), info);
 }
 
