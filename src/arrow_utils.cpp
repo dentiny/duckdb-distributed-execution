@@ -2,6 +2,7 @@
 
 #include "arrow_record_batch_converter.hpp"
 #include "duckdb/common/allocator.hpp"
+#include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/error_data.hpp"
@@ -131,9 +132,9 @@ namespace {
 
 class ChunkArrowReader : public arrow::RecordBatchReader {
 public:
-	ChunkArrowReader(unique_ptr<Connection> connection_p, ChunkFetcher fetch_p, const vector<LogicalType> &types,
+	ChunkArrowReader(unique_ptr<Connection> connection_p, ChunkFetcher fetch_p, vector<LogicalType> types_p,
 	                 ClientProperties client_properties_p, std::shared_ptr<arrow::Schema> schema_p)
-	    : connection(std::move(connection_p)), fetch(std::move(fetch_p)),
+	    : connection(std::move(connection_p)), fetch(std::move(fetch_p)), types(std::move(types_p)),
 	      client_properties(std::move(client_properties_p)), schema_(std::move(schema_p)),
 	      extension_types(ArrowTypeExtensionData::GetExtensionTypes(*client_properties.client_context, types)) {
 	}
@@ -142,16 +143,30 @@ public:
 		return schema_;
 	}
 
+	// Batches of a row group instead of one vector each, since every Arrow batch costs per-message overhead on each
+	// hop back to the client.
 	arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch> *batch) override {
 		try {
-			auto chunk = fetch();
-			if (!chunk || chunk->size() == 0) {
+			// The appender grows up to a row group, so results of a few rows do not allocate one.
+			ArrowAppender appender(types, STANDARD_VECTOR_SIZE, client_properties, extension_types);
+			while (appender.RowCount() < DEFAULT_ROW_GROUP_SIZE) {
+				if (!chunk || chunk_offset == chunk->size()) {
+					chunk = fetch();
+					chunk_offset = 0;
+					if (!chunk || chunk->size() == 0) {
+						chunk.reset();
+						break;
+					}
+				}
+				auto count = MinValue(DEFAULT_ROW_GROUP_SIZE - appender.RowCount(), chunk->size() - chunk_offset);
+				appender.Append(*chunk, chunk_offset, chunk_offset + count, chunk->size());
+				chunk_offset += count;
+			}
+			if (appender.RowCount() == 0) {
 				batch->reset();
 				return arrow::Status::OK();
 			}
-			chunk->Flatten();
-			ArrowArray arrow_array;
-			ArrowConverter::ToArrowArray(*chunk, &arrow_array, client_properties, extension_types);
+			auto arrow_array = appender.Finalize();
 			ARROW_ASSIGN_OR_RAISE(*batch, arrow::ImportRecordBatch(&arrow_array, schema_));
 			return arrow::Status::OK();
 		} catch (const std::exception &ex) {
@@ -164,9 +179,13 @@ private:
 	// Destroyed last, as fetch may read through its context.
 	unique_ptr<Connection> connection;
 	ChunkFetcher fetch;
+	vector<LogicalType> types;
 	ClientProperties client_properties;
 	std::shared_ptr<arrow::Schema> schema_;
 	unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
+	// The fetched chunk whose rows from chunk_offset on are not in a batch yet.
+	unique_ptr<DataChunk> chunk;
+	idx_t chunk_offset = 0;
 };
 
 } // namespace
@@ -198,7 +217,7 @@ arrow::Status QueryResultToArrowReader(unique_ptr<Connection> connection, unique
 	    [stream]() {
 		    auto chunk = stream->Fetch();
 		    if (!chunk && stream->HasError()) {
-			    throw InvalidInputException(stream->GetError());
+			    stream->GetErrorObject().Throw();
 		    }
 		    return chunk;
 	    },

@@ -44,7 +44,7 @@ private:
 	                                  unique_ptr<QueryResult> &result);
 	// Adds the rows of result to the buckets of the request's exchange and returns the rows added per bucket.
 	arrow::Status WriteExchange(const distributed::ExecutePartitionRequest &req, ObjectStorageDatabase &database,
-	                            QueryResult &result, std::shared_ptr<arrow::RecordBatchReader> &reader);
+	                            unique_ptr<QueryResult> result, std::shared_ptr<arrow::RecordBatchReader> &reader);
 	arrow::Status HandleReadExchange(const distributed::ReadExchangeRequest &req,
 	                                 std::shared_ptr<arrow::RecordBatchReader> &reader);
 

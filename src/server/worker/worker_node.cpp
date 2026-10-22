@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/query_result_stream.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "server/driver/plan_serializer.hpp"
@@ -132,7 +133,7 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 	unique_ptr<QueryResult> result;
 	ARROW_RETURN_NOT_OK(ExecutePlanFragment(req, *task_conn, result));
 	if (req.has_exchange_write()) {
-		return WriteExchange(req, *object_storage_database, *result, reader);
+		return WriteExchange(req, *object_storage_database, std::move(result), reader);
 	}
 
 	// This represents the LocalState output from this worker node; the coordinator combines the outputs of all
@@ -142,14 +143,16 @@ arrow::Status WorkerNode::HandleExecutePartition(const distributed::ExecuteParti
 }
 
 arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionRequest &req,
-                                        ObjectStorageDatabase &database, QueryResult &result,
+                                        ObjectStorageDatabase &database, unique_ptr<QueryResult> result,
                                         std::shared_ptr<arrow::RecordBatchReader> &reader) {
 	const auto &write = req.exchange_write();
-	if (write.bucket_count() == 0 || result.types.empty() ||
-	    result.types.back() != LogicalType {LogicalTypeId::INTEGER}) {
+	const auto &result_types = result->GetTypes();
+	if (write.bucket_count() == 0 || result_types.empty() ||
+	    result_types.back() != LogicalType {LogicalTypeId::INTEGER}) {
 		return arrow::Status::Invalid("Exchange producer plans must end with an INTEGER bucket column");
 	}
-	vector<LogicalType> types(result.types.begin(), result.types.end() - 1);
+	vector<LogicalType> types(result_types.begin(), result_types.end() - 1);
+	QueryResultStream<> stream(std::move(result));
 	auto buffer = make_shared_ptr<ExchangeBuffer>(database, types, write.bucket_count());
 	{
 		const concurrency::lock_guard<concurrency::mutex> lock(exchange_mutex);
@@ -162,12 +165,11 @@ arrow::Status WorkerNode::WriteExchange(const distributed::ExecutePartitionReque
 	vector<uint64_t> counts(write.bucket_count(), 0);
 	try {
 		while (true) {
-			ErrorData error;
-			unique_ptr<DataChunk> chunk;
-			if (!result.TryFetch(chunk, error)) {
-				return arrow::Status::Invalid(StringUtil::Format("Task execution failed: %s", error.Message()));
-			}
+			auto chunk = stream.Fetch();
 			if (!chunk || chunk->size() == 0) {
+				if (stream.HasError()) {
+					return arrow::Status::Invalid("Task execution failed: ", stream.GetError());
+				}
 				break;
 			}
 			auto added = buffer->Append(*chunk);

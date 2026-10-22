@@ -62,7 +62,7 @@ struct ExchangeReadLocalState : public LocalTableFunctionState {
 };
 
 unique_ptr<FunctionData> ExchangeReadBind(ClientContext &, TableFunctionBindInput &, vector<LogicalType> &,
-                                          vector<string> &) {
+                                          vector<Identifier> &) {
 	throw BinderException("%s is only used in plans the driver sends to workers", EXCHANGE_READ_FUNCTION);
 }
 
@@ -124,7 +124,7 @@ unique_ptr<NodeStatistics> ExchangeReadCardinality(ClientContext &, const Functi
 }
 
 void ExchangeReadSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-                           const TableFunction &) {
+                           const BoundTableFunction &) {
 	auto &bind_data = bind_data_p->Cast<ExchangeReadBindData>();
 	serializer.WriteProperty(100, "exchange_id", bind_data.exchange_id);
 	serializer.WriteProperty(101, "bucket", bind_data.bucket);
@@ -133,7 +133,7 @@ void ExchangeReadSerialize(Serializer &serializer, const optional_ptr<FunctionDa
 	serializer.WriteProperty(104, "estimated_cardinality", bind_data.estimated_cardinality);
 }
 
-unique_ptr<FunctionData> ExchangeReadDeserialize(Deserializer &deserializer, TableFunction &) {
+unique_ptr<FunctionData> ExchangeReadDeserialize(Deserializer &deserializer, BoundTableFunction &) {
 	auto bind_data = make_uniq<ExchangeReadBindData>();
 	deserializer.ReadProperty(100, "exchange_id", bind_data->exchange_id);
 	deserializer.ReadProperty(101, "bucket", bind_data->bucket);
@@ -167,11 +167,14 @@ unique_ptr<LogicalGet> MakeExchangeRead(idx_t table_index, string exchange_id, i
 	bind_data->producers = std::move(producers);
 	bind_data->types = types;
 	bind_data->estimated_cardinality = estimated_cardinality;
-	auto get = make_uniq<LogicalGet>(table_index, GetExchangeReadFunction(), std::move(bind_data), std::move(types),
-	                                 std::move(names));
+	vector<Identifier> column_names(names.begin(), names.end());
+	auto get = make_uniq<LogicalGet>(TableIndex(table_index), BoundTableFunction(GetExchangeReadFunction()),
+	                                 std::move(bind_data), std::move(types), std::move(column_names));
+	vector<ColumnIndex> column_ids;
 	for (idx_t column_idx = 0; column_idx < get->returned_types.size(); ++column_idx) {
-		get->AddColumnId(column_idx);
+		column_ids.emplace_back(column_idx);
 	}
+	get->SetColumnIds(std::move(column_ids));
 	get->estimated_cardinality = estimated_cardinality;
 	get->has_estimated_cardinality = true;
 	return get;

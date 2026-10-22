@@ -83,14 +83,15 @@ arrow::Status ExchangeBuffer::ReadBucket(shared_ptr<ExchangeBuffer> buffer, idx_
 	collection.InitializeScan(*scan_state);
 	// Sealed buckets do not change, so readers of one bucket run concurrently without locking. The fetch keeps buffer
 	// alive after the exchange is released.
-	return ChunksToArrowReader(std::move(connection), collection.Types(), names, std::move(client_properties),
-	                           [buffer, &collection, scan_state]() {
-		                           auto chunk = make_uniq<DataChunk>();
-		                           collection.InitializeScanChunk(*chunk);
-		                           collection.Scan(*scan_state, *chunk);
-		                           return chunk;
-	                           },
-	                           reader);
+	return ChunksToArrowReader(
+	    std::move(connection), collection.Types(), names, std::move(client_properties),
+	    [buffer, &collection, scan_state]() {
+		    auto chunk = make_uniq<DataChunk>();
+		    collection.InitializeScanChunk(*chunk);
+		    collection.Scan(*scan_state, *chunk);
+		    return chunk;
+	    },
+	    reader);
 }
 
 } // namespace duckdb

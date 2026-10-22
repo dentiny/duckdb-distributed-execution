@@ -174,7 +174,8 @@ TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
 				auto column = column_ids[scan.projection_ids.empty() ? idx : scan.projection_ids[idx]];
 				// The producer's columns are id, then k, as in t.
 				replacer.replacement_bindings.emplace_back(
-				    bindings[idx], ColumnBinding(EXCHANGE_TABLE_INDEX, column.GetPrimaryIndex()));
+				    bindings[idx],
+				    ColumnBinding(TableIndex(EXCHANGE_TABLE_INDEX), ProjectionIndex(column.GetPrimaryIndex())));
 			}
 			vector<LogicalType> types {LogicalType {LogicalTypeId::BIGINT}, LogicalType {LogicalTypeId::BIGINT}};
 			slot =
@@ -203,10 +204,11 @@ TEST_CASE("Exchanges move rows between workers by bucket", "[exchange]") {
 		auto expected = con.Query("SELECT k, count(*)::BIGINT, sum(id)::BIGINT FROM t GROUP BY k ORDER BY k");
 		REQUIRE_FALSE(expected->HasError());
 		REQUIRE(groups.size() == expected->RowCount());
+		auto &expected_rows = expected->Collection();
 		for (idx_t row_idx = 0; row_idx < expected->RowCount(); ++row_idx) {
-			auto &group = groups[expected->GetValue(0, row_idx).GetValue<int64_t>()];
-			REQUIRE(group.count == expected->GetValue(1, row_idx).GetValue<int64_t>());
-			REQUIRE(group.sum == expected->GetValue(2, row_idx).GetValue<int64_t>());
+			auto &group = groups[expected_rows.GetValue(0, row_idx).GetValue<int64_t>()];
+			REQUIRE(group.count == expected_rows.GetValue(1, row_idx).GetValue<int64_t>());
+			REQUIRE(group.sum == expected_rows.GetValue(2, row_idx).GetValue<int64_t>());
 		}
 
 		// Released exchanges cannot be read.

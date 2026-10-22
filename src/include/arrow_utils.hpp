@@ -57,8 +57,9 @@ arrow::Status QueryResultToArrowBatches(QueryResult &result, std::shared_ptr<arr
 // Returns the next chunk to convert, or null at the end of the rows. Throws on failure.
 using ChunkFetcher = std::function<unique_ptr<DataChunk>()>;
 
-// Convert the chunks returned by fetch, with columns types and names, into a reader over Arrow record batches, fetched
-// as they are read. The reader keeps connection, whose context the conversion and fetch may use, alive.
+// Convert the chunks returned by fetch, with columns types and names, into a reader over row-group-sized Arrow record
+// batches, fetched as they are read. The reader keeps connection, whose context the conversion and fetch may use,
+// alive.
 arrow::Status ChunksToArrowReader(unique_ptr<Connection> connection, const vector<LogicalType> &types,
                                   const vector<string> &names, ClientProperties client_properties, ChunkFetcher fetch,
                                   std::shared_ptr<arrow::RecordBatchReader> &reader);
