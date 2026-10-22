@@ -578,11 +578,26 @@ bool GroupsByKey(LogicalOperator &input, const vector<unique_ptr<Expression>> &g
 	return false;
 }
 
-// Whether every condition of join is IS NOT DISTINCT FROM.
-bool ComparesNotDistinct(const LogicalComparisonJoin &join) {
+// Whether no condition of join can compare to NULL: each is IS NOT DISTINCT FROM or compares NOT NULL columns.
+bool ComparesNoNull(LogicalComparisonJoin &join, vector<DelimSource> &delims) {
 	for (const auto &condition : join.conditions) {
-		if (!condition.IsComparison() || condition.GetComparisonType() != ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+		if (!condition.IsComparison()) {
 			return false;
+		}
+		if (condition.GetComparisonType() == ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+			continue;
+		}
+		for (idx_t side = 0; side < 2; ++side) {
+			auto &expr = side == 0 ? condition.GetLHS() : condition.GetRHS();
+			if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+				return false;
+			}
+			column_t column;
+			auto scan =
+			    ResolveColumn(*join.children[side], expr.Cast<BoundColumnRefExpression>().Binding(), column, delims);
+			if (!scan || !HasNotNullConstraint(*scan->GetTable(), column)) {
+				return false;
+			}
 		}
 	}
 	return !join.conditions.empty();
@@ -604,7 +619,9 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 		}
 		// A CTE_REF holds the rows of its CTE's definition in each task.
 		if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE && step == 0) {
-			FindDelimSource(delims, op.Cast<LogicalMaterializedCTE>().table_index)->kind = children[idx];
+			auto source = FindDelimSource(delims, op.Cast<LogicalMaterializedCTE>().table_index);
+			D_ASSERT(source);
+			source->kind = children[idx];
 		}
 		if (op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN && step == 0) {
 			// When that input is split by one of the duplicate-eliminated columns, each task's DELIM_GETs hold only its
@@ -708,9 +725,8 @@ SplitKind Analyze(LogicalOperator &op, const KeyRangePartition &partition, optio
 			}
 			return IsSplit(right) ? SplitKind::INVALID : left;
 		case JoinType::MARK:
-			// A NULL anywhere in the right input decides the mark of every left row without a match, unless every
-			// condition is IS NOT DISTINCT FROM, which never compares to NULL.
-			if (co_split && ComparesNotDistinct(op.Cast<LogicalComparisonJoin>())) {
+			// A NULL comparison anywhere in the right input decides the mark of every left row without a match.
+			if (co_split && ComparesNoNull(op.Cast<LogicalComparisonJoin>(), delims)) {
 				return SplitKind::SPLIT_BY_KEY;
 			}
 			return IsSplit(right) ? SplitKind::INVALID : left;

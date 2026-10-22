@@ -1030,28 +1030,44 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 	return std::move(result);
 }
 
-// Replaces join with a fragment whose tasks each return the Join's rows for their part of the input, split as
-// PlanTasks decides. The driver concatenates the rows.
-unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state,
-                                                  LogicalComparisonJoin &join,
+// The most rows, as a share of the rows its scans read, that a fragment returns to be cut below an operator that
+// reduces them.
+constexpr double FEW_ROWS_SHARE = 0.1;
+
+// Whether op returns few of the rows its scans read, so sending its rows to the driver costs little next to reading
+// the tables.
+bool ReturnsFewRows(ClientContext &context, LogicalOperator &op, const vector<reference<LogicalGet>> &scans) {
+	idx_t scanned_rows = 0;
+	for (const auto &scan : scans) {
+		scanned_rows += scan.get().GetTable()->GetStorage().GetTotalRows();
+	}
+	return static_cast<double>(op.EstimateCardinality(context)) <= FEW_ROWS_SHARE * static_cast<double>(scanned_rows);
+}
+
+// Replaces op, a Join or a materialized CTE, with a fragment whose tasks each return op's rows for their part of the
+// input, split as PlanTasks decides. The driver concatenates the rows. Below an operator that reduces them, as reduced
+// says, op is only cut if it returns few rows, since the cost model ignores sending them.
+unique_ptr<LogicalOperator> TryCreateRowsFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state,
+                                                  LogicalOperator &op, bool reduced,
                                                   vector<ReplacementBinding> &replacements) {
 	vector<reference<LogicalGet>> scans;
-	if (!CollectScans(join, state, scans) || scans.empty()) {
+	if (!CollectScans(op, state, scans) || scans.empty() || (reduced && !ReturnsFewRows(context, op, scans))) {
 		return nullptr;
 	}
 	WorkerFragment fragment;
 	vector<ScanSplit> split;
 	try {
-		auto worker_plan = ProjectColumns(binder, join.Copy(context));
-		if (!PlanTasks(context, binder, state, join, scans, *worker_plan, fragment, split)) {
+		auto worker_plan = ProjectColumns(binder, op.Copy(context));
+		if (!PlanTasks(context, binder, state, op, scans, *worker_plan, fragment, split)) {
 			return nullptr;
 		}
 		fragment.types = worker_plan->types;
 	} catch (const std::exception &) {
 		return nullptr;
 	}
-	fragment.description = DescribeFragment("join", scans, split);
-	auto bindings = join.GetColumnBindings();
+	const auto head = op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE ? "cte" : "join";
+	fragment.description = DescribeFragment(head, scans, split);
+	auto bindings = op.GetColumnBindings();
 	auto result = CreateFragment(binder, std::move(fragment));
 	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
 		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, ProjectionIndex(idx)));
@@ -1059,21 +1075,23 @@ unique_ptr<LogicalOperator> TryCreateJoinFragment(ClientContext &context, Binder
 	return std::move(result);
 }
 
-// Replaces the first aggregate, Join or lone scan below root, following operators with one child, with a worker
-// fragment. reduced is whether an operator above root reduces its rows.
+// Replaces the first aggregate, Join, materialized CTE or lone scan below root, following operators with one child,
+// with a worker fragment, and tries the inputs of a Join or CTE that cannot be one. reduced is whether an operator
+// above root reduces its rows; below_join whether root is the input of a Join.
 void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &state, unique_ptr<LogicalOperator> &root,
-                 bool reduced, vector<ReplacementBinding> &replacements) {
+                 bool reduced, vector<ReplacementBinding> &replacements, bool below_join = false) {
 	reference<unique_ptr<LogicalOperator>> node = root;
 	while (true) {
 		auto &op = *node.get();
 		unique_ptr<LogicalOperator> fragment;
 		if (op.type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
 			fragment = TryCreateAggregateFragment(context, binder, state, op.Cast<LogicalAggregate>(), replacements);
-		} else if ((op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
-		            op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) &&
-		           !reduced) {
-			fragment = TryCreateJoinFragment(context, binder, state, op.Cast<LogicalComparisonJoin>(), replacements);
-		} else if (op.type == LogicalOperatorType::LOGICAL_GET) {
+		} else if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		           op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN ||
+		           op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+			fragment = TryCreateRowsFragment(context, binder, state, op, reduced, replacements);
+		} else if (op.type == LogicalOperatorType::LOGICAL_GET && !below_join) {
+			// The driver reads the whole input of a Join either way, so a lone scan of one stays local.
 			fragment = TryCreateScanFragment(context, binder, state, op.Cast<LogicalGet>(), replacements);
 		}
 		if (fragment) {
@@ -1083,7 +1101,15 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 		// A materialized CTE runs its definition once and the query reads the result, so each can hold a fragment.
 		if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
 			for (auto &child : op.children) {
-				CutFragment(context, binder, state, child, reduced, replacements);
+				CutFragment(context, binder, state, child, reduced, replacements, below_join);
+			}
+			return;
+		}
+		// A Join that workers cannot run whole may have inputs they can, whose rows the Join reduces.
+		if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+		    op.type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+			for (auto &child : op.children) {
+				CutFragment(context, binder, state, child, /*reduced=*/true, replacements, /*below_join=*/true);
 			}
 			return;
 		}
@@ -1091,8 +1117,8 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 		if (op.type == LogicalOperatorType::LOGICAL_LIMIT || op.children.size() != 1) {
 			return;
 		}
-		// A Join fragment sends all its rows to the driver, a transfer the cost model ignores, so it is only cut when
-		// the operators above only project or sort them. PREPARE and EXECUTE wrap the driver's plans of client queries.
+		// A fragment that returns all its rows is only cut when the operators above only project or sort them, or if
+		// it returns few rows. PREPARE and EXECUTE wrap the driver's plans of client queries.
 		reduced =
 		    reduced ||
 		    (op.type != LogicalOperatorType::LOGICAL_PROJECTION && op.type != LogicalOperatorType::LOGICAL_ORDER_BY &&
