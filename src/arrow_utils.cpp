@@ -158,7 +158,8 @@ public:
 						break;
 					}
 				}
-				auto count = MinValue(DEFAULT_ROW_GROUP_SIZE - appender.RowCount(), chunk->size() - chunk_offset);
+				auto count =
+				    MinValue<idx_t>(DEFAULT_ROW_GROUP_SIZE - appender.RowCount(), chunk->size() - chunk_offset);
 				appender.Append(*chunk, chunk_offset, chunk_offset + count, chunk->size());
 				chunk_offset += count;
 			}
