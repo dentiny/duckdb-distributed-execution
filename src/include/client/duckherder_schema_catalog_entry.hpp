@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"

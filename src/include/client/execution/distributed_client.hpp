@@ -3,7 +3,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "client/transport/distributed_flight_client.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/string.hpp"

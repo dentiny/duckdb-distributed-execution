@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/string.hpp"

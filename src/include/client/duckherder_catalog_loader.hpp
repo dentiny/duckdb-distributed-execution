@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/optional_idx.hpp"

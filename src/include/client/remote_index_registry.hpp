@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"

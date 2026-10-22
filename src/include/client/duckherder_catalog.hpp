@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "client/duckherder_client_sessions.hpp"
 #include "distributed.pb.h"
 #include "duckdb/catalog/catalog.hpp"

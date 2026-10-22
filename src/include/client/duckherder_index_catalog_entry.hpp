@@ -1,7 +1,6 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
-
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 
 namespace duckdb {
