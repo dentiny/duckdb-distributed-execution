@@ -14,6 +14,8 @@ class FlightStreamReader;
 } // namespace flight
 } // namespace arrow
 
+#include <string_view>
+
 namespace duckdb {
 
 class Catalog;
@@ -40,7 +42,7 @@ struct WorkerFragment {
 // client's connection is busy running the query containing the fragment.
 class WorkerFragmentState : public ClientContextState {
 public:
-	static constexpr const char *NAME = "worker_fragments";
+	static constexpr std::string_view NAME = "worker_fragments";
 
 	WorkerFragmentState(DistributedExecutor &executor_p, Connection &connection_p);
 
@@ -73,7 +75,7 @@ vector<string> SerializeTaskPlans(ClientContext &context, LogicalOperator &plan,
                                   idx_t max_tasks);
 
 // "auto" splits a Join when the cost model favors it, "always" whenever it has two tasks, "never" not at all.
-constexpr const char *JOIN_PARTITIONING_SETTING = "duckherder_join_partitioning";
+constexpr std::string_view JOIN_PARTITIONING_SETTING = "duckherder_join_partitioning";
 
 // Registers JOIN_PARTITIONING_SETTING.
 void RegisterJoinPartitioningSetting(DBConfig &config);

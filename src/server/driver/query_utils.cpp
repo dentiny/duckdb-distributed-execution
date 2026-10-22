@@ -5,7 +5,7 @@
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/row/tuple_data_layout.hpp"
 #include "duckdb/execution/ht_entry.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -49,7 +49,7 @@ string StripClientCatalog(const string &sql, const string &client_catalog) {
 	}
 
 	auto tokens = Parser::Tokenize(sql);
-	auto quoted_catalog = KeywordHelper::WriteQuoted(client_catalog, '"');
+	auto quoted_catalog = SQLQuotedIdentifier::ToString(client_catalog);
 	string result;
 	idx_t cursor = 0;
 	for (idx_t index = 0; index + 1 < tokens.size(); index++) {

@@ -35,13 +35,13 @@ void SerializeDistributedTableScan(Serializer &serializer, const optional_ptr<Fu
 }
 
 unique_ptr<FunctionData> DeserializeDistributedTableScan(Deserializer &deserializer, TableFunction &function) {
-	auto catalog = deserializer.ReadProperty<string>(100, "catalog");
-	auto schema = deserializer.ReadProperty<string>(101, "schema");
-	auto table = deserializer.ReadProperty<string>(102, "table");
+	auto catalog = deserializer.ReadProperty<Identifier>(100, "catalog");
+	auto schema = deserializer.ReadProperty<Identifier>(101, "schema");
+	auto table = deserializer.ReadProperty<Identifier>(102, "table");
 	auto remote_table_name = deserializer.ReadProperty<string>(103, "remote_table_name");
-	auto &table_entry =
-	    Catalog::GetEntry(deserializer.Get<ClientContext &>(), CatalogType::TABLE_ENTRY, catalog, schema, table)
-	        .Cast<TableCatalogEntry>();
+	auto &table_entry = Catalog::GetEntry(deserializer.Get<ClientContext &>(), CatalogType::TABLE_ENTRY,
+	                                      QualifiedName(catalog, schema, table))
+	                        .Cast<TableCatalogEntry>();
 	auto result = make_uniq<DistributedTableScanBindData>(table_entry, std::move(remote_table_name));
 	result->pushed_query = deserializer.ReadPropertyWithDefault<string>(104, "pushed_query");
 	result->pushed_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(105, "pushed_types");
@@ -176,7 +176,8 @@ BindInfo DistributedTableScanFunction::GetBindInfo(optional_ptr<FunctionData> bi
 }
 
 unique_ptr<FunctionData> DistributedTableScanFunction::Bind(ClientContext &context, TableFunctionBindInput &input,
-                                                            vector<LogicalType> &return_types, vector<string> &names) {
+                                                            vector<LogicalType> &return_types,
+                                                            vector<Identifier> &names) {
 	throw Exception(ExceptionType::INTERNAL, "DistributedTableScanFunction::Bind should not be called directly");
 }
 

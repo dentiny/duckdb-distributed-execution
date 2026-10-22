@@ -10,13 +10,15 @@
 #include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/delete_statement.hpp"
 #include "duckdb/parser/statement/execute_statement.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/parser/statement/merge_into_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
+#include "duckdb/parser/query_node/update_query_node.hpp"
+#include "duckdb/parser/query_node/merge_query_node.hpp"
 #include "utils/catalog_utils.hpp"
 
 namespace duckdb {
@@ -54,16 +56,16 @@ string ReturnCompleteRows(const string &sql) {
 	vector<unique_ptr<ParsedExpression>> *returning_list = nullptr;
 	switch (statement.type) {
 	case StatementType::INSERT_STATEMENT:
-		returning_list = &statement.Cast<InsertStatement>().returning_list;
+		returning_list = &statement.Cast<InsertStatement>().node->returning_list;
 		break;
 	case StatementType::UPDATE_STATEMENT:
-		returning_list = &statement.Cast<UpdateStatement>().returning_list;
+		returning_list = &statement.Cast<UpdateStatement>().node->returning_list;
 		break;
 	case StatementType::DELETE_STATEMENT:
-		returning_list = &statement.Cast<DeleteStatement>().returning_list;
+		returning_list = &statement.Cast<DeleteStatement>().node->returning_list;
 		break;
 	case StatementType::MERGE_INTO_STATEMENT:
-		returning_list = &statement.Cast<MergeIntoStatement>().returning_list;
+		returning_list = &statement.Cast<MergeIntoStatement>().node->returning_list;
 		break;
 	default:
 		return sql;
@@ -90,13 +92,13 @@ string BuildRemotePreparedDMLSQL(ClientContext &context, const string &sql) {
 
 	// The prepared statement exists only in the client DuckDB connection. Recreate it under a unique name on the
 	// client's Control Node connection so DuckDB can bind the EXECUTE arguments without unsafe textual substitution.
-	auto statement_name = KeywordHelper::WriteQuoted(
-	    StringUtil::Format("__duckherder_remote_%s", UUID::ToString(UUID::GenerateRandomUUID())), '"');
+	auto statement_name = SQLQuotedIdentifier::ToString(
+	    StringUtil::Format("__duckherder_remote_%s", UUID::ToString(UUID::GenerateRandomUUID())));
 	vector<string> arguments;
 	arguments.reserve(execute.named_values.size());
 	for (auto &entry : execute.named_values) {
 		arguments.push_back(
-		    StringUtil::Format("%s := %s", KeywordHelper::WriteQuoted(entry.first, '"'), entry.second->ToString()));
+		    StringUtil::Format("%s := %s", SQLQuotedIdentifier::ToString(entry.first), entry.second->ToString()));
 	}
 	auto &prepared_statements = ClientData::Get(context).prepared_statements;
 	auto prepared_entry = prepared_statements.find(execute.name);

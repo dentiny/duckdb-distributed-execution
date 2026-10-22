@@ -12,6 +12,8 @@
 
 #include <arrow/status.h>
 
+#include <string_view>
+
 namespace duckdb {
 
 class WorkerManager;
@@ -19,7 +21,8 @@ class WorkerManager;
 // Registered clients and the control-node databases they are attached to, with lease-based expiration.
 class ClientRegistry {
 public:
-	static constexpr const char *NOT_REGISTERED_ERROR = "Duckherder client is not registered with the control node";
+	static constexpr std::string_view NOT_REGISTERED_ERROR =
+	    "Duckherder client is not registered with the control node";
 
 	explicit ClientRegistry(DistributedFlightServerTestState &test_state);
 

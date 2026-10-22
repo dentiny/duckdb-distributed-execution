@@ -1,5 +1,7 @@
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
+
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
@@ -49,7 +51,7 @@ public:
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 
 	// Returns metadata for indexes that are physically stored on the control node.
-	vector<IndexInfo> GetRemoteIndexes(const string &table_name);
+	vector<IndexInfo> GetRemoteIndexes(const Identifier &table_name);
 
 private:
 	friend class DuckherderCatalog;

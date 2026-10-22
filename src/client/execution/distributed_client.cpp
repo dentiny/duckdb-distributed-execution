@@ -6,7 +6,7 @@
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/connection.hpp"
-#include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "utils/remote_error.hpp"
 
@@ -20,7 +20,7 @@ namespace duckdb {
 namespace {
 
 unique_ptr<QueryResult> MakeErrorResult(ErrorData error) {
-	return make_uniq<MaterializedQueryResult>(std::move(error));
+	return make_uniq<QueryResult>(std::move(error));
 }
 
 unique_ptr<QueryResult> MakeErrorResult(const string &error) {
@@ -37,12 +37,12 @@ ErrorData GetResponseError(const arrow::Status &status, const distributed::Distr
 	return response.has_error() ? FromRemoteError(response.error()) : ErrorData(response.error_message());
 }
 
-unique_ptr<QueryResult> MakeEmptyResult(StatementType statement_type, string name, LogicalType type) {
-	vector<string> names {std::move(name)};
+unique_ptr<QueryResult> MakeEmptyResult(StatementType statement_type, Identifier name, LogicalType type) {
+	vector<Identifier> names {std::move(name)};
 	vector<LogicalType> types {std::move(type)};
 	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	return make_uniq<MaterializedQueryResult>(statement_type, StatementProperties(), names, std::move(collection),
-	                                          ClientProperties());
+	return make_uniq<QueryResult>(statement_type, StatementProperties(), names, std::move(collection),
+	                              ClientProperties());
 }
 
 // Match DuckDB's binder-defined result schemas, when these remote operations return no result rows.
@@ -181,11 +181,11 @@ arrow::Status DistributedClient::QueryBatches(const string &sql, vector<std::sha
 }
 
 unique_ptr<QueryResult> DistributedClient::ExecuteStatement(const string &sql, StatementType statement_type,
-                                                            const string &client_catalog,
+                                                            const Identifier &client_catalog,
                                                             const vector<LogicalType> *expected_types) {
 	DistributedClientLock lock(*this);
 	distributed::DistributedResponse response;
-	auto status = GetClient(lock).ExecuteStatement(sql, client_catalog, response);
+	auto status = GetClient(lock).ExecuteStatement(sql, client_catalog.GetIdentifierName(), response);
 	auto error = GetResponseError(status, response);
 	if (error.HasError()) {
 		return MakeErrorResult(std::move(error));

@@ -20,7 +20,7 @@
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parallel/async_result.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
@@ -240,7 +240,7 @@ private:
 };
 
 unique_ptr<GlobalTableFunctionState> WorkerFragmentInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
-	auto fragment_state = context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME);
+	auto fragment_state = context.registered_state->Get<WorkerFragmentState>(string(WorkerFragmentState::NAME));
 	if (!fragment_state) {
 		throw InternalException("Worker fragment runs without a worker fragment state");
 	}
@@ -299,16 +299,15 @@ optional_ptr<TableCatalogEntry> GetPartitionedTable(LogicalGet &get, const Worke
 }
 
 string GetTableName(TableCatalogEntry &table) {
-	return StringUtil::Format("%s.%s.%s", KeywordHelper::WriteOptionallyQuoted(table.catalog.GetName()),
-	                          KeywordHelper::WriteOptionallyQuoted(table.schema.name),
-	                          KeywordHelper::WriteOptionallyQuoted(table.name));
+	return StringUtil::Format("%s.%s.%s", SQLIdentifier::ToString(table.catalog.GetName()),
+	                          SQLIdentifier::ToString(table.schema.name), SQLIdentifier::ToString(table.name));
 }
 
 unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
 	TableFunction function("worker_fragment", {}, WorkerFragmentExecute, nullptr, WorkerFragmentInitGlobal,
 	                       WorkerFragmentInitLocal);
 	auto types = fragment.types;
-	vector<string> names;
+	vector<Identifier> names;
 	names.reserve(types.size());
 	for (idx_t idx = 0; idx < types.size(); ++idx) {
 		names.emplace_back(StringUtil::Format("col%llu", idx));
@@ -497,11 +496,11 @@ unique_ptr<Expression> BindAverage(const LogicalType &input_type, unique_ptr<Exp
 }
 
 // Binds the aggregate name over child, or returns nullptr if it has no overload for the child's type.
-unique_ptr<Expression> BindAggregate(ClientContext &context, const string &name, unique_ptr<Expression> child) {
+unique_ptr<Expression> BindAggregate(ClientContext &context, const Identifier &name, unique_ptr<Expression> child) {
 	// The untyped lookup avoids odr-using AggregateFunctionCatalogEntry::Name, which GCC then defines twice.
-	auto &entry =
-	    Catalog::GetEntry(context, CatalogType::AGGREGATE_FUNCTION_ENTRY, SYSTEM_CATALOG, DEFAULT_SCHEMA, name)
-	        .Cast<AggregateFunctionCatalogEntry>();
+	auto &entry = Catalog::GetEntry(context, CatalogType::AGGREGATE_FUNCTION_ENTRY,
+	                                QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(), name))
+	                  .Cast<AggregateFunctionCatalogEntry>();
 	FunctionBinder binder(context);
 	ErrorData error;
 	auto function_idx = binder.BindFunction(name, entry.functions, {child->return_type}, error);
@@ -573,7 +572,7 @@ bool PlanTasks(ClientContext &context, WorkerFragmentState &state, LogicalOperat
                const vector<reference<LogicalGet>> &scans, LogicalOperator &worker_plan, WorkerFragment &fragment,
                vector<bool> &split) {
 	Value setting;
-	context.TryGetCurrentSetting(JOIN_PARTITIONING_SETTING, setting);
+	context.TryGetCurrentSetting(Identifier(JOIN_PARTITIONING_SETTING), setting);
 	const auto join_partitioning = setting.IsNull() ? string("auto") : StringUtil::Lower(setting.ToString());
 	if (scans.size() > 1 && join_partitioning == "never") {
 		return false;
@@ -773,7 +772,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	// Workers return the groups and partial aggregates. avg becomes a sum and a count, appended after the others.
 	enum class MergeKind { SAME, COUNT, AVG };
 	vector<MergeKind> kinds;
-	vector<string> merge_names;
+	vector<Identifier> merge_names;
 	kinds.reserve(aggregate.expressions.size());
 	merge_names.reserve(aggregate.expressions.size());
 	for (const auto &expr : aggregate.expressions) {
@@ -990,7 +989,7 @@ void CutFragment(ClientContext &context, Binder &binder, WorkerFragmentState &st
 
 void OptimizeWorkerFragments(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	// Fragments run outside the client's transaction, so they would miss its snapshot in an explicit transaction.
-	auto state = input.context.registered_state->Get<WorkerFragmentState>(WorkerFragmentState::NAME);
+	auto state = input.context.registered_state->Get<WorkerFragmentState>(string(WorkerFragmentState::NAME));
 	if (!state || !input.context.transaction.IsAutoCommit() || state->NumWorkers() == 0) {
 		return;
 	}
@@ -1049,7 +1048,7 @@ vector<unique_ptr<DataChunk>> WorkerFragmentState::ExecuteLocally(const WorkerFr
 	if (result->HasError()) {
 		result->ThrowError();
 	}
-	if (result->types != fragment.types) {
+	if (result->GetTypes() != fragment.types) {
 		throw InternalException("Worker fragment '%s' returned unexpected types", fragment.description);
 	}
 	vector<unique_ptr<DataChunk>> chunks;
@@ -1078,14 +1077,16 @@ idx_t WorkerFragmentState::NumWorkers() {
 }
 
 void RegisterJoinPartitioningSetting(DBConfig &config) {
-	config.AddExtensionOption(
-	    JOIN_PARTITIONING_SETTING, "How Joins are split across workers: auto (estimated costs), always or never",
-	    LogicalType::VARCHAR, Value("auto"), [](ClientContext &, SetScope, Value &parameter) {
-		    const auto mode = parameter.IsNull() ? string("auto") : StringUtil::Lower(parameter.ToString());
-		    if (mode != "auto" && mode != "always" && mode != "never") {
-			    throw InvalidInputException("%s must be 'auto', 'always' or 'never'", JOIN_PARTITIONING_SETTING);
-		    }
-	    });
+	config.AddExtensionOption(Identifier(JOIN_PARTITIONING_SETTING),
+	                          "How Joins are split across workers: auto (estimated costs), always or never",
+	                          LogicalType::VARCHAR, Value("auto"), [](ClientContext &, SetScope, Value &parameter) {
+		                          const auto mode =
+		                              parameter.IsNull() ? string("auto") : StringUtil::Lower(parameter.ToString());
+		                          if (mode != "auto" && mode != "always" && mode != "never") {
+			                          throw InvalidInputException("%s must be 'auto', 'always' or 'never'",
+			                                                      string(JOIN_PARTITIONING_SETTING));
+		                          }
+	                          });
 }
 
 void RegisterWorkerFragments(DBConfig &config) {

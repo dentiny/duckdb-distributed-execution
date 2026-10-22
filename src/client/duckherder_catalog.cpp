@@ -63,7 +63,8 @@ void DuckherderCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
 	}
 }
 
-optional_idx DuckherderCatalog::GetEstimatedCardinality(const string &schema_name, const string &table_name) const {
+optional_idx DuckherderCatalog::GetEstimatedCardinality(const Identifier &schema_name,
+                                                        const Identifier &table_name) const {
 	concurrency::lock_guard<concurrency::mutex> lck(table_cardinalities_mu);
 	auto entry = table_cardinalities.find(QualifiedRemoteName(schema_name, table_name));
 	if (entry == table_cardinalities.end()) {
@@ -72,7 +73,7 @@ optional_idx DuckherderCatalog::GetEstimatedCardinality(const string &schema_nam
 	return entry->second;
 }
 
-void DuckherderCatalog::SetEstimatedCardinality(const string &schema_name, const string &table_name,
+void DuckherderCatalog::SetEstimatedCardinality(const Identifier &schema_name, const Identifier &table_name,
                                                 idx_t cardinality) {
 	concurrency::lock_guard<concurrency::mutex> lck(table_cardinalities_mu);
 	table_cardinalities[QualifiedRemoteName(schema_name, table_name)] = cardinality;
@@ -83,7 +84,7 @@ optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchemaLocal(CatalogTransacti
 	LogicalDependencyList dependencies;
 	auto entry = unique_ptr<DuckherderSchemaCatalogEntry>(new DuckherderSchemaCatalogEntry(*this, db_instance, info));
 	auto result = entry.get();
-	if (GetSchemaCatalogSet().CreateEntry(transaction, info.schema, std::move(entry), dependencies)) {
+	if (GetSchemaCatalogSet().CreateEntry(transaction, info.SchemaName(), std::move(entry), dependencies)) {
 		return result;
 	}
 
@@ -94,13 +95,13 @@ optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchemaLocal(CatalogTransacti
 	    info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT) {
 		throw InternalException("Unsupported OnCreateConflict for Duckherder schema");
 	}
-	if (!GetSchemaCatalogSet().DropEntry(transaction, info.schema, true)) {
-		throw InternalException("Failed to refresh local schema cache entry %s", info.schema);
+	if (!GetSchemaCatalogSet().DropEntry(transaction, info.SchemaName(), true)) {
+		throw InternalException("Failed to refresh local schema cache entry %s", info.SchemaName());
 	}
 	entry = unique_ptr<DuckherderSchemaCatalogEntry>(new DuckherderSchemaCatalogEntry(*this, db_instance, info));
 	result = entry.get();
-	if (!GetSchemaCatalogSet().CreateEntry(transaction, info.schema, std::move(entry), dependencies)) {
-		throw InternalException("Failed to create refreshed local schema cache entry %s", info.schema);
+	if (!GetSchemaCatalogSet().CreateEntry(transaction, info.SchemaName(), std::move(entry), dependencies)) {
+		throw InternalException("Failed to create refreshed local schema cache entry %s", info.SchemaName());
 	}
 	return result;
 }
@@ -108,10 +109,10 @@ optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchemaLocal(CatalogTransacti
 optional_ptr<CatalogEntry> DuckherderCatalog::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::CreateSchema");
 	if (info.internal) {
-		D_ASSERT(info.schema == DEFAULT_SCHEMA);
+		D_ASSERT(info.SchemaName() == DEFAULT_SCHEMA);
 		return CreateSchemaLocal(std::move(transaction), info);
 	}
-	if (DefaultSchemaGenerator::IsDefaultSchema(info.schema)) {
+	if (DefaultSchemaGenerator::IsDefaultSchema(info.SchemaName())) {
 		return DuckCatalog::CreateSchema(std::move(transaction), info);
 	}
 	if (!transaction.HasContext()) {
@@ -186,7 +187,7 @@ unique_ptr<LogicalOperator> DuckherderCatalog::BindCreateIndex(Binder &binder, C
                                                                unique_ptr<LogicalOperator> plan) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderCatalog::BindCreateIndex");
 
-	string table_name = table.name;
+	auto table_name = table.name;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Bind CREATE INDEX on remote table %s", table_name));
 	auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
 	return make_uniq<LogicalRemoteCreateIndexOperator>(std::move(create_index_info), table.schema, table);
@@ -205,16 +206,16 @@ unique_ptr<LogicalOperator> DuckherderCatalog::BindAlterAddIndex(Binder &binder,
 
 void DuckherderCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto transaction = GetCatalogTransaction(context);
-	auto schema = GetSchemaCatalogSet().GetEntry(transaction, info.name);
+	auto schema = GetSchemaCatalogSet().GetEntry(transaction, info.GetQualifiedName().Name());
 	if (schema && schema->internal) {
-		throw CatalogException("Cannot drop internal schema \"%s\"", info.name);
+		throw CatalogException("Cannot drop internal schema \"%s\"", info.GetQualifiedName().Name());
 	}
 	auto result = GetClient(context).ExecuteStatement(info.ToString(), StatementType::DROP_STATEMENT, GetName());
 	if (result->HasError()) {
 		throw CatalogException("Failed to drop schema on server: %s", result->GetError());
 	}
 	// The remote catalog is authoritative. After it accepts the DROP, remove any stale local children as well.
-	GetSchemaCatalogSet().DropEntry(transaction, info.name, true);
+	GetSchemaCatalogSet().DropEntry(transaction, info.GetQualifiedName().Name(), true);
 }
 
 string DuckherderCatalog::GetServerUrl() const {

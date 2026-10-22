@@ -3,6 +3,7 @@
 #include "arrow_record_batch_converter.hpp"
 #include "arrow_utils.hpp"
 #include "distributed.pb.h"
+#include "duckdb.hpp"
 #include "duckdb/main/connection.hpp"
 #include "flight_test_utils.hpp"
 #include "server/driver/worker_manager.hpp"
@@ -10,6 +11,8 @@
 #include "server/validation.hpp"
 #include "server/worker/worker_node.hpp"
 
+#include <arrow/array.h>
+#include <arrow/record_batch.h>
 #include <arrow/util/thread_pool.h>
 #include <atomic>
 #include <chrono>
@@ -308,15 +311,53 @@ TEST_CASE("DUCKHERDER_STARTUP_SQL runs in every database the server and workers 
 	auto database = ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE);
 	REQUIRE(database.ok());
 	Connection conn((*database)->GetInstance());
-	REQUIRE(conn.Query("SELECT current_setting('threads')")->GetValue(0, 0) == Value::BIGINT(5));
+	REQUIRE(conn.Query("SELECT current_setting('threads')")->Collection().GetValue(0, 0) == Value::BIGINT(5));
 	// The constructor only creates the driver's database; Start() would bind the port.
 	DistributedFlightServer server("localhost", 18900);
 	Connection server_conn(server.GetDatabaseInstance());
-	REQUIRE(server_conn.Query("SELECT current_setting('threads')")->GetValue(0, 0) == Value::BIGINT(5));
+	REQUIRE(server_conn.Query("SELECT current_setting('threads')")->Collection().GetValue(0, 0) == Value::BIGINT(5));
 
 	// The failing statement follows one that returns a result, so its error must not be lost in the result chain.
 	setenv("DUCKHERDER_STARTUP_SQL", "SELECT 1; SELECT * FROM missing_table", /*overwrite=*/1);
 	REQUIRE_FALSE(ObjectStorageDatabase::Create(config, AccessMode::READ_WRITE).ok());
 	REQUIRE_THROWS(WorkerNode("startup-sql-worker", "localhost", 18899));
 	REQUIRE_THROWS(DistributedFlightServer("localhost", 18900));
+}
+
+TEST_CASE("Arrow reader drains a submitted DuckDB query", "[distributed_flight][arrow]") {
+	DuckDB db(nullptr);
+	auto connection = make_uniq<Connection>(db);
+	auto result = connection->Submit(R"(SELECT i::BIGINT AS "Mixed Case" FROM range(5000) t(i))");
+	REQUIRE_FALSE(result->HasError());
+	std::shared_ptr<arrow::RecordBatchReader> reader;
+	REQUIRE(QueryResultToArrowReader(std::move(connection), std::move(result), reader).ok());
+	REQUIRE(reader->schema()->field(0)->name() == "Mixed Case");
+
+	int64_t rows = 0;
+	int64_t total = 0;
+	while (true) {
+		std::shared_ptr<arrow::RecordBatch> batch;
+		REQUIRE(reader->ReadNext(&batch).ok());
+		if (!batch) {
+			break;
+		}
+		auto values = std::static_pointer_cast<arrow::Int64Array>(batch->column(0));
+		for (int64_t row = 0; row < batch->num_rows(); row++) {
+			total += values->Value(row);
+		}
+		rows += batch->num_rows();
+	}
+	REQUIRE(rows == 5000);
+	REQUIRE(total == 12497500);
+}
+
+TEST_CASE("Arrow reader reports submitted query execution errors", "[distributed_flight][arrow]") {
+	DuckDB db(nullptr);
+	auto connection = make_uniq<Connection>(db);
+	auto result = connection->Submit("SELECT CAST(i::VARCHAR || 'x' AS INTEGER) FROM range(1) t(i)");
+	REQUIRE_FALSE(result->HasError());
+	std::shared_ptr<arrow::RecordBatchReader> reader;
+	REQUIRE(QueryResultToArrowReader(std::move(connection), std::move(result), reader).ok());
+	std::shared_ptr<arrow::RecordBatch> batch;
+	REQUIRE_FALSE(reader->ReadNext(&batch).ok());
 }

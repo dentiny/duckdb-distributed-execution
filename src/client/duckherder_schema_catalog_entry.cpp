@@ -7,7 +7,7 @@
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -67,12 +67,12 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTran
                                                                      CreateIndexInfo &info, TableCatalogEntry &table) {
 	DUCKDB_LOG_DEBUG(db_instance, "DuckherderSchemaCatalogEntry::CreateIndex");
 
-	string index_name = info.index_name;
-	string table_name = table.name;
+	auto index_name = info.GetIndexName();
+	auto table_name = table.name;
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Creating remote index %s on table %s", index_name, table_name));
 
 	// Remote indexes use a metadata-only local entry so DROP INDEX can bind without local table storage.
-	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, table_name);
+	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(table_name));
 	auto local_table = DuckSchemaEntry::LookupEntry(transaction, table_lookup);
 	if (!local_table) {
 		throw InternalException("Local table metadata %s.%s is missing", name, table_name);
@@ -90,7 +90,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateIndex(CatalogTran
 	return result;
 }
 
-vector<IndexInfo> DuckherderSchemaCatalogEntry::GetRemoteIndexes(const string &table_name) {
+vector<IndexInfo> DuckherderSchemaCatalogEntry::GetRemoteIndexes(const Identifier &table_name) {
 	return remote_indexes.Get(table_name);
 }
 
@@ -129,7 +129,7 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::CreateTable(CatalogTran
 	if (!transaction.HasContext()) {
 		throw InternalException("Cannot create a remote Duckherder table without a client context");
 	}
-	string table_name = create_info.table;
+	auto table_name = create_info.GetTableName();
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Create remote table %s", table_name));
 
 	// Preserve the complete CREATE TABLE definition, including constraints, defaults, and generated columns.
@@ -235,7 +235,7 @@ unique_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::WrapTableEntry(CatalogEnt
 	D_ASSERT(table_catalog_entry != nullptr);
 
 	auto create_table_info = make_uniq<CreateTableInfo>();
-	create_table_info->table = table_catalog_entry->name;
+	create_table_info->SetTableName(table_catalog_entry->name);
 	create_table_info->columns = table_catalog_entry->GetColumns().Copy();
 	create_table_info->constraints = CopyConstraints(table_catalog_entry->GetConstraints());
 	create_table_info->temporary = table_catalog_entry->temporary;
@@ -268,10 +268,10 @@ optional_ptr<CatalogEntry> DuckherderSchemaCatalogEntry::LookupEntry(CatalogTran
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, const DropInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote index: %s", info.name));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote index: %s", info.GetQualifiedName().Name()));
 
-	auto schema_name = KeywordHelper::WriteQuoted(name, '"');
-	auto index_name = KeywordHelper::WriteQuoted(info.name, '"');
+	auto schema_name = SQLQuotedIdentifier::ToString(name);
+	auto index_name = SQLQuotedIdentifier::ToString(info.GetQualifiedName().Name());
 	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
 	auto drop_sql = StringUtil::Format("DROP INDEX %s%s.%s", if_exists, schema_name, index_name);
 
@@ -282,14 +282,14 @@ void DuckherderSchemaCatalogEntry::DropRemoteIndex(ClientContext &context, const
 	if (result->HasError()) {
 		throw CatalogException("Failed to drop remote index on server: %s", result->GetError());
 	}
-	remote_indexes.RemoveIndex(info.name);
+	remote_indexes.RemoveIndex(info.GetQualifiedName().Name());
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const DropInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote table: %s", info.name));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote table: %s", info.GetQualifiedName().Name()));
 
-	auto schema_name = KeywordHelper::WriteQuoted(name, '"');
-	auto table_name = KeywordHelper::WriteQuoted(info.name, '"');
+	auto schema_name = SQLQuotedIdentifier::ToString(name);
+	auto table_name = SQLQuotedIdentifier::ToString(info.GetQualifiedName().Name());
 	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
 	auto drop_sql = StringUtil::Format("DROP TABLE %s%s.%s", if_exists, schema_name, table_name);
 	if (info.cascade) {
@@ -304,14 +304,14 @@ void DuckherderSchemaCatalogEntry::DropRemoteTable(ClientContext &context, const
 		throw CatalogException("Failed to drop remote table on server: %s", result->GetError());
 	}
 
-	remote_indexes.RemoveTable(info.name);
+	remote_indexes.RemoveTable(info.GetQualifiedName().Name());
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteView(ClientContext &context, const DropInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote view: %s", info.name));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote view: %s", info.GetQualifiedName().Name()));
 
-	auto schema_name = KeywordHelper::WriteQuoted(name, '"');
-	auto view_name = KeywordHelper::WriteQuoted(info.name, '"');
+	auto schema_name = SQLQuotedIdentifier::ToString(name);
+	auto view_name = SQLQuotedIdentifier::ToString(info.GetQualifiedName().Name());
 	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
 	auto drop_sql = StringUtil::Format("DROP VIEW %s%s.%s", if_exists, schema_name, view_name);
 	if (info.cascade) {
@@ -326,10 +326,10 @@ void DuckherderSchemaCatalogEntry::DropRemoteView(ClientContext &context, const 
 }
 
 void DuckherderSchemaCatalogEntry::DropRemoteType(ClientContext &context, const DropInfo &info) {
-	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote type: %s", info.name));
+	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Dropping remote type: %s", info.GetQualifiedName().Name()));
 
-	auto schema_name = KeywordHelper::WriteQuoted(name, '"');
-	auto type_name = KeywordHelper::WriteQuoted(info.name, '"');
+	auto schema_name = SQLQuotedIdentifier::ToString(name);
+	auto type_name = SQLQuotedIdentifier::ToString(info.GetQualifiedName().Name());
 	auto if_exists = info.if_not_found == OnEntryNotFound::THROW_EXCEPTION ? "" : "IF EXISTS ";
 	auto drop_sql = StringUtil::Format("DROP TYPE %s%s.%s", if_exists, schema_name, type_name);
 	if (info.cascade) {
@@ -345,7 +345,7 @@ void DuckherderSchemaCatalogEntry::DropRemoteType(ClientContext &context, const 
 
 void DuckherderSchemaCatalogEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("DuckherderSchemaCatalogEntry::DropEntry - type=%s name=%s",
-	                                                 CatalogTypeToString(info.type), info.name));
+	                                                 CatalogTypeToString(info.type), info.GetQualifiedName().Name()));
 
 	if (info.type == CatalogType::INDEX_ENTRY) {
 		DropRemoteIndex(context, info);
@@ -371,10 +371,9 @@ void DuckherderSchemaCatalogEntry::Alter(CatalogTransaction transaction, AlterIn
 		// CREATE/DROP TABLE with a foreign key already updates both tables on the control node. DuckDB issues this
 		// internal ALTER only to mirror the foreign-key metadata into the referenced table's local catalog entry.
 		if (table_info.alter_table_type != AlterTableType::FOREIGN_KEY_CONSTRAINT) {
-			auto schema_name = KeywordHelper::WriteQuoted(name, '"');
-			auto table_name = KeywordHelper::WriteQuoted(info.name, '"');
-			auto qualified_table_name = StringUtil::Format("%s.%s", schema_name, table_name);
-			alter_sql = GenerateAlterTableSQL(table_info, qualified_table_name);
+			auto remote_info = table_info.Copy();
+			remote_info->SetQualifiedName(QualifiedName(Identifier(), name, info.GetQualifiedName().Name()));
+			alter_sql = remote_info->ToString();
 			DUCKDB_LOG_DEBUG(db_instance, StringUtil::Format("Executing ALTER TABLE on remote server: %s", alter_sql));
 		}
 	} else if (info.type == AlterType::ALTER_VIEW) {

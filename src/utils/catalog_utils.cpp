@@ -7,7 +7,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/statement/copy_statement.hpp"
@@ -36,85 +36,6 @@ string GetRemoteStatementSQL(ClientContext &context) {
 	return current_query;
 }
 
-string GenerateAlterTableSQL(AlterTableInfo &info, const string &table_name) {
-	// AlterTableInfo stores unquoted names; quote identifiers when rendering remote SQL.
-	string sql = StringUtil::Format("ALTER TABLE %s ", table_name);
-
-	switch (info.alter_table_type) {
-	case AlterTableType::ADD_COLUMN: {
-		auto &add_info = info.Cast<AddColumnInfo>();
-		sql += StringUtil::Format("ADD COLUMN %s%s %s", add_info.if_column_not_exists ? "IF NOT EXISTS " : "",
-		                          KeywordHelper::WriteOptionallyQuoted(add_info.new_column.Name()),
-		                          add_info.new_column.Type().ToString());
-		if (add_info.new_column.HasDefaultValue()) {
-			sql += StringUtil::Format(" DEFAULT %s", add_info.new_column.DefaultValue().ToString());
-		}
-		break;
-	}
-	case AlterTableType::REMOVE_COLUMN: {
-		auto &remove_info = info.Cast<RemoveColumnInfo>();
-		sql += StringUtil::Format("DROP COLUMN %s%s", remove_info.if_column_exists ? "IF EXISTS " : "",
-		                          KeywordHelper::WriteOptionallyQuoted(remove_info.removed_column));
-		break;
-	}
-	case AlterTableType::RENAME_COLUMN: {
-		auto &rename_info = info.Cast<RenameColumnInfo>();
-		sql += StringUtil::Format("RENAME COLUMN %s TO %s", KeywordHelper::WriteOptionallyQuoted(rename_info.old_name),
-		                          KeywordHelper::WriteOptionallyQuoted(rename_info.new_name));
-		break;
-	}
-	case AlterTableType::RENAME_TABLE: {
-		auto &rename_info = info.Cast<RenameTableInfo>();
-		sql = StringUtil::Format("ALTER TABLE %s RENAME TO %s", table_name,
-		                         KeywordHelper::WriteOptionallyQuoted(rename_info.new_table_name));
-		break;
-	}
-	case AlterTableType::ALTER_COLUMN_TYPE: {
-		auto &change_info = info.Cast<ChangeColumnTypeInfo>();
-		sql +=
-		    StringUtil::Format("ALTER COLUMN %s TYPE %s", KeywordHelper::WriteOptionallyQuoted(change_info.column_name),
-		                       change_info.target_type.ToString());
-		if (change_info.expression) {
-			sql += StringUtil::Format(" USING %s", change_info.expression->ToString());
-		}
-		break;
-	}
-	case AlterTableType::SET_DEFAULT: {
-		auto &set_default_info = info.Cast<SetDefaultInfo>();
-		auto column_name = KeywordHelper::WriteOptionallyQuoted(set_default_info.column_name);
-		// DROP DEFAULT is parsed as SET DEFAULT with no expression.
-		if (!set_default_info.expression) {
-			sql += StringUtil::Format("ALTER COLUMN %s DROP DEFAULT", column_name);
-			break;
-		}
-		sql +=
-		    StringUtil::Format("ALTER COLUMN %s SET DEFAULT %s", column_name, set_default_info.expression->ToString());
-		break;
-	}
-	case AlterTableType::SET_NOT_NULL: {
-		auto &set_not_null_info = info.Cast<SetNotNullInfo>();
-		sql += StringUtil::Format("ALTER COLUMN %s SET NOT NULL",
-		                          KeywordHelper::WriteOptionallyQuoted(set_not_null_info.column_name));
-		break;
-	}
-	case AlterTableType::DROP_NOT_NULL: {
-		auto &drop_not_null_info = info.Cast<DropNotNullInfo>();
-		sql += StringUtil::Format("ALTER COLUMN %s DROP NOT NULL",
-		                          KeywordHelper::WriteOptionallyQuoted(drop_not_null_info.column_name));
-		break;
-	}
-	case AlterTableType::ADD_CONSTRAINT: {
-		auto &add_constraint_info = info.Cast<AddConstraintInfo>();
-		sql += StringUtil::Format("ADD %s", add_constraint_info.constraint->ToString());
-		break;
-	}
-	default:
-		throw NotImplementedException("Unsupported ALTER TABLE type for remote execution");
-	}
-
-	return sql;
-}
-
 DistributedClient &GetDistributedClient(ClientContext &context, TableCatalogEntry &table) {
 	return GetDistributedClient(context, table.ParentCatalog());
 }
@@ -127,9 +48,9 @@ DistributedClient &GetDistributedClient(ClientContext &context, Catalog &catalog
 	return dh_catalog.GetClient(context);
 }
 
-string QualifiedRemoteName(const string &schema_name, const string &entry_name) {
-	return StringUtil::Format("%s.%s", KeywordHelper::WriteQuoted(schema_name, '"'),
-	                          KeywordHelper::WriteQuoted(entry_name, '"'));
+string QualifiedRemoteName(const Identifier &schema_name, const Identifier &entry_name) {
+	return StringUtil::Format("%s.%s", SQLQuotedIdentifier::ToString(schema_name),
+	                          SQLQuotedIdentifier::ToString(entry_name));
 }
 
 } // namespace duckdb

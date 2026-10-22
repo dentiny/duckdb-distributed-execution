@@ -80,8 +80,8 @@ bool HasDefaultQuerySettings(ClientContext &context) {
 }
 
 // Functions reading the session state, environment or sequences, which differ on the server.
-bool ReadsSessionState(const string &function_name) {
-	static const case_insensitive_set_t SESSION_FUNCTIONS {
+bool ReadsSessionState(const Identifier &function_name) {
+	static const identifier_set_t SESSION_FUNCTIONS {
 	    "currval",        "current_catalog",   "current_connection_id",  "current_database",
 	    "current_date",   "current_localtime", "current_localtimestamp", "current_query",
 	    "current_schema", "current_schemas",   "current_setting",        "current_transaction_id",
@@ -165,18 +165,16 @@ private:
 		case ExpressionClass::COLUMN_REF: {
 			// Table names are rewritten without the client's catalog, so columns qualified with it no longer resolve.
 			auto &column_names = expr.Cast<ColumnRefExpression>().column_names;
-			pushable =
-			    pushable && !(column_names.size() > 2 && StringUtil::CIEquals(column_names[0], catalog.GetName()));
+			pushable = pushable && !(column_names.size() > 2 && column_names[0] == catalog.GetName());
 			break;
 		}
 		case ExpressionClass::FUNCTION: {
 			// Client-side macros and functions are unknown to the server.
 			auto &function = expr.Cast<FunctionExpression>();
-			EntryLookupInfo lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.function_name);
-			auto entry =
-			    Catalog::GetEntry(context, function.catalog, function.schema, lookup, OnEntryNotFound::RETURN_NULL);
+			EntryLookupInfo lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName());
+			auto entry = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
 			pushable = pushable && entry && entry->ParentCatalog().IsSystemCatalog() &&
-			           !ReadsSessionState(function.function_name);
+			           !ReadsSessionState(function.FunctionName());
 			break;
 		}
 		case ExpressionClass::SUBQUERY:
@@ -206,17 +204,20 @@ private:
 	}
 
 	void VisitBaseTable(BaseTableRef &table_ref) {
-		EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, table_ref.table_name);
-		auto entry = Catalog::GetEntry(context, table_ref.catalog_name, table_ref.schema_name, lookup,
-		                               OnEntryNotFound::RETURN_NULL);
+		EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, table_ref.GetQualifiedName());
+		auto entry = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
 		// Like the binder, `a.b` falls back to table `b` in catalog `a` when there is no schema `a`.
-		if (!entry && table_ref.catalog_name.empty() && !table_ref.schema_name.empty()) {
-			entry = Catalog::GetEntry(context, table_ref.schema_name, "", lookup, OnEntryNotFound::RETURN_NULL);
+		if (!entry && table_ref.GetQualifiedName().Catalog().empty() &&
+		    !table_ref.GetQualifiedName().Schema().empty()) {
+			entry = Catalog::GetEntry(context,
+			                          EntryLookupInfo(lookup, QualifiedName(table_ref.GetQualifiedName().Schema(),
+			                                                                Identifier(), table_ref.Table())),
+			                          OnEntryNotFound::RETURN_NULL);
 		}
 		// Views are only known to the client, and the client's catalog name is unknown to the server.
 		const bool remote_table =
 		    entry && entry->type == CatalogType::TABLE_ENTRY && &entry->ParentCatalog() == &catalog;
-		if (table_ref.catalog_name.empty() && table_ref.schema_name.empty()) {
+		if (table_ref.GetQualifiedName().Catalog().empty() && table_ref.GetQualifiedName().Schema().empty()) {
 			// An unqualified name may refer to a CTE, so it is kept, which only resolves to the same table on the
 			// server in its default schema. No table entry means a CTE, as the plan only reads remote tables.
 			pushable = pushable && (!entry || (remote_table && entry->ParentSchema().name == DEFAULT_SCHEMA));
@@ -226,9 +227,7 @@ private:
 			pushable = false;
 			return;
 		}
-		table_ref.catalog_name.clear();
-		table_ref.schema_name = entry->ParentSchema().name;
-		table_ref.table_name = entry->name;
+		table_ref.SetQualifiedName(Identifier(), entry->ParentSchema().name, entry->name);
 	}
 
 	ClientContext &context;
@@ -239,7 +238,7 @@ private:
 void OptimizeDistributedQuery(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	auto &context = input.context;
 	Value enabled;
-	context.TryGetCurrentSetting(QUERY_PUSHDOWN_SETTING, enabled);
+	context.TryGetCurrentSetting(Identifier(QUERY_PUSHDOWN_SETTING), enabled);
 	if (!enabled.GetValue<bool>() || !HasDefaultQuerySettings(context)) {
 		return;
 	}
@@ -266,7 +265,7 @@ void OptimizeDistributedQuery(OptimizerExtensionInput &input, unique_ptr<Logical
 
 	plan->ResolveOperatorTypes();
 	auto types = plan->types;
-	vector<string> names;
+	vector<Identifier> names;
 	vector<ColumnIndex> column_ids;
 	for (idx_t idx = 0; idx < types.size(); ++idx) {
 		names.emplace_back(StringUtil::Format("#%llu", idx));

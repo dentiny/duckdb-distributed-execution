@@ -6,15 +6,15 @@
 #include <charconv>
 #include <utility>
 
+#include <string_view>
+
 namespace duckdb {
 
 RemoteEndpoint ParseRemoteEndpoint(const string &path) {
-	// TODO(hjiang): use string_view after DuckDB V2.0 release.
-	constexpr const char *GRPC_SCHEME = "grpc://";
-	constexpr idx_t GRPC_SCHEME_LENGTH = 7;
-	auto endpoint = path;
-	if (StringUtil::StartsWith(endpoint, GRPC_SCHEME)) {
-		endpoint = endpoint.substr(GRPC_SCHEME_LENGTH);
+	constexpr std::string_view GRPC_SCHEME = "grpc://";
+	std::string_view endpoint(path);
+	if (endpoint.substr(0, GRPC_SCHEME.size()) == GRPC_SCHEME) {
+		endpoint.remove_prefix(GRPC_SCHEME.size());
 	} else if (endpoint.find("://") != string::npos) {
 		throw InvalidInputException("Duckherder ATTACH only supports grpc:// endpoints");
 	}
@@ -44,7 +44,7 @@ RemoteEndpoint ParseRemoteEndpoint(const string &path) {
 		}
 	}
 
-	auto host = endpoint.substr(0, port_separator);
+	auto host = string(endpoint.substr(0, port_separator));
 	const auto port_text = endpoint.substr(port_separator + 1);
 	int port = 0;
 	const auto parse_result = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);

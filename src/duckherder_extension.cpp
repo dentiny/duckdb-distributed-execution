@@ -35,20 +35,21 @@ void LoadInternal(ExtensionLoader &loader) {
 	// Whole queries are pushed down first; aggregates are pushed down only from queries that stay on the client.
 	OptimizerExtension::Register(config, GetDistributedQueryPushdownExtension());
 	OptimizerExtension::Register(config, GetDistributedAggregatePushdownExtension());
-	config.AddExtensionOption(QUERY_PUSHDOWN_SETTING, "Push whole queries reading only remote tables to the server",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
-	config.AddExtensionOption(RETRY_MAX_ATTEMPTS_SETTING, "Maximum number of attempts for retryable Duckherder RPCs",
-	                          LogicalType::UBIGINT, Value::UBIGINT(DEFAULT_RETRY_MAX_ATTEMPTS), nullptr,
-	                          SetScope::GLOBAL);
-	config.AddExtensionOption(RETRY_INITIAL_BACKOFF_MS_SETTING, "Initial Duckherder RPC retry backoff in milliseconds",
-	                          LogicalType::BIGINT, Value::BIGINT(DEFAULT_RETRY_INITIAL_BACKOFF_MS), nullptr,
-	                          SetScope::GLOBAL);
-	config.AddExtensionOption(RETRY_MAX_BACKOFF_MS_SETTING, "Maximum Duckherder RPC retry backoff in milliseconds",
-	                          LogicalType::BIGINT, Value::BIGINT(DEFAULT_RETRY_MAX_BACKOFF_MS), nullptr,
-	                          SetScope::GLOBAL);
-	config.AddExtensionOption(RETRY_JITTER_RATIO_SETTING, "Jitter ratio applied to Duckherder RPC retry backoff",
-	                          LogicalType::DOUBLE, Value::DOUBLE(DEFAULT_RETRY_JITTER_RATIO), nullptr,
-	                          SetScope::GLOBAL);
+	config.AddExtensionOption(Identifier(QUERY_PUSHDOWN_SETTING),
+	                          "Push whole queries reading only remote tables to the server", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(true));
+	config.AddExtensionOption(Identifier(RETRY_MAX_ATTEMPTS_SETTING),
+	                          "Maximum number of attempts for retryable Duckherder RPCs", LogicalType::UBIGINT,
+	                          Value::UBIGINT(DEFAULT_RETRY_MAX_ATTEMPTS), nullptr, SetScope::GLOBAL);
+	config.AddExtensionOption(Identifier(RETRY_INITIAL_BACKOFF_MS_SETTING),
+	                          "Initial Duckherder RPC retry backoff in milliseconds", LogicalType::BIGINT,
+	                          Value::BIGINT(DEFAULT_RETRY_INITIAL_BACKOFF_MS), nullptr, SetScope::GLOBAL);
+	config.AddExtensionOption(Identifier(RETRY_MAX_BACKOFF_MS_SETTING),
+	                          "Maximum Duckherder RPC retry backoff in milliseconds", LogicalType::BIGINT,
+	                          Value::BIGINT(DEFAULT_RETRY_MAX_BACKOFF_MS), nullptr, SetScope::GLOBAL);
+	config.AddExtensionOption(Identifier(RETRY_JITTER_RATIO_SETTING),
+	                          "Jitter ratio applied to Duckherder RPC retry backoff", LogicalType::DOUBLE,
+	                          Value::DOUBLE(DEFAULT_RETRY_JITTER_RATIO), nullptr, SetScope::GLOBAL);
 
 	config.AddExtensionOption("duckherder_async_threads",
 	                          "Worker RPC thread limit (0: min(4 * DuckDB threads, 256)); applied on next dispatch",

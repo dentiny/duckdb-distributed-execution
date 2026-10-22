@@ -204,7 +204,7 @@ arrow::Status DistributedFlightServer::DoGetImpl(const arrow::flight::ServerCall
 	}
 	shared_ptr<ClientRegistration> registration;
 	if (!clients.Lookup(request.client_id(), registration)) {
-		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
+		return arrow::Status::Invalid(string(ClientRegistry::NOT_REGISTERED_ERROR));
 	}
 	ClientRegistry::Touch(registration);
 
@@ -260,7 +260,7 @@ arrow::Status DistributedFlightServer::DoPutImpl(const arrow::flight::ServerCall
 	request_identity.set_transaction_mode(static_cast<distributed::TransactionMode>(transaction_mode));
 	shared_ptr<ClientRegistration> registration;
 	if (!clients.Lookup(client_id, registration)) {
-		return arrow::Status::Invalid(ClientRegistry::NOT_REGISTERED_ERROR);
+		return arrow::Status::Invalid(string(ClientRegistry::NOT_REGISTERED_ERROR));
 	}
 	if (registration->role != distributed::CLIENT_ROLE_READ_WRITE) {
 		return arrow::Status::Invalid("Duckherder client is read-only");

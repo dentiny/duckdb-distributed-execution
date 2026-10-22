@@ -4,7 +4,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_between_expression.hpp"
@@ -26,7 +26,7 @@ namespace duckdb {
 
 namespace {
 
-bool IsPushableAggregate(const string &name) {
+bool IsPushableAggregate(const Identifier &name) {
 	return name == "count_star" || name == "count" || name == "sum" || name == "min" || name == "max" || name == "avg";
 }
 
@@ -84,7 +84,7 @@ string RenderExpression(const RemoteScope &scope, const Expression &expr) {
 		auto &function = expr.Cast<BoundFunctionExpression>();
 		// Optimizer-internal functions, such as compressed materialization's, cannot be bound from SQL.
 		if (function.function.GetStability() != FunctionStability::CONSISTENT ||
-		    StringUtil::StartsWith(function.function.name, "__internal_")) {
+		    function.function.name.StartsWith("__internal_")) {
 			return "";
 		}
 		vector<string> args;
@@ -92,7 +92,7 @@ string RenderExpression(const RemoteScope &scope, const Expression &expr) {
 			return "";
 		}
 		// Quoting also calls operators by name, e.g. "+"(a, b).
-		return StringUtil::Format("%s(%s)", KeywordHelper::WriteQuoted(function.function.name, '"'),
+		return StringUtil::Format("%s(%s)", SQLQuotedIdentifier::ToString(function.function.name),
 		                          StringUtil::Join(args, ", "));
 	}
 	case ExpressionClass::BOUND_COMPARISON: {
@@ -175,7 +175,7 @@ string RenderAggregate(const RemoteScope &scope, const Expression &expr) {
 	}
 	auto &aggregate = expr.Cast<BoundAggregateExpression>();
 	// Statistics propagation turns `sum` into `sum_no_overflow` once overflow is ruled out, which `sum` also computes.
-	const string name = aggregate.function.name == "sum_no_overflow" ? "sum" : aggregate.function.name;
+	const Identifier name = aggregate.function.name == "sum_no_overflow" ? Identifier("sum") : aggregate.function.name;
 	if (aggregate.IsDistinct() || aggregate.filter || aggregate.order_bys || !IsPushableAggregate(name)) {
 		return "";
 	}
@@ -340,11 +340,11 @@ string GetColumnSQL(const TableCatalogEntry &table, column_t column_id, LogicalT
 			throw InternalException("Table %s has no virtual column %llu", table.name, column_id);
 		}
 		type = entry->second.type;
-		return KeywordHelper::WriteOptionallyQuoted(entry->second.name);
+		return SQLIdentifier::ToString(entry->second.name);
 	}
 	auto &column = table.GetColumn(LogicalIndex(column_id));
 	type = column.Type();
-	return KeywordHelper::WriteOptionallyQuoted(column.Name());
+	return SQLIdentifier::ToString(column.Name());
 }
 
 namespace {

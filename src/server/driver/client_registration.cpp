@@ -19,7 +19,7 @@ ClientRegistration::ClientRegistration(shared_ptr<ServedDatabase> served_databas
 	if (executor_connection != nullptr) {
 		distributed_executor = make_uniq<DistributedExecutor>(worker_manager, *executor_connection, storage_config);
 		worker_fragments = make_shared_ptr<WorkerFragmentState>(*distributed_executor, *executor_connection);
-		connection->context->registered_state->Insert(WorkerFragmentState::NAME, worker_fragments);
+		connection->context->registered_state->Insert(string(WorkerFragmentState::NAME), worker_fragments);
 	}
 }
 
