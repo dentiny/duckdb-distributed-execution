@@ -624,13 +624,14 @@ TEST_CASE("Only scans every output row comes from one row of are partitioned", "
 		REQUIRE(delim_executions.size() == 1);
 		INFO(delim_executions[0].sql);
 		REQUIRE(delim_executions[0].sql.find("(partitioned)") == delim_executions[0].sql.rfind("(partitioned)"));
-		// skew, the largest scan, is below an aggregate grouped by something other than a split key, so it is not
-		// split.
-		REQUIRE(
-		    fixture
-		        .RequireLocalResult("SELECT count(*), sum(d.multiplier) FROM dim d JOIN (SELECT k, avg(amount) AS a "
-		                            "FROM skew GROUP BY k) t ON d.k = t.k WHERE t.a > 1.0")
-		        .empty());
+		// skew, the largest scan, is below an aggregate grouped by something other than a split key, so the Join is not
+		// split. Workers only run that aggregate, the Join's input.
+		auto input_executions =
+		    fixture.RequireLocalResult("SELECT count(*), sum(d.multiplier) FROM dim d JOIN (SELECT k, avg(amount) AS a "
+		                               "FROM skew GROUP BY k) t ON d.k = t.k WHERE t.a > 1.0");
+		REQUIRE(input_executions.size() == 1);
+		INFO(input_executions[0].sql);
+		REQUIRE(input_executions[0].sql == "aggregate avg(amount) group by k over object_db.main.skew");
 		auto executions = fixture.RequireLocalResult(three_table_sql);
 		REQUIRE(executions.size() == 1);
 		REQUIRE(executions[0].execution_mode == QueryExecutionMode::ROW_GROUP_PARTITION);
@@ -731,14 +732,15 @@ TEST_CASE("Join fragments split tables ordered on the Join key by key ranges", "
 		REQUIRE(executions.size() == 1);
 		INFO(executions[0].sql);
 		REQUIRE(executions[0].sql.find("(partitioned)") != executions[0].sql.rfind("(partitioned)"));
-		// DuckDB decorrelates this one into a CTE over ord and a MARK Join instead of a DELIM_JOIN. Only the CTE's scan
-		// of ord runs on workers.
-		// TODO: Split the MARK Join over the CTE by the correlated key, as DELIM_JOINs are.
+		// DuckDB decorrelates this one into a CTE over ord and a MARK Join on IS NOT DISTINCT FROM instead of a
+		// DELIM_JOIN. Split by the correlated key, each task holds the CTE's rows and the subquery's for its keys.
 		executions =
 		    fixture.RequireLocalResult("SELECT count(*), sum(o.flag) FROM ord o WHERE NOT EXISTS (SELECT 1 FROM "
 		                               "item i WHERE i.i_key = o.o_key AND i.amount > o.flag + 7)");
 		REQUIRE(executions.size() == 1);
-		REQUIRE(StringUtil::StartsWith(executions[0].sql, "scan over object_db.main.ord"));
+		INFO(executions[0].sql);
+		REQUIRE(executions[0].sql == "aggregate count_star(), sum(flag) over object_db.main.ord (partitioned), "
+		                             "object_db.main.item (partitioned)");
 		// Items without a key make NOT IN unknown for every order without a match, so item is never split there. The
 		// cost model keeps the replicated item local, so it is bypassed.
 		REQUIRE_FALSE(fixture.client->Query("SET duckherder_join_partitioning = 'always'")->HasError());
@@ -928,12 +930,78 @@ TEST_CASE("Joins shuffle the input not ordered on the key to the tasks of its ke
 			REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.fact (shuffled)"));
 		}
 
+		// A correlated subquery becomes a CTE over dim and a MARK Join on the key, with fact shuffled to the tasks.
+		auto correlated = fixture.RequireLocalResult(
+		    "SELECT d.g, count(*) FROM dim d WHERE NOT EXISTS (SELECT 1 FROM fact f WHERE f.k = d.k AND f.amount > d.g "
+		    "+ 7) GROUP BY d.g ORDER BY d.g");
+		REQUIRE(correlated.size() == 1);
+		INFO(correlated[0].sql);
+		REQUIRE(StringUtil::Contains(correlated[0].sql, "object_db.main.dim (partitioned)"));
+		REQUIRE(StringUtil::Contains(correlated[0].sql, "object_db.main.fact (shuffled)"));
+
 		// A producer that cannot start makes the driver run the fragment itself.
 		REQUIRE(fixture.manager->RegisterWorker("unreachable", "grpc://localhost:1").ok());
 		auto executions = fixture.RequireLocalResult(
 		    "SELECT count(*), count(d.k), count(f.k), sum(f.amount) FROM dim d FULL OUTER JOIN fact f ON d.k = f.k");
 		REQUIRE(executions.size() == 1);
 		REQUIRE(executions[0].execution_mode == QueryExecutionMode::LOCAL);
+	}
+	std::filesystem::remove_all(root);
+}
+
+TEST_CASE("Correlated subqueries that return few rows are cut below operators that reduce them", "[worker_fragment]") {
+	auto root = CreateRoot("duckherder_few_rows");
+	{
+		FragmentFixture fixture(root);
+		auto &executor_connection = fixture.executor_connection;
+		// part and supp are stored in key order, line is not.
+		for (const auto &sql : {"CREATE TABLE part (k BIGINT NOT NULL, g INTEGER)",
+		                        "INSERT INTO part SELECT i, i % 50 FROM range(300000) t(i)",
+		                        "CREATE TABLE supp (k BIGINT NOT NULL, s BIGINT NOT NULL, amount INTEGER)",
+		                        "INSERT INTO supp SELECT i // 2, i % 997, i % 13 FROM range(600000) t(i)",
+		                        "CREATE TABLE line (k BIGINT NOT NULL, s BIGINT NOT NULL, q INTEGER)",
+		                        "INSERT INTO line SELECT ((i * 7919) % 600000) // 2, ((i * 7919) % 600000) % 997, i % "
+		                        "7 FROM range(900000) "
+		                        "t(i)",
+		                        "CREATE TABLE small AS SELECT i AS s, 'name' || i AS name FROM range(997) t(i)"}) {
+			REQUIRE_FALSE(executor_connection->Query(sql)->HasError());
+		}
+		REQUIRE(fixture.manager->StartLocalWorkers(2).ok());
+
+		// The subqueries become CTEs below a semi Join, which workers cannot run whole because small is replicated.
+		// The IN over part becomes a MARK Join on keys that cannot be NULL, so it is split by the key too.
+		auto executions = fixture.RequireLocalResult(
+		    "SELECT name FROM small WHERE s IN (SELECT p.s FROM supp p WHERE p.k IN (SELECT k FROM part WHERE g = 3) "
+		    "AND p.amount > (SELECT 0.5 * sum(q) FROM line l WHERE l.k = p.k AND l.s = p.s)) ORDER BY name");
+		REQUIRE(executions.size() == 1);
+		INFO(executions[0].sql);
+		REQUIRE(StringUtil::StartsWith(executions[0].sql, "cte over "));
+		REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.line (shuffled)"));
+
+		// A CTE that ends with an ORDER BY returns its rows in order, which concatenating the tasks' rows would lose.
+		executions =
+		    fixture.RequireLocalResult("WITH t AS MATERIALIZED (SELECT k, s FROM supp) SELECT * FROM t ORDER BY s, k");
+		for (const auto &execution : executions) {
+			INFO(execution.sql);
+			REQUIRE_FALSE(StringUtil::StartsWith(execution.sql, "cte over "));
+		}
+
+		// Workers cannot run a CTE that writes the database.
+		auto deleted = fixture.client->Query(
+		    "WITH d AS (DELETE FROM small WHERE s < 3 RETURNING s) SELECT count(*) FROM line JOIN d ON line.s = d.s");
+		REQUIRE_FALSE(deleted->HasError());
+		auto matches = executor_connection->Query("SELECT count(*) FROM line WHERE s < 3");
+		REQUIRE(deleted->Collection().GetValue(0, 0) == matches->Collection().GetValue(0, 0));
+		REQUIRE(fixture.client->Query("SELECT count(*) FROM small")->Collection().GetValue(0, 0) == Value::BIGINT(994));
+		fixture.state->TakeExecutions();
+
+		// Below a top-N, the CTE returns few of the rows it reads.
+		executions = fixture.RequireLocalResult(
+		    "SELECT p.k, p.amount FROM supp p, part WHERE p.k = part.k AND part.g = 7 AND p.amount = (SELECT "
+		    "min(p2.amount) FROM supp p2 WHERE p2.k = p.k) ORDER BY p.amount DESC, p.k LIMIT 10");
+		REQUIRE(executions.size() == 1);
+		INFO(executions[0].sql);
+		REQUIRE(StringUtil::StartsWith(executions[0].sql, "cte over "));
 	}
 	std::filesystem::remove_all(root);
 }
