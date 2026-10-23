@@ -23,7 +23,6 @@
 #include "server/driver/worker_manager.hpp"
 #include "server/driver/worker_node_client.hpp"
 #include "server/object_storage_database.hpp"
-#include "server/worker/row_group_range_scan.hpp"
 #include "server/worker/worker_node.hpp"
 #include "utils/network_utils.hpp"
 
@@ -155,7 +154,6 @@ TEST_CASE("Task plans read contiguous whole row groups up to the end of the tabl
 	}
 	{
 		DuckDB reader_db(nullptr);
-		OptimizerExtension::Register(DBConfig::GetConfig(*reader_db.instance), GetRowGroupRangeScanExtension());
 		Connection reader(reader_db);
 		REQUIRE_FALSE(reader.Query("LOAD duckdb_object_storage")->HasError());
 		REQUIRE_FALSE(reader.Query("SET duckdb_objfs_backend = 'local'")->HasError());

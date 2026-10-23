@@ -2,7 +2,6 @@
 #include "core_functions_extension.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "duckdb/main/config.hpp"
 #include "duckdb/main/query_result_stream.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
@@ -11,7 +10,6 @@
 #include "server/startup_sql.hpp"
 #include "server/validation.hpp"
 #include "server/worker/exchange_read.hpp"
-#include "server/worker/row_group_range_scan.hpp"
 #include "server/worker/worker_node.hpp"
 
 #include <arrow/array/builder_primitive.h>
@@ -223,8 +221,6 @@ WorkerNode::GetOrOpenObjectStorageDatabase(const distributed::StorageConfig &con
 			                              database_result.status().message());
 		}
 		instance = std::move(database_result).ValueOrDie();
-		OptimizerExtension::Register(DBConfig::GetConfig(*instance->GetInstance().instance),
-		                             GetRowGroupRangeScanExtension());
 		DUCKDB_LOG_DEBUG(*instance->GetInstance().instance,
 		                 StringUtil::Format("Worker %s attached %s", worker_id, config.database_uri()));
 	}
