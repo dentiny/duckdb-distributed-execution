@@ -1,5 +1,6 @@
 #include "duckherder_functions.hpp"
 
+#include "client/execution/distributed_query_pushdown.hpp"
 #include "client/execution/distributed_table_scan_function.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -85,6 +86,12 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	                      /*description=*/"Scans a table stored on a Duckherder server.",
 	                      /*examples=*/ {},
 	                      /*categories=*/ {"duckherder", "distributed_execution"});
+	RegisterTableFunction(
+	    loader, GetRemoteQueryFunction(),
+	    /*parameter_names=*/ {"database", "query"},
+	    /*description=*/"Runs a SELECT query on the server of an attached Duckherder database.",
+	    /*examples=*/ {"SELECT * FROM duckherder_query('dh', 'SELECT count(*) FROM main.orders');"},
+	    /*categories=*/ {"duckherder", "distributed_execution"});
 	RegisterScalarFunction(
 	    loader, DuckherderPragmas::GetLoadExtensionFunction(),
 	    /*parameter_names=*/ {"extension_name"},

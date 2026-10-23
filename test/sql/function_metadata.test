@@ -13,6 +13,7 @@ WHERE function_name IN (
     'duckherder_get_query_history',
     'duckherder_get_worker_count',
     'duckherder_load_extension',
+    'duckherder_query',
     'duckherder_register_worker',
     'duckherder_start_local_server',
     'duckherder_start_standalone_worker',
@@ -24,7 +25,7 @@ AND len(categories) > 0
 AND NOT list_contains(parameters, 'col0')
 AND NOT list_contains(parameters, 'col1');
 ----
-9
+10
 
 query I
 SELECT count(*)

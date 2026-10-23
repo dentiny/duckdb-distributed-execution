@@ -32,8 +32,7 @@ void LoadInternal(ExtensionLoader &loader) {
 	StorageExtension::Register(config, "duckherder", make_shared_ptr<DuckherderStorageExtension>());
 	OperatorExtension::Register(config, GetRemoteAlterTableOperatorExtension());
 	OperatorExtension::Register(config, GetRemoteCreateIndexOperatorExtension());
-	// Whole queries are pushed down first; aggregates are pushed down only from queries that stay on the client.
-	OptimizerExtension::Register(config, GetDistributedQueryPushdownExtension());
+	// Whole queries are pushed down by the catalog; aggregates are pushed down only from queries that stay on the client.
 	OptimizerExtension::Register(config, GetDistributedAggregatePushdownExtension());
 	config.AddExtensionOption(Identifier(QUERY_PUSHDOWN_SETTING),
 	                          "Push whole queries reading only remote tables to the server", LogicalType::BOOLEAN,

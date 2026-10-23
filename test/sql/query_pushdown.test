@@ -84,10 +84,10 @@ SELECT max(double_it(amount)) AS macro_query FROM dh.orders;
 198
 
 statement ok
-SET VARIABLE min_amount = 95;
+PREPARE param_query AS SELECT count(*) AS param_query FROM dh.orders WHERE id < $1;
 
 query I
-SELECT count(*) AS variable_query FROM dh.orders WHERE amount >= getvariable('min_amount');
+EXECUTE param_query(5);
 ----
 5
 
@@ -130,11 +130,6 @@ SELECT count(*) AS literal_order_query FROM dh.orders;
 statement ok
 RESET order_by_non_integer_literal;
 
-query I
-SELECT dh.orders.id AS qualified_query FROM dh.orders WHERE id = 1;
-----
-1
-
 statement ok
 CREATE SEQUENCE local_seq;
 
@@ -147,16 +142,113 @@ statement ok
 CREATE TYPE local_mood AS ENUM ('a', 'b');
 
 query I
-SELECT count(*) AS type_query FROM dh.customers WHERE 'a'::local_mood = 'a';
+SELECT count(*) AS type_query FROM dh.customers WHERE TRY_CAST(name AS local_mood) IS NULL;
 ----
 10
 
 query I
 SELECT count(*) FROM duckherder_get_query_execution_stats()
 WHERE sql SIMILAR TO
-    '.*(local_join|view_query|macro_query|variable_query|tz_query|setting_query|implicit_cast_query|literal_order_query|qualified_query|sequence_query|type_query).*';
+    '.*(local_join|view_query|macro_query|param_query|tz_query|setting_query|implicit_cast_query|literal_order_query|sequence_query|type_query).*';
 ----
 0
+
+# Expressions over client state that evaluate to a constant are folded on the client, so their queries still run on
+# the server.
+statement ok
+SET VARIABLE min_amount = 95;
+
+query I
+SELECT count(*) AS pushed_variable FROM dh.orders WHERE amount >= getvariable('min_amount');
+----
+5
+
+query I
+SELECT count(*) AS pushed_local_type FROM dh.customers WHERE 'a'::local_mood = 'a';
+----
+10
+
+query I
+SELECT dh.orders.id AS pushed_qualified FROM dh.orders WHERE id = 1;
+----
+1
+
+# Passing a TIMESTAMPTZ column through does not depend on the time zone.
+query I
+SELECT count(*) FROM (SELECT ts AS pushed_tz_passthrough FROM dh.orders);
+----
+100
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql SIMILAR TO '.*(pushed_variable|pushed_local_type|pushed_qualified|pushed_tz_passthrough).*';
+----
+4
+
+# Parts of a query that only read remote tables run on the server, even when the rest of the query stays local.
+query I
+SELECT count(*) FROM (SELECT id AS pushed_union_child FROM dh.customers UNION ALL SELECT id FROM local_ids);
+----
+11
+
+statement ok
+CREATE TABLE local_copy AS SELECT id AS pushed_ctas FROM dh.customers WHERE id < 3;
+
+statement ok
+INSERT INTO local_copy SELECT id AS pushed_insert_select FROM dh.customers WHERE id = 5;
+
+query I
+SELECT pushed_ctas FROM local_copy ORDER BY ALL;
+----
+0
+1
+2
+5
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql SIMILAR TO '.*(pushed_union_child|pushed_ctas|pushed_insert_select).*';
+----
+3
+
+# Unqualified tables resolve through the client's search path, not the server's default schema.
+statement ok
+CREATE SCHEMA dh.other;
+
+statement ok
+CREATE TABLE dh.other.orders AS SELECT 1 AS id;
+
+statement ok
+USE dh.other;
+
+query I
+SELECT count(*) AS pushed_search_path FROM orders;
+----
+1
+
+statement ok
+USE memory;
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%pushed_search_path%other.orders%';
+----
+1
+
+# duckherder_query runs a query on the server directly.
+query I
+SELECT * FROM duckherder_query('dh', 'SELECT count(*) AS direct_query FROM orders');
+----
+100
+
+statement error
+SELECT * FROM duckherder_query('memory', 'SELECT 1');
+----
+requires a Duckherder database
+
+statement error
+SELECT * FROM duckherder_query('dh', 'DELETE FROM orders');
+----
+requires a single SELECT query
 
 # Built-in types resolve the same on the server, even when the remote database is the default one.
 statement ok
