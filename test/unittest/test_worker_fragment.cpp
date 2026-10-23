@@ -978,6 +978,23 @@ TEST_CASE("Correlated subqueries that return few rows are cut below operators th
 		REQUIRE(StringUtil::StartsWith(executions[0].sql, "cte over "));
 		REQUIRE(StringUtil::Contains(executions[0].sql, "object_db.main.line (shuffled)"));
 
+		// A CTE that ends with an ORDER BY returns its rows in order, which concatenating the tasks' rows would lose.
+		executions =
+		    fixture.RequireLocalResult("WITH t AS MATERIALIZED (SELECT k, s FROM supp) SELECT * FROM t ORDER BY s, k");
+		for (const auto &execution : executions) {
+			INFO(execution.sql);
+			REQUIRE_FALSE(StringUtil::StartsWith(execution.sql, "cte over "));
+		}
+
+		// Workers cannot run a CTE that writes the database.
+		auto deleted = fixture.client->Query(
+		    "WITH d AS (DELETE FROM small WHERE s < 3 RETURNING s) SELECT count(*) FROM line JOIN d ON line.s = d.s");
+		REQUIRE_FALSE(deleted->HasError());
+		auto matches = executor_connection->Query("SELECT count(*) FROM line WHERE s < 3");
+		REQUIRE(deleted->Collection().GetValue(0, 0) == matches->Collection().GetValue(0, 0));
+		REQUIRE(fixture.client->Query("SELECT count(*) FROM small")->Collection().GetValue(0, 0) == Value::BIGINT(994));
+		fixture.state->TakeExecutions();
+
 		// Below a top-N, the CTE returns few of the rows it reads.
 		executions = fixture.RequireLocalResult(
 		    "SELECT p.k, p.amount FROM supp p, part WHERE p.k = part.k AND part.g = 7 AND p.amount = (SELECT "

@@ -322,7 +322,8 @@ string GetTableName(TableCatalogEntry &table) {
 	                          SQLIdentifier::ToString(table.schema.name), SQLIdentifier::ToString(table.name));
 }
 
-unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
+// Returns a scan of fragment's result, estimated at estimated_cardinality rows for the operators above it.
+unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment, idx_t estimated_cardinality) {
 	TableFunction function("worker_fragment", {}, WorkerFragmentExecute, nullptr, WorkerFragmentInitGlobal,
 	                       WorkerFragmentInitLocal);
 	auto types = fragment.types;
@@ -339,13 +340,17 @@ unique_ptr<LogicalGet> CreateFragment(Binder &binder, WorkerFragment fragment) {
 		column_ids.emplace_back(idx);
 	}
 	result->SetColumnIds(std::move(column_ids));
+	result->estimated_cardinality = estimated_cardinality;
+	result->has_estimated_cardinality = true;
 	return result;
 }
 
 // Collects the scans in op. Returns false if workers cannot read one, or if workers reading the same rows could
 // compute different results.
 bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<reference<LogicalGet>> &scans,
-                  bool in_delim_join = false, vector<TableIndex> ctes = {}) {
+                  bool in_delim_join = false, const vector<TableIndex> &ctes = {}) {
+	// The CTEs whose CTE_REFs the children of op may contain.
+	vector<TableIndex> child_ctes;
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
@@ -366,7 +371,8 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 		}
 		break;
 	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
-		ctes.push_back(op.Cast<LogicalMaterializedCTE>().table_index);
+		child_ctes = ctes;
+		child_ctes.push_back(op.Cast<LogicalMaterializedCTE>().table_index);
 		break;
 	case LogicalOperatorType::LOGICAL_CTE_REF:
 		// Workers only have the result of a CTE in the fragment too.
@@ -377,12 +383,19 @@ bool CollectScans(LogicalOperator &op, const WorkerFragmentState &state, vector<
 	case LogicalOperatorType::LOGICAL_LIMIT:
 	case LogicalOperatorType::LOGICAL_TOP_N:
 	case LogicalOperatorType::LOGICAL_SAMPLE:
+	// Workers read the database, and a CTE can hold a statement that writes it.
+	case LogicalOperatorType::LOGICAL_INSERT:
+	case LogicalOperatorType::LOGICAL_DELETE:
+	case LogicalOperatorType::LOGICAL_UPDATE:
+	case LogicalOperatorType::LOGICAL_MERGE_INTO:
+	case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
 		return false;
 	default:
 		break;
 	}
 	for (auto &child : op.children) {
-		if (!CollectScans(*child, state, scans, in_delim_join, ctes)) {
+		if (!CollectScans(*child, state, scans, in_delim_join,
+		                  op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE ? child_ctes : ctes)) {
 			return false;
 		}
 	}
@@ -844,7 +857,7 @@ unique_ptr<LogicalOperator> TryCreateDistinctFragment(ClientContext &context, Bi
 	fragment.description = DescribeAggregate(aggregate, scans, split);
 	fragment.merge_strategy = group_count == 0 ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
 	const auto types = fragment.types;
-	auto get = CreateFragment(binder, std::move(fragment));
+	auto get = CreateFragment(binder, std::move(fragment), aggregate.EstimateCardinality(context));
 	// The merge keeps the original indexes, so the operators above read it as they read the original aggregate.
 	vector<unique_ptr<Expression>> merges;
 	merges.reserve(aggregate.expressions.size());
@@ -949,7 +962,7 @@ unique_ptr<LogicalOperator> TryCreateAggregateFragment(ClientContext &context, B
 	fragment.types = partial_types;
 	fragment.description = DescribeAggregate(aggregate, scans, split);
 	fragment.merge_strategy = group_count == 0 ? MergeStrategy::AGGREGATE_MERGE : MergeStrategy::GROUP_BY_MERGE;
-	auto get = CreateFragment(binder, std::move(fragment));
+	auto get = CreateFragment(binder, std::move(fragment), aggregate.EstimateCardinality(context));
 
 	vector<unique_ptr<Expression>> merges;
 	merges.reserve(merge_names.size());
@@ -1023,11 +1036,36 @@ unique_ptr<LogicalOperator> TryCreateScanFragment(ClientContext &context, Binder
 	fragment.types = get.types;
 	fragment.description = StringUtil::Format("scan over %s", GetTableName(*table));
 	auto bindings = get.GetColumnBindings();
-	auto result = CreateFragment(binder, std::move(fragment));
+	auto result = CreateFragment(binder, std::move(fragment), get.EstimateCardinality(context));
 	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
 		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, ProjectionIndex(idx)));
 	}
 	return std::move(result);
+}
+
+// The estimated rows op returns. A materialized CTE returns its body's rows, not its definition's.
+idx_t ReturnedCardinality(ClientContext &context, LogicalOperator &op) {
+	if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+		return op.children[1]->EstimateCardinality(context);
+	}
+	return op.EstimateCardinality(context);
+}
+
+// Whether op returns its rows in an order, set by an ORDER BY or top-N that it ends with, which the driver loses when
+// it concatenates the tasks' rows.
+bool ReturnsOrderedRows(LogicalOperator &op) {
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_ORDER_BY:
+	case LogicalOperatorType::LOGICAL_TOP_N:
+		return true;
+	case LogicalOperatorType::LOGICAL_PROJECTION:
+	case LogicalOperatorType::LOGICAL_FILTER:
+		return ReturnsOrderedRows(*op.children[0]);
+	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
+		return ReturnsOrderedRows(*op.children[1]);
+	default:
+		return false;
+	}
 }
 
 // The most rows, as a share of the rows its scans read, that a fragment returns to be cut below an operator that
@@ -1041,7 +1079,7 @@ bool ReturnsFewRows(ClientContext &context, LogicalOperator &op, const vector<re
 	for (const auto &scan : scans) {
 		scanned_rows += scan.get().GetTable()->GetStorage().GetTotalRows();
 	}
-	return static_cast<double>(op.EstimateCardinality(context)) <= FEW_ROWS_SHARE * static_cast<double>(scanned_rows);
+	return static_cast<double>(ReturnedCardinality(context, op)) <= FEW_ROWS_SHARE * static_cast<double>(scanned_rows);
 }
 
 // Replaces op, a Join or a materialized CTE, with a fragment whose tasks each return op's rows for their part of the
@@ -1051,7 +1089,8 @@ unique_ptr<LogicalOperator> TryCreateRowsFragment(ClientContext &context, Binder
                                                   LogicalOperator &op, bool reduced,
                                                   vector<ReplacementBinding> &replacements) {
 	vector<reference<LogicalGet>> scans;
-	if (!CollectScans(op, state, scans) || scans.empty() || (reduced && !ReturnsFewRows(context, op, scans))) {
+	if (ReturnsOrderedRows(op) || !CollectScans(op, state, scans) || scans.empty() ||
+	    (reduced && !ReturnsFewRows(context, op, scans))) {
 		return nullptr;
 	}
 	WorkerFragment fragment;
@@ -1068,7 +1107,7 @@ unique_ptr<LogicalOperator> TryCreateRowsFragment(ClientContext &context, Binder
 	const auto head = op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE ? "cte" : "join";
 	fragment.description = DescribeFragment(head, scans, split);
 	auto bindings = op.GetColumnBindings();
-	auto result = CreateFragment(binder, std::move(fragment));
+	auto result = CreateFragment(binder, std::move(fragment), ReturnedCardinality(context, op));
 	for (idx_t idx = 0; idx < bindings.size(); ++idx) {
 		replacements.emplace_back(bindings[idx], ColumnBinding(result->table_index, ProjectionIndex(idx)));
 	}
