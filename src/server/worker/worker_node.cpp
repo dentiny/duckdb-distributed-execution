@@ -2,7 +2,6 @@
 #include "core_functions_extension.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
-#include "duckdb/main/config.hpp"
 #include "duckdb/main/query_result_stream.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/parser/statement/logical_plan_statement.hpp"
