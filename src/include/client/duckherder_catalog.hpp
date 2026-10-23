@@ -67,6 +67,8 @@ public:
 
 	// Get the remote session owned by this DuckDB connection.
 	DistributedClient &GetClient(ClientContext &context);
+	// Return no client when this attachment is unavailable to the connection.
+	optional_ptr<DistributedClient> TryGetClient(ClientContext &context);
 
 	// Returns the remote row count captured when the catalog was loaded, if known.
 	optional_idx GetEstimatedCardinality(const Identifier &schema_name, const Identifier &table_name) const;

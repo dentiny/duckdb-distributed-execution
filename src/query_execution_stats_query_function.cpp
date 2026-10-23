@@ -66,7 +66,7 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
                                                                       TableFunctionInitInput &input) {
 	auto result = make_uniq<QueryExecutionStatsData>();
 
-	DistributedClient *client_to_use = nullptr;
+	optional_ptr<DistributedClient> client_to_use;
 	auto &db_manager = DatabaseManager::Get(context);
 	auto databases = db_manager.GetDatabases();
 	for (auto &db : databases) {
@@ -75,12 +75,15 @@ unique_ptr<GlobalTableFunctionState> QueryExecutionStatsTableFuncInit(ClientCont
 			continue;
 		}
 		auto &duckherder_catalog = catalog.Cast<DuckherderCatalog>();
-		client_to_use = &duckherder_catalog.GetClient(context);
-		break;
+		client_to_use = duckherder_catalog.TryGetClient(context);
+		if (client_to_use) {
+			break;
+		}
 	}
 
 	if (client_to_use == nullptr) {
-		throw InvalidInputException("duckherder_get_query_execution_stats() requires an attached Duckherder database");
+		throw InvalidInputException("duckherder_get_query_execution_stats() requires an attached Duckherder database "
+		                            "accessible from the current connection");
 	}
 
 	auto query_result = client_to_use->GetQueryExecutionStats(result->query_stats);

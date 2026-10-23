@@ -40,6 +40,7 @@ void AddDescription(CreateFunctionInfo &info, vector<Identifier> parameter_names
 void RegisterScalarFunction(ExtensionLoader &loader, ScalarFunction function, vector<Identifier> parameter_names,
                             string description, vector<string> examples, vector<string> categories) {
 	NameParameters(function, parameter_names);
+	function.SetFallible();
 	CreateScalarFunctionInfo info(std::move(function));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	AddDescription(info, std::move(parameter_names), std::move(description), std::move(examples),

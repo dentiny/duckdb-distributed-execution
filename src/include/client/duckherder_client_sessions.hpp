@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client.pb.h"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
@@ -26,13 +27,15 @@ public:
 
 	// Get the remote session owned by this DuckDB connection, creating it on first use.
 	DistributedClient &GetClient(ClientContext &context);
+	// Skip detached attachments and live writers owned by another connection.
+	optional_ptr<DistributedClient> TryGetClient(ClientContext &context);
 	// Close every session; later GetClient calls fail.
 	void Close();
 	// Drop the session registered in this connection.
 	void RemoveState(ClientContext &context);
 
 private:
-	void EnsureWriteOwner(ClientContext &context) DUCKDB_REQUIRES(mu);
+	bool TryClaimWriteOwner(ClientContext &context) DUCKDB_REQUIRES(mu);
 	shared_ptr<DuckherderConnectionState> GetOrCreateState(ClientContext &context) DUCKDB_REQUIRES(mu);
 	void PruneExpiredStates() DUCKDB_REQUIRES(mu);
 

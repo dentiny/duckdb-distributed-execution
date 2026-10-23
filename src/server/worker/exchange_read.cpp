@@ -108,7 +108,7 @@ void ExchangeReadFunction(ClientContext &context, TableFunctionInput &input, Dat
 		}
 		auto producer = global.ClaimProducer();
 		if (!producer.IsValid()) {
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 		const auto &location = global.source.producers(NumericCast<int>(producer.GetIndex()));

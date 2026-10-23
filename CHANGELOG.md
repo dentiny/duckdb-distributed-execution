@@ -1,5 +1,10 @@
 ## 0.1.0
 
+### Fixed
+
+- Use an explicit row-count type when batching Arrow results on Linux and update object storage to the merged DuckDB v2 statistics and diagnostic fixes.
+- Use current vector APIs for exchange batches and declare network/server scalar operations fallible on DuckDB v2.
+
 ### Changed
 
 - Upgrade DuckDB to `v2.0.0`, extension-ci-tools to the latest commit, and the embedded object-storage extension to its v2-compatible `0.2.0` release.

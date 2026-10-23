@@ -31,7 +31,7 @@ vector<idx_t> ExchangeBuffer::Append(DataChunk &chunk) {
 		selection.Initialize(chunk.size());
 	}
 	UnifiedVectorFormat bucket_format;
-	chunk.data.back().ToUnifiedFormat(chunk.size(), bucket_format);
+	chunk.data.back().ToUnifiedFormat(bucket_format);
 	auto bucket_data = UnifiedVectorFormat::GetData<int32_t>(bucket_format);
 	for (idx_t row_idx = 0; row_idx < chunk.size(); ++row_idx) {
 		const auto idx = bucket_format.sel->get_index(row_idx);
@@ -52,7 +52,7 @@ vector<idx_t> ExchangeBuffer::Append(DataChunk &chunk) {
 		for (idx_t column_idx = 0; column_idx < types.size(); ++column_idx) {
 			rows.data[column_idx].Slice(chunk.data[column_idx], selections[bucket], counts[bucket]);
 		}
-		rows.SetCardinality(counts[bucket]);
+		rows.CheckCardinality(counts[bucket]);
 		buckets[bucket]->Append(rows);
 	}
 	return counts;
