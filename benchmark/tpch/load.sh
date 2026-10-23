@@ -32,10 +32,24 @@ fi
 # The local file is kept as the reference for verify.sh.
 [[ -f $TPCH_FILE ]] || "$DUCKDB" "$TPCH_FILE" -c "CALL dbgen(sf = $SF);"
 
-"$DUCKDB" -bail <<SQL
-$objfs_sql
+# The ObjFS database keeps uncommitted rows in memory until a checkpoint, so copy the rows in batches with a checkpoint
+# after each. Batches follow rowid order, so the tables keep the key order dbgen wrote them in.
+BATCH_ROWS=${BATCH_ROWS:-10000000}
+copy_sql="$objfs_sql
 ATTACH '$TPCH_FILE' AS src (READ_ONLY);
-COPY FROM DATABASE src TO objdb;
-CHECKPOINT objdb;
+COPY FROM DATABASE src TO objdb (SCHEMA);"
+while IFS='|' read -r table rows; do
+	for ((start = 0; start < rows; start += BATCH_ROWS)); do
+		copy_sql+="
+INSERT INTO objdb.$table SELECT * FROM src.$table WHERE rowid >= $start AND rowid < $((start + BATCH_ROWS));
+CHECKPOINT objdb;"
+	done
+	copy_sql+="
+SELECT CASE WHEN (SELECT count(*) FROM objdb.$table) = (SELECT count(*) FROM src.$table) THEN true
+	ELSE error('Copied a different number of rows of $table') END AS copied_$table;"
+done < <("$DUCKDB" -readonly -noheader -list "$TPCH_FILE" -c "SELECT table_name, estimated_size FROM duckdb_tables()")
+
+"$DUCKDB" -bail <<SQL
+$copy_sql
 SELECT table_name, estimated_size FROM duckdb_tables() WHERE database_name = 'objdb' ORDER BY table_name;
 SQL

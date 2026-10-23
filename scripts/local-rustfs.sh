@@ -195,8 +195,8 @@ smoke_test() {
 
 	"${DUCKDB_BIN}" -bail <<SQL
 SET extension_directory = '${work_dir}/extensions';
-FORCE INSTALL cache_httpfs FROM community;
-LOAD cache_httpfs;
+FORCE INSTALL httpfs;
+LOAD httpfs;
 LOAD duckdb_object_storage;
 CREATE SECRET rustfs (
     TYPE S3,

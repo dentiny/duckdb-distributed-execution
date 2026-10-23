@@ -18,4 +18,5 @@ duckdb_extension_load(
 if(NOT "$ENV{LATENCY_INJECTION_FS_DIR}" STREQUAL "")
   duckdb_extension_load(latency_injection_fs SOURCE_DIR
                         $ENV{LATENCY_INJECTION_FS_DIR})
+  duckdb_extension_statically_link(latency_injection_fs)
 endif()
