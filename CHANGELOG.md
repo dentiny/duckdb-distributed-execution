@@ -1,5 +1,9 @@
 ## 0.1.0
 
+### Added
+
+- Add `duckherder_query(database, query)` to run a SELECT query on the server of an attached Duckherder database.
+
 ### Fixed
 
 - Use an explicit row-count type when batching Arrow results on Linux and update object storage to the merged DuckDB v2 statistics and diagnostic fixes.
@@ -7,6 +11,8 @@
 
 ### Changed
 
+- Push whole queries to the server through DuckDB's remote catalog pushdown, which also pushes the remote parts of
+  set operations, `CREATE TABLE AS` and `INSERT ... SELECT` into local tables, and folds client-side constants first.
 - Upgrade DuckDB to `v2.0.0`, extension-ci-tools to the latest commit, and the embedded object-storage extension to its v2-compatible `0.2.0` release.
 - Require C++17 and use constexpr string views for fixed configuration, cache, and protocol names.
 - Adapt catalog, DDL, query planning, result schemas, and serialization to DuckDB's Identifier and QualifiedName APIs.

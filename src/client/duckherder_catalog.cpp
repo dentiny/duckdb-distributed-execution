@@ -2,6 +2,7 @@
 
 #include "client/duckherder_catalog_loader.hpp"
 #include "client/execution/distributed_client.hpp"
+#include "client/execution/distributed_query_pushdown.hpp"
 #include "client/execution/remote_create_table_as.hpp"
 #include "client/execution/remote_dml.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
@@ -215,6 +216,33 @@ void DuckherderCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	}
 	// The remote catalog is authoritative. After it accepts the DROP, remove any stale local children as well.
 	GetSchemaCatalogSet().DropEntry(transaction, info.GetQualifiedName().Name(), true);
+}
+
+bool DuckherderCatalog::Supports(RemoteCapability capability) const {
+	switch (capability) {
+	case RemoteCapability::IS_REMOTE:
+	case RemoteCapability::EXECUTE_QUERY_NODE:
+		return true;
+	default:
+		// DDL keeps going through the catalog, which caches the created entries on the client.
+		return false;
+	}
+}
+
+unique_ptr<TableRef> DuckherderCatalog::RemoteExecute(ClientContext &context, unique_ptr<QueryNode> node) {
+	return CreateRemoteQueryRef(context, *this, std::move(node));
+}
+
+bool DuckherderCatalog::SupportsPushdown(const ParsedExpression &expression) {
+	return SupportsQueryPushdown(expression);
+}
+
+bool DuckherderCatalog::SupportsPushdown(const TableRef &ref) {
+	return SupportsQueryPushdown(ref);
+}
+
+bool DuckherderCatalog::SupportsPushdown(const QueryNode &node) {
+	return SupportsQueryPushdown(node);
 }
 
 string DuckherderCatalog::GetServerUrl() const {
