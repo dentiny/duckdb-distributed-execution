@@ -21,17 +21,17 @@ From the repository root:
 ```sh
 # Storage, pinned away from the benchmark CPUs.
 scripts/local-rustfs.sh start
-docker update --cpuset-cpus 16-19 --memory 2g --memory-swap 2g duckherder-rustfs
+docker update --cpuset-cpus 10-15 --memory 6g --memory-swap 6g duckherder-rustfs
 
 # Data, once per scale factor. The local file is the reference for result checks.
 source benchmark/tpch/rustfs.env && mkdir -p benchmark/tpch/work
-TPCH_FILE=benchmark/tpch/work/tpch_sf10.duckdb benchmark/tpch/load.sh 10 s3://duckherder/tpch-sf10
+TPCH_FILE=benchmark/tpch/work/tpch_sf30.duckdb benchmark/tpch/load.sh 30 s3://duckherder/tpch-sf30
 
 # Benchmark with S3-like latency: client on CPUs 0-1, driver on 8-9, workers on 2-3, 4-5, and 6-7, each with 4 GiB.
 DUCKHERDER_STARTUP_SQL="$(cat benchmark/tpch/s3_latency.sql)" \
 WORKER_CPUS="2-3 4-5 6-7" WORKER_MEMORY=4G DRIVER_CPUS=8-9 DRIVER_MEMORY=4G \
 systemd-run --user --scope -p AllowedCPUs=0-1 -p CPUQuota=200% -p MemoryMax=4G \
-  benchmark/tpch/bench.sh --sf 10 --workers "0 3" --data-path s3://duckherder/tpch-sf10 --no-load --cold
+  benchmark/tpch/bench.sh --sf 30 --workers "0 1 3" --data-path s3://duckherder/tpch-sf30 --no-load --cold --reps 1
 ```
 
 `systemd-run --user` needs the `cpuset` controller delegated to user sessions (`Delegate=cpu cpuset io memory pids` in a `user@.service` drop-in).
@@ -93,73 +93,73 @@ Everything runs on one machine, an i7-12700K with 31 GiB of memory. Its CPUs 0-1
 | Client (`bench.sh` and the DuckDB shell it runs) | 0-1 | 4 GiB |
 | Worker 1, 2, 3 | 2-3, 4-5, 6-7 | 4 GiB each |
 | Driver | 8-9 | 4 GiB |
-| RustFS | 16-19 | 2 GiB |
+| RustFS | 10-15 | 6 GiB |
 
-So each DuckDB process gets both threads of one performance core. CPUs 10-15 stay idle.
+So each DuckDB process gets both threads of one performance core. CPUs 16-19 stay idle.
 
 - **DuckDB processes.** `bench.sh` starts the driver and each worker in its own systemd scope (`systemd-run --user --scope`), which is a cgroup. `AllowedCPUs` pins the scope to its CPUs. `CPUQuota` is set to 100% per CPU; DuckDB reads it to pick its thread count, because it ignores the cpuset. `MemoryMax` caps the scope's memory, and DuckDB sets its memory limit to 80% of it. The client gets the same limits from the outer `systemd-run` in the run command.
-- **RustFS.** RustFS is the S3-compatible object store holding the data. `scripts/local-rustfs.sh` runs it in a Docker container on the same machine, with its data in a Docker volume on the local disk, and serves S3 at `127.0.0.1:19000`. `docker update --cpuset-cpus 16-19 --memory 2g` pins it to the efficiency cores. Because storage is local, every request is fast; `s3_latency.sql` adds the delay a real S3 bucket would have (see above).
+- **RustFS.** RustFS is the S3-compatible object store holding the data. `scripts/local-rustfs.sh` runs it in a Docker container on the same machine, with its data in a Docker volume on the local disk, and serves S3 at `127.0.0.1:19000`. `docker update --cpuset-cpus 10-15 --memory 6g` pins it to the remaining three performance cores, so it serves the processes' reads without becoming the bottleneck. Because storage is local, every request is fast; `s3_latency.sql` adds the delay a real S3 bucket would have (see above).
 
 ## Results
 
-SF10 with the run command above (`--cold`, one run per query) on the machine described below. Seconds per query; Speedup is 0 workers over 3 workers. Queries 2, 13, 20 and 22 run on the driver; the others run on the workers. With 1 worker, the worker has the same two CPUs as the driver, so it takes as long as 0 workers.
+SF30 with the run command above (`--cold`, one run per query) on the machine described below. Seconds per query; Speedup is 0 workers over 3 workers. All 22 queries run on the workers; queries 13, 17, 20 and 22 shuffle an input between them. With 1 worker, the worker has the same two CPUs as the driver, so it takes as long as 0 workers.
 
 With simulated S3 latency (`s3_latency.sql`):
 
-![TPC-H SF10 cold start with simulated S3 latency](tpch-sf10-cold.png)
+![TPC-H SF30 cold start with simulated S3 latency](tpch-sf30-cold.png)
 
 | Query | 0 workers | 1 worker | 3 workers | Speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 28.63 | 29.68 | 10.89 | 2.63x |
-| 2 | 4.73 | 4.32 | 4.62 | 1.02x |
-| 3 | 44.68 | 44.71 | 15.79 | 2.83x |
-| 4 | 28.54 | 28.73 | 10.72 | 2.66x |
-| 5 | 48.08 | 48.32 | 17.53 | 2.74x |
-| 6 | 29.62 | 30.71 | 10.75 | 2.75x |
-| 7 | 54.43 | 53.85 | 19.71 | 2.76x |
-| 8 | 61.82 | 62.78 | 22.38 | 2.76x |
-| 9 | 66.83 | 66.97 | 26.59 | 2.51x |
-| 10 | 46.97 | 47.44 | 22.05 | 2.13x |
-| 11 | 4.24 | 3.99 | 3.20 | 1.32x |
-| 12 | 30.17 | 30.89 | 11.05 | 2.73x |
-| 13 | 22.57 | 23.02 | 22.56 | 1.00x |
-| 14 | 44.55 | 43.74 | 16.06 | 2.77x |
-| 15 | 41.88 | 41.60 | 14.99 | 2.79x |
-| 16 | 2.71 | 2.67 | 2.35 | 1.15x |
-| 17 | 42.49 | 42.59 | 33.20 | 1.28x |
-| 18 | 29.88 | 29.89 | 11.85 | 2.52x |
-| 19 | 48.71 | 48.67 | 17.46 | 2.79x |
-| 20 | 46.95 | 47.66 | 47.71 | 0.98x |
-| 21 | 44.57 | 44.14 | 16.14 | 2.76x |
-| 22 | 5.90 | 5.77 | 5.51 | 1.07x |
-| **Total** | **778.9** | **782.1** | **363.1** | **2.15x** |
+| 1 | 18.19 | 18.66 | 6.99 | 2.60x |
+| 2 | 3.02 | 3.13 | 2.04 | 1.48x |
+| 3 | 27.54 | 27.94 | 11.01 | 2.50x |
+| 4 | 17.82 | 18.04 | 8.24 | 2.16x |
+| 5 | 30.19 | 30.85 | 11.83 | 2.55x |
+| 6 | 17.81 | 18.29 | 6.98 | 2.55x |
+| 7 | 32.76 | 33.19 | 12.68 | 2.58x |
+| 8 | 34.79 | 35.40 | 13.91 | 2.50x |
+| 9 | 49.30 | 50.19 | 16.05 | 3.07x |
+| 10 | 28.66 | 29.39 | 14.66 | 1.96x |
+| 11 | 3.11 | 3.03 | 1.85 | 1.68x |
+| 12 | 19.89 | 20.25 | 8.40 | 2.37x |
+| 13 | 14.07 | 14.15 | 7.06 | 1.99x |
+| 14 | 25.52 | 25.14 | 9.91 | 2.58x |
+| 15 | 26.58 | 27.26 | 10.03 | 2.65x |
+| 16 | 2.35 | 2.42 | 2.18 | 1.08x |
+| 17 | 22.85 | 22.81 | 11.86 | 1.93x |
+| 18 | 25.32 | 25.34 | 25.33 | 1.00x |
+| 19 | 27.86 | 27.66 | 10.86 | 2.57x |
+| 20 | 27.75 | 28.14 | 11.86 | 2.34x |
+| 21 | 25.40 | 25.74 | 10.33 | 2.46x |
+| 22 | 4.14 | 5.30 | 3.06 | 1.35x |
+| **Total** | **484.9** | **492.3** | **217.1** | **2.23x** |
 
 Without simulated latency:
 
-![TPC-H SF10 cold start without latency](tpch-sf10-cold-no-latency.png)
+![TPC-H SF30 cold start without latency](tpch-sf30-cold-no-latency.png)
 
 | Query | 0 workers | 1 worker | 3 workers | Speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 2.87 | 2.94 | 1.79 | 1.60x |
-| 2 | 0.41 | 0.41 | 0.41 | 1.00x |
-| 3 | 3.75 | 3.65 | 2.46 | 1.53x |
-| 4 | 2.43 | 2.43 | 2.01 | 1.21x |
-| 5 | 3.79 | 3.72 | 2.50 | 1.51x |
-| 6 | 2.29 | 2.33 | 1.73 | 1.32x |
-| 7 | 4.02 | 4.08 | 2.77 | 1.45x |
-| 8 | 4.14 | 4.02 | 2.80 | 1.48x |
-| 9 | 5.58 | 5.55 | 3.61 | 1.54x |
-| 10 | 3.94 | 3.90 | 3.29 | 1.20x |
-| 11 | 0.35 | 0.35 | 0.65 | 0.53x |
-| 12 | 2.52 | 2.58 | 1.92 | 1.32x |
-| 13 | 2.63 | 2.66 | 2.65 | 0.99x |
-| 14 | 3.46 | 3.44 | 2.48 | 1.40x |
-| 15 | 3.10 | 3.20 | 2.28 | 1.36x |
-| 16 | 0.47 | 0.48 | 0.82 | 0.57x |
-| 17 | 3.11 | 3.17 | 4.45 | 0.70x |
-| 18 | 4.08 | 4.09 | 2.43 | 1.68x |
-| 19 | 3.72 | 3.71 | 2.56 | 1.45x |
-| 20 | 3.43 | 3.43 | 3.57 | 0.96x |
-| 21 | 4.18 | 4.28 | 2.67 | 1.57x |
-| 22 | 0.71 | 0.72 | 0.70 | 1.00x |
-| **Total** | **65.0** | **65.1** | **50.6** | **1.29x** |
+| 1 | 4.64 | 4.32 | 3.12 | 1.49x |
+| 2 | 0.61 | 0.61 | 0.69 | 0.88x |
+| 3 | 5.47 | 5.54 | 4.48 | 1.22x |
+| 4 | 3.79 | 3.85 | 3.68 | 1.03x |
+| 5 | 5.60 | 5.64 | 4.68 | 1.19x |
+| 6 | 3.17 | 3.34 | 2.94 | 1.08x |
+| 7 | 5.41 | 5.94 | 5.07 | 1.07x |
+| 8 | 5.81 | 5.87 | 5.17 | 1.12x |
+| 9 | 9.82 | 9.96 | 6.87 | 1.43x |
+| 10 | 5.71 | 5.74 | 6.21 | 0.92x |
+| 11 | 0.59 | 0.60 | 0.69 | 0.86x |
+| 12 | 3.92 | 3.95 | 3.34 | 1.17x |
+| 13 | 6.30 | 6.33 | 3.53 | 1.79x |
+| 14 | 4.40 | 4.37 | 4.20 | 1.05x |
+| 15 | 4.28 | 4.49 | 4.07 | 1.05x |
+| 16 | 1.02 | 1.03 | 1.22 | 0.84x |
+| 17 | 4.26 | 4.32 | 7.21 | 0.59x |
+| 18 | 7.25 | 7.41 | 7.41 | 0.98x |
+| 19 | 5.01 | 5.06 | 4.39 | 1.14x |
+| 20 | 5.06 | 5.21 | 5.34 | 0.95x |
+| 21 | 5.71 | 5.73 | 4.38 | 1.30x |
+| 22 | 1.28 | 1.46 | 1.40 | 0.92x |
+| **Total** | **99.1** | **100.8** | **90.1** | **1.10x** |
