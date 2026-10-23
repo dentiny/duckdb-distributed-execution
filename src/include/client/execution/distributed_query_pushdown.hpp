@@ -10,6 +10,7 @@ class Catalog;
 class ClientContext;
 class ParsedExpression;
 class QueryNode;
+class SQLStatement;
 class TableRef;
 
 // Whether whole queries are pushed down; otherwise only scans and aggregates are.
@@ -20,12 +21,22 @@ inline constexpr std::string_view QUERY_PUSHDOWN_SETTING = "duckherder_query_pus
 bool SupportsQueryPushdown(const ParsedExpression &expression);
 bool SupportsQueryPushdown(const TableRef &ref);
 bool SupportsQueryPushdown(const QueryNode &node);
+// Only CREATE TABLE AS runs on the server as a whole statement.
+bool SupportsStatementPushdown(const SQLStatement &statement);
 
-// Returns a `duckherder_query` call running `node`, which only reads tables of `catalog`, on the server.
+// Returns a `duckherder_query` call running `node`, which only uses tables of `catalog`, on the server.
 unique_ptr<TableRef> CreateRemoteQueryRef(ClientContext &context, Catalog &catalog, unique_ptr<QueryNode> node);
+// Returns a `duckherder_query` call running `statement`, which SupportsStatementPushdown accepts, on the server.
+unique_ptr<TableRef> CreateRemoteStatementRef(ClientContext &context, Catalog &catalog,
+                                              unique_ptr<SQLStatement> statement);
+// Returns a `duckherder_connected_query` call running the SQL of a connection CONNECT-ed to `catalog`.
+unique_ptr<TableRef> CreateConnectedQueryRef(Catalog &catalog, const string &sql);
 
-// `duckherder_query(catalog, sql)` runs a SELECT on the server of a Duckherder database, which decides how to execute
-// and distribute it. Queries whose result depends on client settings or the client's time zone run on the client.
+// `duckherder_query(catalog, sql)` runs a query, a DML statement or a CREATE TABLE AS on the server of a Duckherder
+// database, which decides how to execute and distribute it. Queries whose result depends on client settings or the
+// client's time zone run on the client.
 TableFunction GetRemoteQueryFunction();
+// `duckherder_connected_query(catalog, sql)` runs the SQL CONNECT routes to a Duckherder database on its server as is.
+TableFunction GetConnectedQueryFunction();
 
 } // namespace duckdb

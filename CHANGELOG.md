@@ -3,6 +3,10 @@
 ### Added
 
 - Add `duckherder_query(database, query)` to run a SELECT query on the server of an attached Duckherder database.
+- Support `CONNECT dh;` to route every statement of a connection to the server of an attached Duckherder database.
+  Transaction statements run on the client transaction, which runs the server transaction.
+- Support data-modifying CTEs, e.g. `WITH d AS (DELETE FROM dh.t RETURNING *) SELECT count(*) FROM d`, on Duckherder
+  tables.
 
 ### Fixed
 
@@ -13,6 +17,10 @@
 
 - Push whole queries to the server through DuckDB's remote catalog pushdown, which also pushes the remote parts of
   set operations, `CREATE TABLE AS` and `INSERT ... SELECT` into local tables, and folds client-side constants first.
+- Push `INSERT`, `UPDATE`, `DELETE`, `MERGE` and `CREATE TABLE AS` only reading Duckherder tables to the server as
+  parsed statements instead of re-parsing the client's query text, and cache tables created by `CREATE TABLE AS` on
+  the client. Parameterized writes and `COPY` still send the query text.
+- Let read-only clients run reading statements through `ExecuteStatement`.
 - Upgrade DuckDB to `v2.0.0`, extension-ci-tools to the latest commit, and the embedded object-storage extension to its v2-compatible `0.2.0` release.
 - Require C++17 and use constexpr string views for fixed configuration, cache, and protocol names.
 - Adapt catalog, DDL, query planning, result schemas, and serialization to DuckDB's Identifier and QualifiedName APIs.

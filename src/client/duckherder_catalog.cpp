@@ -222,15 +222,28 @@ bool DuckherderCatalog::Supports(RemoteCapability capability) const {
 	switch (capability) {
 	case RemoteCapability::IS_REMOTE:
 	case RemoteCapability::EXECUTE_QUERY_NODE:
+	case RemoteCapability::EXECUTE_STATEMENT:
+	case RemoteCapability::CONNECT:
 		return true;
 	default:
-		// DDL keeps going through the catalog, which caches the created entries on the client.
 		return false;
 	}
 }
 
 unique_ptr<TableRef> DuckherderCatalog::RemoteExecute(ClientContext &context, unique_ptr<QueryNode> node) {
 	return CreateRemoteQueryRef(context, *this, std::move(node));
+}
+
+unique_ptr<TableRef> DuckherderCatalog::RemoteExecute(ClientContext &context, unique_ptr<SQLStatement> statement) {
+	return CreateRemoteStatementRef(context, *this, std::move(statement));
+}
+
+unique_ptr<TableRef> DuckherderCatalog::RemoteExecute(ClientContext &context, const string &sql) {
+	return CreateConnectedQueryRef(*this, sql);
+}
+
+bool DuckherderCatalog::SupportsPushdown(const SQLStatement &statement) {
+	return SupportsStatementPushdown(statement);
 }
 
 bool DuckherderCatalog::SupportsPushdown(const ParsedExpression &expression) {

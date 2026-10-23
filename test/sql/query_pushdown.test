@@ -299,9 +299,14 @@ SELECT * FROM duckherder_query('memory', 'SELECT 1');
 requires a Duckherder database
 
 statement error
-SELECT * FROM duckherder_query('dh', 'DELETE FROM orders');
+SELECT * FROM duckherder_query('dh', 'DROP TABLE orders');
 ----
-requires a single SELECT query
+requires a query, a DML statement or CREATE TABLE AS
+
+statement error
+SELECT * FROM duckherder_connected_query('dh', 'SELECT 1');
+----
+only runs the SQL of a connection CONNECT-ed to "dh"
 
 # Built-in types resolve the same on the server, even when the remote database is the default one.
 statement ok
