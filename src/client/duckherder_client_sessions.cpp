@@ -27,10 +27,20 @@ DistributedClient &DuckherderClientSessions::GetClient(ClientContext &context) {
 	if (detached) {
 		throw InvalidInputException("Duckherder attachment is detached");
 	}
-	if (role == distributed::CLIENT_ROLE_READ_WRITE) {
-		EnsureWriteOwner(context);
+	if (role == distributed::CLIENT_ROLE_READ_WRITE && !TryClaimWriteOwner(context)) {
+		throw InvalidInputException(
+		    "A read-write Duckherder attachment can only be used by the DuckDB connection that attached it; "
+		    "attach a separate Duckherder database with READ_ONLY access from this connection");
 	}
 	return GetOrCreateState(context)->GetClient();
+}
+
+optional_ptr<DistributedClient> DuckherderClientSessions::TryGetClient(ClientContext &context) {
+	concurrency::lock_guard<concurrency::mutex> lock(mu);
+	if (detached || (role == distributed::CLIENT_ROLE_READ_WRITE && !TryClaimWriteOwner(context))) {
+		return nullptr;
+	}
+	return &GetOrCreateState(context)->GetClient();
 }
 
 void DuckherderClientSessions::Close() {
@@ -60,17 +70,16 @@ void DuckherderClientSessions::RemoveState(ClientContext &context) {
 	context.registered_state->Remove(state_key);
 }
 
-void DuckherderClientSessions::EnsureWriteOwner(ClientContext &context) {
+bool DuckherderClientSessions::TryClaimWriteOwner(ClientContext &context) {
 	if (context.GetConnectionId() == attach_connection_id) {
-		return;
+		return true;
 	}
 	auto owner_state = states.find(attach_connection_id);
 	if (owner_state != states.end() && !owner_state->second.expired()) {
-		throw InvalidInputException(
-		    "A read-write Duckherder attachment can only be used by the DuckDB connection that attached it; "
-		    "attach a separate Duckherder database with READ_ONLY access from this connection");
+		return false;
 	}
 	attach_connection_id = context.GetConnectionId();
+	return true;
 }
 
 shared_ptr<DuckherderConnectionState> DuckherderClientSessions::GetOrCreateState(ClientContext &context) {

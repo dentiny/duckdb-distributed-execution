@@ -16,10 +16,41 @@ ATTACH 'localhost:8843/database.db' AS dh (TYPE duckherder, DATA_PATH '__WORKING
 statement ok
 CREATE TABLE dh.connection_owned_table (id INTEGER);
 
+query I
+SELECT count(*) FROM dh.connection_owned_table;
+----
+0
+
 statement error con1
 SELECT count(*) FROM dh.connection_owned_table;
 ----
 <REGEX>:.*read-write Duckherder attachment can only be used by the DuckDB connection that attached it.*
+
+# With two live writers owned by different connections, selecting the first
+# attachment always chooses an inaccessible writer for one of the callers.
+statement ok con2
+ATTACH 'localhost:8843/other.db' AS other_writer (TYPE duckherder, DATA_PATH '__WORKING_DIRECTORY__/__TEST_DIR__/objfs/{BASE_TEST_NAME}');
+
+query I
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats()
+              WHERE sql LIKE '%connection_owned_table%');
+----
+true
+
+query I con2
+SELECT EXISTS(SELECT 1 FROM duckherder_get_query_execution_stats()
+              WHERE sql LIKE '%connection_owned_table%');
+----
+true
+
+# Reading statistics does not grant access to the other connection's writer.
+statement error con2
+SELECT count(*) FROM dh.connection_owned_table;
+----
+<REGEX>:.*read-write Duckherder attachment can only be used by the DuckDB connection that attached it.*
+
+statement ok con2
+DETACH other_writer;
 
 # Closing the owner releases the writer registration and lets the replacement
 # connection take ownership of the existing attachment.

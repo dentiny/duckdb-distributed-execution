@@ -225,4 +225,8 @@ DistributedClient &DuckherderCatalog::GetClient(ClientContext &context) {
 	return client_sessions.GetClient(context);
 }
 
+optional_ptr<DistributedClient> DuckherderCatalog::TryGetClient(ClientContext &context) {
+	return client_sessions.TryGetClient(context);
+}
+
 } // namespace duckdb
