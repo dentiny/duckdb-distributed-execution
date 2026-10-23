@@ -211,6 +211,38 @@ WHERE sql SIMILAR TO '.*(pushed_union_child|pushed_ctas|pushed_insert_select).*'
 ----
 3
 
+# Without query pushdown, those parts run on the client with the same results.
+statement ok
+SET duckherder_query_pushdown = false;
+
+query I
+SELECT count(*) FROM (SELECT id AS unpushed_union_child FROM dh.customers UNION ALL SELECT id FROM local_ids);
+----
+11
+
+statement ok
+CREATE TABLE unpushed_copy AS SELECT id AS unpushed_ctas FROM dh.customers WHERE id < 3;
+
+query I
+SELECT count(*) FROM unpushed_copy;
+----
+3
+
+statement ok
+RESET duckherder_query_pushdown;
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql SIMILAR TO '.*(unpushed_union_child|unpushed_ctas).*';
+----
+0
+
+# A pushed query may return columns of the same name.
+query II
+SELECT o.id AS pushed_duplicate, c.id AS pushed_duplicate FROM dh.orders o JOIN dh.customers c ON o.id = c.id
+WHERE o.id = 1;
+----
+1	1
+
 # Unqualified tables resolve through the client's search path, not the server's default schema.
 statement ok
 CREATE SCHEMA dh.other;
@@ -226,6 +258,21 @@ SELECT count(*) AS pushed_search_path FROM orders;
 ----
 1
 
+# A CTE only shadows a table of the same name in its own scope.
+query II
+SELECT (SELECT count(*) FROM (WITH orders AS (SELECT 42 AS id) SELECT * FROM orders)) AS pushed_cte_scope, count(*)
+FROM orders;
+----
+1	1
+
+statement ok
+CREATE MACRO dh.other.plus_one(x) AS x + 1;
+
+query I
+SELECT plus_one(id) AS pushed_schema_macro FROM orders;
+----
+2
+
 statement ok
 USE memory;
 
@@ -233,6 +280,12 @@ query I
 SELECT count(*) FROM duckherder_get_query_execution_stats() WHERE sql LIKE '%pushed_search_path%other.orders%';
 ----
 1
+
+query I
+SELECT count(*) FROM duckherder_get_query_execution_stats()
+WHERE sql LIKE '%pushed_cte_scope%FROM other.orders%' OR sql LIKE '%other.plus_one%pushed_schema_macro%';
+----
+2
 
 # duckherder_query runs a query on the server directly.
 query I

@@ -6,6 +6,7 @@
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -130,12 +131,29 @@ bool QueryPushdownEnabled(ClientContext &context) {
 // Functions reading the session state, environment or sequences, which differ on the server. Functions that DuckDB
 // evaluates once per query, such as current_date, are folded into constants before pushdown instead.
 bool ReadsSessionState(const Identifier &function_name) {
-	static const identifier_set_t SESSION_FUNCTIONS {
-	    "currval",        "current_catalog",   "current_connection_id",  "current_database",
-	    "current_date",   "current_localtime", "current_localtimestamp", "current_query",
-	    "current_schema", "current_schemas",   "current_setting",        "current_transaction_id",
-	    "getenv",         "getvariable",       "in_search_path",         "nextval",
-	    "today",          "txid_current"};
+	static const identifier_set_t SESSION_FUNCTIONS {"currval",
+	                                                 "current_catalog",
+	                                                 "current_connection_id",
+	                                                 "current_database",
+	                                                 "current_date",
+	                                                 "current_localtime",
+	                                                 "current_localtimestamp",
+	                                                 "current_query",
+	                                                 "current_role",
+	                                                 "current_schema",
+	                                                 "current_schemas",
+	                                                 "current_setting",
+	                                                 "current_transaction_id",
+	                                                 "current_user",
+	                                                 "getenv",
+	                                                 "getvariable",
+	                                                 "in_search_path",
+	                                                 "nextval",
+	                                                 "session_user",
+	                                                 "setseed",
+	                                                 "today",
+	                                                 "txid_current",
+	                                                 "user"};
 	return SESSION_FUNCTIONS.find(function_name) != SESSION_FUNCTIONS.end();
 }
 
@@ -145,23 +163,31 @@ bool IsBuiltinType(const TypeExpression &type) {
 	       DefaultTypeGenerator::GetDefaultType(type.GetTypeName()) != LogicalTypeId::INVALID;
 }
 
-// Visits the query nodes and base tables of a pushed-down query, including those in CTEs and subqueries.
+// Visits the base tables and functions of a pushed-down query, including those in CTEs and subqueries. A table is
+// passed with whether it names a CTE in scope where it is referenced.
 class PushedQueryVisitor {
 public:
-	PushedQueryVisitor(std::function<void(QueryNode &)> node_callback_p,
-	                   std::function<void(BaseTableRef &)> table_callback_p,
-	                   std::function<void(FunctionExpression &)> function_callback_p = nullptr)
-	    : node_callback(std::move(node_callback_p)), table_callback(std::move(table_callback_p)),
-	      function_callback(std::move(function_callback_p)) {
+	PushedQueryVisitor(std::function<void(BaseTableRef &, bool is_cte)> table_callback_p,
+	                   std::function<void(FunctionExpression &)> function_callback_p)
+	    : table_callback(std::move(table_callback_p)), function_callback(std::move(function_callback_p)) {
 	}
 
 	void VisitNode(QueryNode &node) {
-		node_callback(node);
+		idx_t scope_size = cte_scope.size();
+		for (auto &cte : node.cte_map.map) {
+			cte_scope.push_back(cte.first);
+		}
 		for (auto &cte : node.cte_map.map) {
 			if (cte.second->query_node) {
 				VisitNode(*cte.second->query_node);
 			}
 		}
+		VisitNodeBody(node);
+		cte_scope.resize(scope_size);
+	}
+
+private:
+	void VisitNodeBody(QueryNode &node) {
 		switch (node.type) {
 		case QueryNodeType::SELECT_NODE: {
 			auto &select = node.Cast<SelectNode>();
@@ -192,11 +218,13 @@ public:
 			break;
 		case QueryNodeType::RECURSIVE_CTE_NODE: {
 			auto &cte = node.Cast<RecursiveCTENode>();
+			cte_scope.push_back(cte.ctename);
 			VisitNode(*cte.left);
 			VisitNode(*cte.right);
 			for (auto &expr : cte.key_targets) {
 				VisitExpression(*expr);
 			}
+			cte_scope.pop_back();
 			break;
 		}
 		default:
@@ -206,12 +234,18 @@ public:
 		    node, [&](unique_ptr<ParsedExpression> &expr) { VisitExpression(*expr); });
 	}
 
-private:
+	bool IsCTE(const BaseTableRef &ref) const {
+		return ref.GetQualifiedName().Path().size() == 1 &&
+		       std::find(cte_scope.begin(), cte_scope.end(), ref.Table()) != cte_scope.end();
+	}
+
 	void VisitTableRef(TableRef &ref) {
 		switch (ref.type) {
-		case TableReferenceType::BASE_TABLE:
-			table_callback(ref.Cast<BaseTableRef>());
+		case TableReferenceType::BASE_TABLE: {
+			auto &table = ref.Cast<BaseTableRef>();
+			table_callback(table, IsCTE(table));
 			break;
+		}
 		case TableReferenceType::JOIN: {
 			auto &join = ref.Cast<JoinRef>();
 			VisitTableRef(*join.left);
@@ -243,32 +277,17 @@ private:
 		if (expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
 			VisitNode(*expr.Cast<SubqueryExpression>().SubqueryMutable()->node);
 		}
-		if (function_callback && expr.GetExpressionClass() == ExpressionClass::FUNCTION) {
+		if (expr.GetExpressionClass() == ExpressionClass::FUNCTION) {
 			function_callback(expr.Cast<FunctionExpression>());
 		}
 		ParsedExpressionIterator::EnumerateChildren(expr, [&](ParsedExpression &child) { VisitExpression(child); });
 	}
 
-	std::function<void(QueryNode &)> node_callback;
-	std::function<void(BaseTableRef &)> table_callback;
+	std::function<void(BaseTableRef &, bool is_cte)> table_callback;
 	std::function<void(FunctionExpression &)> function_callback;
+	// The names of the CTEs in scope, innermost last.
+	vector<Identifier> cte_scope;
 };
-
-identifier_set_t GetCTENames(QueryNode &node) {
-	identifier_set_t cte_names;
-	PushedQueryVisitor visitor(
-	    [&](QueryNode &child) {
-		    for (auto &cte : child.cte_map.map) {
-			    cte_names.insert(cte.first);
-		    }
-		    if (child.type == QueryNodeType::RECURSIVE_CTE_NODE) {
-			    cte_names.insert(child.Cast<RecursiveCTENode>().ctename);
-		    }
-	    },
-	    [](BaseTableRef &) {});
-	visitor.VisitNode(node);
-	return cte_names;
-}
 
 bool HasEntry(ClientContext &context, CatalogType type, QualifiedName name) {
 	EntryLookupInfo lookup(type, std::move(name));
@@ -285,7 +304,6 @@ QualifiedName QualifyInCatalog(const Identifier &catalog, const QualifiedName &n
 // The server resolves unqualified tables and functions in its default schema, so they are qualified with the schema
 // the client resolves them to. CTE references and functions outside the catalog, such as built-ins, stay unqualified.
 void QualifyNamesForServer(ClientContext &context, Catalog &catalog, QueryNode &node) {
-	auto cte_names = GetCTENames(node);
 	auto schemas = ClientData::Get(context).catalog_search_path->GetSchemasForCatalog(catalog.GetName());
 	auto qualify = [&](CatalogType type, const QualifiedName &name) -> optional_ptr<const Identifier> {
 		if (name.Path().size() != 1) {
@@ -299,9 +317,8 @@ void QualifyNamesForServer(ClientContext &context, Catalog &catalog, QueryNode &
 		return nullptr;
 	};
 	PushedQueryVisitor visitor(
-	    [](QueryNode &) {},
-	    [&](BaseTableRef &ref) {
-		    if (cte_names.find(ref.Table()) != cte_names.end()) {
+	    [&](BaseTableRef &ref, bool is_cte) {
+		    if (is_cte) {
 			    return;
 		    }
 		    auto schema = qualify(CatalogType::TABLE_ENTRY, ref.GetQualifiedName());
@@ -321,16 +338,15 @@ void QualifyNamesForServer(ClientContext &context, Catalog &catalog, QueryNode &
 // Qualifies the tables and functions of a query sent to the server with `catalog`, so the client binds it to the same
 // entries. Functions the catalog does not have, such as built-ins, stay unqualified.
 void QualifyNamesForClient(ClientContext &context, Catalog &catalog, QueryNode &node) {
-	auto cte_names = GetCTENames(node);
 	const auto &catalog_name = catalog.GetName();
 	PushedQueryVisitor visitor(
-	    [](QueryNode &) {},
-	    [&](BaseTableRef &ref) {
+	    [&](BaseTableRef &ref, bool is_cte) {
+		    if (is_cte) {
+			    return;
+		    }
 		    auto &name = ref.GetQualifiedName();
 		    if (name.Path().size() == 1) {
-			    if (cte_names.find(ref.Table()) == cte_names.end()) {
-				    ref.SetQualifiedName(catalog_name, Identifier::DefaultSchema(), ref.Table());
-			    }
+			    ref.SetQualifiedName(catalog_name, Identifier::DefaultSchema(), ref.Table());
 			    return;
 		    }
 		    ref.SetQualifiedName(QualifyInCatalog(catalog_name, name));
@@ -420,7 +436,8 @@ unique_ptr<LogicalOperator> RemoteQueryBindOperator(ClientContext &context, Tabl
 		D_ASSERT(bindings.size() == bound.types.size());
 		vector<unique_ptr<Expression>> select_list;
 		for (idx_t idx = 0; idx < bindings.size(); ++idx) {
-			select_list.push_back(make_uniq<BoundColumnRefExpression>(bound.names[idx], bound.types[idx], bindings[idx]));
+			select_list.push_back(
+			    make_uniq<BoundColumnRefExpression>(bound.names[idx], bound.types[idx], bindings[idx]));
 		}
 		auto projection = make_uniq<LogicalProjection>(bind_index, std::move(select_list));
 		projection->AddChild(std::move(bound.plan));
@@ -429,8 +446,8 @@ unique_ptr<LogicalOperator> RemoteQueryBindOperator(ClientContext &context, Tabl
 
 	auto bind_data = make_uniq<RemoteQueryBindData>(std::move(catalog_name), std::move(sql), bound.types);
 	bind_data->estimated_cardinality = bound.plan->EstimateCardinality(context);
-	auto result = make_uniq<LogicalGet>(bind_index, input.table_function, std::move(bind_data), bound.types,
-	                                    bound.names);
+	auto result =
+	    make_uniq<LogicalGet>(bind_index, input.table_function, std::move(bind_data), bound.types, bound.names);
 	vector<ColumnIndex> column_ids;
 	for (idx_t idx = 0; idx < bound.types.size(); ++idx) {
 		column_ids.emplace_back(idx);
@@ -567,7 +584,10 @@ unique_ptr<TableRef> CreateRemoteQueryRef(ClientContext &context, Catalog &catal
 	arguments.push_back(make_uniq<ConstantExpression>(Literal::String(catalog.GetName().GetIdentifierName())));
 	arguments.push_back(make_uniq<ConstantExpression>(Literal::String(node->ToString())));
 	auto result = make_uniq<TableFunctionRef>();
-	result->function = make_uniq<FunctionExpression>(Identifier(REMOTE_QUERY_FUNCTION), std::move(arguments));
+	// Qualified, so a macro of the same name on the search path cannot replace it.
+	result->function = make_uniq<FunctionExpression>(
+	    QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(), Identifier(REMOTE_QUERY_FUNCTION)),
+	    std::move(arguments));
 	return std::move(result);
 }
 

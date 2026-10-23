@@ -705,6 +705,9 @@ Worker execution currently accepts only a single table scan with projections, fi
 - A failed worker task is not retried or reassigned automatically. Replacing a driver also does not synchronize the
   workers registered with the previous driver.
 - Query execution statistics are held in memory and are not persisted.
+- A query, or part of one, reading only a Duckherder database returns columns of the same name with suffixes, e.g.
+  `id` and `id_1`, as DuckDB names the columns of a remote query result uniquely. This also applies with
+  `duckherder_query_pushdown` disabled, where such queries run on the client.
 
 See the [Roadmap](#roadmap) for planned work.
 
