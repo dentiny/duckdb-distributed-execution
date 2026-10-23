@@ -1,0 +1,233 @@
+# name: test/sql/remote_pushdown_writes.test
+# description: Writes and CREATE TABLE AS only using remote tables run on the server as a whole, and CONNECT routes a connection's SQL to the server
+# group: [sql]
+
+require duckherder
+
+statement ok
+SELECT duckherder_start_local_server(8879);
+
+statement ok
+ATTACH 'localhost:8879' AS dh (TYPE duckherder);
+
+statement ok
+CREATE TABLE dh.items (id INTEGER PRIMARY KEY, name VARCHAR, qty INTEGER);
+
+statement ok
+CREATE TABLE local_items (id INTEGER, name VARCHAR, qty INTEGER);
+
+statement ok
+INSERT INTO local_items VALUES (100, 'local', 1);
+
+# DML only using remote tables runs on the server as a whole.
+query II
+EXPLAIN INSERT INTO dh.items VALUES (1, 'a', 10);
+----
+physical_plan	<REGEX>:.*Duckherder Query.*INSERT INTO items.*
+
+query I
+INSERT INTO dh.items SELECT i, 'n' || i, i * 10 FROM (VALUES (1), (2), (3), (4), (5)) t(i);
+----
+5
+
+query II rowsort
+UPDATE dh.items SET qty = qty + 1 WHERE id <= 2 RETURNING id, qty * 2 AS doubled;
+----
+1	22
+2	42
+
+query I
+INSERT INTO dh.items VALUES (1, 'upserted', 0) ON CONFLICT (id) DO UPDATE SET name = excluded.name;
+----
+1
+
+query II
+SELECT name, qty FROM dh.items WHERE id = 1;
+----
+upserted	11
+
+query I
+MERGE INTO dh.items AS target USING (SELECT 6 AS id) AS source ON target.id = source.id
+WHEN NOT MATCHED THEN INSERT VALUES (6, 'merged', 60);
+----
+1
+
+# Writes reading client tables are not pushed down.
+query II
+EXPLAIN DELETE FROM dh.items WHERE id IN (SELECT id FROM local_items);
+----
+physical_plan	<!REGEX>:.*Duckherder Query.*
+
+# A data-modifying CTE runs on the server with the query reading it.
+query I
+WITH deleted AS (DELETE FROM dh.items WHERE id >= 5 RETURNING id) SELECT count(*) FROM deleted;
+----
+2
+
+query I
+SELECT count(*) FROM dh.items;
+----
+4
+
+# Prepared statements run the write each time they are executed.
+statement ok
+PREPARE bump AS UPDATE dh.items SET qty = qty + 100 WHERE id = 3;
+
+statement ok
+EXECUTE bump;
+
+statement ok
+EXECUTE bump;
+
+query I
+SELECT qty FROM dh.items WHERE id = 3;
+----
+230
+
+# Server errors keep their type.
+statement error
+INSERT INTO dh.items VALUES (1, 'duplicate', 0);
+----
+<REGEX>:Constraint Error.*
+
+# CREATE TABLE AS runs on the server and caches the created table on the client.
+query II
+EXPLAIN CREATE TABLE dh.items_copy AS SELECT * FROM dh.items;
+----
+physical_plan	<REGEX>:.*Duckherder Query.*CREATE TABLE items_copy AS.*
+
+query I
+CREATE TABLE dh.items_copy AS SELECT id, name FROM dh.items WHERE id <= 2;
+----
+2
+
+query IT
+SELECT id, name FROM dh.items_copy ORDER BY id;
+----
+1	upserted
+2	n2
+
+statement ok
+CREATE SCHEMA dh.other;
+
+statement ok
+USE dh.other;
+
+statement ok
+CREATE TABLE in_other AS SELECT id FROM main.items;
+
+statement ok
+USE memory;
+
+query I
+SELECT count(*) FROM dh.other.in_other;
+----
+4
+
+# CONNECT routes every statement of the connection to the server, which resolves names itself.
+statement ok
+CONNECT dh;
+
+query I
+SELECT count(*) FROM items;
+----
+4
+
+statement ok
+INSERT INTO items VALUES (10, 'connected', 1);
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM items;
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM items;
+----
+5
+
+statement error
+SELECT * FROM missing_table;
+----
+<REGEX>:Catalog Error.*missing_table.*
+
+statement ok
+DISCONNECT;
+
+query T
+SELECT name FROM dh.items WHERE id = 10;
+----
+connected
+
+# Transaction statements run on the client transaction, which can be rolled back after an error and outlives CONNECT.
+statement ok
+BEGIN;
+
+statement ok
+CONNECT dh;
+
+statement ok
+INSERT INTO items VALUES (11, 'rolled back', 1);
+
+statement error
+SELECT * FROM missing_table;
+----
+<REGEX>:Catalog Error.*missing_table.*
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO items VALUES (12, 'committed', 1);
+
+statement ok
+DISCONNECT;
+
+query I
+SELECT count(*) FROM dh.items;
+----
+6
+
+statement ok
+COMMIT;
+
+query T
+SELECT name FROM dh.items WHERE id >= 11 ORDER BY id;
+----
+committed
+
+# A read-only attachment can only read through CONNECT.
+statement ok con1
+ATTACH 'localhost:8879' AS reader (TYPE duckherder, READ_ONLY);
+
+statement ok con1
+CONNECT reader;
+
+query I con1
+SELECT count(*) FROM items;
+----
+6
+
+statement error con1
+DELETE FROM items;
+----
+<REGEX>:.*read-only.*
+
+statement ok con1
+DISCONNECT;
+
+statement ok con1
+DETACH reader;
+
+statement ok
+DETACH dh;
+
+statement ok
+SELECT duckherder_stop_local_server();

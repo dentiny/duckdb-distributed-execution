@@ -65,12 +65,16 @@ public:
 
 	void DropSchema(ClientContext &context, DropInfo &info) override;
 
-	// Lets DuckDB's RemotePushdownOptimizer run queries that only read this database on its server as a whole.
+	// Lets DuckDB's RemotePushdownOptimizer run queries, writes and CREATE TABLE AS that only use this database on its
+	// server as a whole, and CONNECT route a connection's SQL to the server.
 	bool Supports(RemoteCapability capability) const override;
 	unique_ptr<TableRef> RemoteExecute(ClientContext &context, unique_ptr<QueryNode> node) override;
+	unique_ptr<TableRef> RemoteExecute(ClientContext &context, unique_ptr<SQLStatement> statement) override;
+	unique_ptr<TableRef> RemoteExecute(ClientContext &context, const string &sql) override;
 	bool SupportsPushdown(const ParsedExpression &expression) override;
 	bool SupportsPushdown(const TableRef &ref) override;
 	bool SupportsPushdown(const QueryNode &node) override;
+	bool SupportsPushdown(const SQLStatement &statement) override;
 
 	// Get the remote session owned by this DuckDB connection.
 	DistributedClient &GetClient(ClientContext &context);

@@ -51,6 +51,8 @@ public:
 
 	// Returns metadata for indexes that are physically stored on the control node.
 	vector<IndexInfo> GetRemoteIndexes(const Identifier &table_name);
+	// Caches a table the control node already created.
+	optional_ptr<CatalogEntry> CreateTableLocal(CatalogTransaction transaction, BoundCreateTableInfo &info);
 
 private:
 	friend class DuckherderCatalog;
@@ -61,7 +63,6 @@ private:
 	DuckherderSchemaCatalogEntry(DuckherderCatalog &duckherder_catalog_p, DatabaseInstance &db_instance_p,
 	                             CreateSchemaInfo &create_schema_info);
 
-	optional_ptr<CatalogEntry> CreateTableLocal(CatalogTransaction transaction, BoundCreateTableInfo &info);
 	optional_ptr<CatalogEntry> CreateTypeLocal(CatalogTransaction transaction, CreateTypeInfo &info);
 	// Applies an ALTER only to the client-side metadata cache.
 	void AlterLocal(CatalogTransaction transaction, AlterInfo &info);

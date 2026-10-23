@@ -145,10 +145,11 @@ arrow::Status DistributedFlightServer::DoActionImpl(const arrow::flight::ServerC
 		ARROW_RETURN_NOT_OK(clients.Unregister(request.client_id(), response));
 	} else {
 		switch (request.request_case()) {
-		case distributed::DistributedRequest::kExecuteStatement:
 		case distributed::DistributedRequest::kLoadExtension:
 			ARROW_RETURN_NOT_OK(HandleClientAction(request, distributed::CLIENT_ROLE_READ_WRITE, response));
 			break;
+		// The handler rejects statements of read-only clients that write.
+		case distributed::DistributedRequest::kExecuteStatement:
 		case distributed::DistributedRequest::kTransaction:
 		case distributed::DistributedRequest::kTableExists:
 		case distributed::DistributedRequest::kGetQueryExecutionStats:

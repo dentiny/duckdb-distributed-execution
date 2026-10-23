@@ -708,6 +708,9 @@ Worker execution currently accepts only a single table scan with projections, fi
 - A query, or part of one, reading only a Duckherder database returns columns of the same name with suffixes, e.g.
   `id` and `id_1`, as DuckDB names the columns of a remote query result uniquely. This also applies with
   `duckherder_query_pushdown` disabled, where such queries run on the client.
+- `CONNECT dh;` runs SQL on the server as is, so DDL run while connected is not reflected in the client's metadata
+  cache until the database is attached again. `duckherder_query_pushdown` only affects reads; writes only using
+  Duckherder tables always run on the server, and writes reading client tables are not supported.
 
 See the [Roadmap](#roadmap) for planned work.
 

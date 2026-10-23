@@ -89,9 +89,16 @@ void RegisterDuckherderFunctions(ExtensionLoader &loader) {
 	RegisterTableFunction(
 	    loader, GetRemoteQueryFunction(),
 	    /*parameter_names=*/ {"database", "query"},
-	    /*description=*/"Runs a SELECT query on the server of an attached Duckherder database.",
+	    /*description=*/
+	    "Runs a query, a DML statement or a CREATE TABLE AS on the server of an attached Duckherder database.",
 	    /*examples=*/ {"SELECT * FROM duckherder_query('dh', 'SELECT count(*) FROM main.orders');"},
 	    /*categories=*/ {"duckherder", "distributed_execution"});
+	RegisterTableFunction(loader, GetConnectedQueryFunction(),
+	                      /*parameter_names=*/ {"database", "query"},
+	                      /*description=*/
+	                      "Runs the SQL of a connection CONNECT-ed to a Duckherder database on its server as is.",
+	                      /*examples=*/ {"CONNECT dh;"},
+	                      /*categories=*/ {"duckherder", "distributed_execution"});
 	RegisterScalarFunction(
 	    loader, DuckherderPragmas::GetLoadExtensionFunction(),
 	    /*parameter_names=*/ {"extension_name"},
