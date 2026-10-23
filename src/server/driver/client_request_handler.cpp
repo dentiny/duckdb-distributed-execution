@@ -104,8 +104,10 @@ arrow::Status ClientRequestHandler::ExecuteStatement(const distributed::ExecuteS
                                                      ClientRegistration &registration,
                                                      distributed::DistributedResponse &resp) {
 	auto sql = StripClientCatalog(req.sql(), req.client_catalog());
+	unique_ptr<QueryResult> result;
 	if (registration.role != distributed::CLIENT_ROLE_READ_WRITE) {
-		// Read-only clients may share a read-write instance with the database's writer.
+		// Read-only clients may share a read-write instance with the database's writer. Each statement is checked
+		// right before it runs, as it may depend on the statements before it.
 		vector<unique_ptr<SQLStatement>> statements;
 		try {
 			statements = registration.connection->ExtractStatements(sql);
@@ -126,9 +128,16 @@ arrow::Status ClientRequestHandler::ExecuteStatement(const distributed::ExecuteS
 				resp.set_error_message("Duckherder client is read-only");
 				return arrow::Status::OK();
 			}
+			vector<Value> parameters;
+			result = prepared->Execute(parameters);
+			if (result->HasError()) {
+				break;
+			}
 		}
 	}
-	auto result = registration.connection->Query(sql);
+	if (!result) {
+		result = registration.connection->Query(sql);
+	}
 	if (result->HasError()) {
 		auto &error = result->GetErrorObject();
 		resp.set_success(false);

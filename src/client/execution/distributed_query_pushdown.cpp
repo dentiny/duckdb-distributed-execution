@@ -14,7 +14,6 @@
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -54,7 +53,6 @@
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_column_data_get.hpp"
-#include "duckdb/planner/operator/logical_create_table.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_transaction.hpp"
@@ -603,8 +601,7 @@ unique_ptr<LogicalOperator> MakeRemoteGet(TableFunctionBindInput &input, TableIn
 unique_ptr<LogicalOperator> BindRemoteCreateTableAs(ClientContext &context, TableFunctionBindInput &input,
                                                     TableIndex bind_index, vector<Identifier> &return_names,
                                                     Catalog &catalog, CreateStatement &statement, string sql) {
-	if (statement.info->type != CatalogType::TABLE_ENTRY || !statement.info->Cast<CreateTableInfo>().query ||
-	    statement.info->temporary) {
+	if (!SupportsStatementPushdown(statement)) {
 		throw BinderException("%s only supports CREATE TABLE AS", REMOTE_QUERY_FUNCTION);
 	}
 	auto &info = statement.info->Cast<CreateTableInfo>();
@@ -859,14 +856,9 @@ unique_ptr<LogicalOperator> ConnectedQueryBindOperator(ClientContext &context, T
 	if (result->HasError()) {
 		ThrowRemoteError(*result, "execute SQL");
 	}
-	auto &types = result->GetTypes();
-	auto collection = make_uniq<ColumnDataCollection>(context, types);
-	while (auto chunk = result->Fetch()) {
-		collection->Append(*chunk);
-	}
 	return_names = result->GetNames();
 	QueryResult::DeduplicateColumns(return_names);
-	return make_uniq<LogicalColumnDataGet>(bind_index, types, std::move(collection));
+	return make_uniq<LogicalColumnDataGet>(bind_index, result->GetTypes(), result->TakeCollection());
 }
 
 } // namespace
