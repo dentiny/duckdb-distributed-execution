@@ -233,6 +233,10 @@ git clone https://github.com/Microsoft/vcpkg.git
 export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
+The vcpkg manifest pins the community CI baseline and the standard Thrift
+0.22.0#2 port. Thrift 0.23 adds a Bison flag unsupported by the Linux CI
+image's Bison 3.0.4, so keep this pin until the parser toolchain is upgraded.
+
 2. Build the extension:
 ```bash
 # Clone the repo.
