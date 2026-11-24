@@ -10,7 +10,7 @@ duckdb_extension_statically_link(duckherder duckdb_object_storage)
 # DuckDB binary can attach databases through duckdb_objfs://.
 duckdb_extension_load(
   duckdb_object_storage SOURCE_DIR
-  ${CMAKE_CURRENT_LIST_DIR}/duckdb-object-storage EXTENSION_VERSION 0.2.0
+  ${CMAKE_CURRENT_LIST_DIR}/duckdb-object-storage EXTENSION_VERSION 0.2.1
   LOAD_TESTS)
 
 # Optional: build latency_injection_fs from the checkout in
