@@ -1,3 +1,9 @@
+## Unreleased
+
+### Fixed
+
+- Align the extension-version regression with the v0.1.1 patch release.
+
 ## 0.1.1 - 2026-11-23
 
 ### Changed
