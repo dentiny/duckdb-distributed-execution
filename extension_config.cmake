@@ -3,7 +3,7 @@
 
 # Extension from this repo
 duckdb_extension_load(duckherder SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
-                      EXTENSION_VERSION 0.1.0 LOAD_TESTS)
+                      EXTENSION_VERSION 0.1.1 LOAD_TESTS)
 duckdb_extension_statically_link(duckherder duckdb_object_storage)
 
 # Build the object-storage filesystem from the pinned submodule so the same
