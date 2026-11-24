@@ -3,6 +3,7 @@
 ### Changed
 
 - Upgrade DuckDB to `v2.0.1`.
+- Align the `duckdb_object_storage` dependency with its DuckDB v2.0.1 patch release (`v0.2.1`).
 
 ## 0.1.0
 
